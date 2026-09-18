@@ -10,19 +10,25 @@ class HomePage extends StatelessWidget {
 
     return Scaffold(
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+        padding: const EdgeInsets.only(left: 16, top: 8, bottom: 100),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Welcome to TELND',
-              style: Theme.of(context).textTheme.headlineMedium,
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Text(
+                'Welcome to TELND',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
             ),
             const SizedBox(height: 6),
-            Text(
-              'Discover opportunities, prove your skills, get hired.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Text(
+                'Discover opportunities, prove your skills, get hired.',
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
               ),
             ),
             const SizedBox(height: 20),
@@ -30,6 +36,7 @@ class HomePage extends StatelessWidget {
               height: 120,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(right: 16),
                 itemCount: _items.length + 1,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
@@ -52,10 +59,13 @@ class HomePage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 24),
-            Text(
-              'Recent Activity',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Text(
+                'Recent Activity',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -195,7 +205,7 @@ class _ActionCard extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
                     color: isDark ? Colors.white : const Color(0xFF1F2937),
                   ),
@@ -204,7 +214,7 @@ class _ActionCard extends StatelessWidget {
                 Text(
                   desc,
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 12,
                     height: 1.3,
                     color: isDark
                         ? Colors.white.withOpacity(0.45)
