@@ -76,7 +76,7 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
       leading: CustomAppBar.buildLogo(),
       actions: [
         _NavBarIcon(
-          asset: 'assets/icons/notification-stroke.svg',
+          asset: 'assets/icons/notification-store.svg',
           color: iconColor,
           onTap: () {},
         ),

@@ -27,12 +27,18 @@ class HomePage extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             SizedBox(
-              height: 150,
+              height: 120,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: _items.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemCount: _items.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
+                  if (index == _items.length) {
+                    return _AllCard(
+                      isDark: isDark,
+                      onTap: () => _showAllSheet(context, isDark),
+                    );
+                  }
                   final item = _items[index];
                   return _ActionCard(
                     title: item.title,
@@ -74,18 +80,27 @@ class HomePage extends StatelessWidget {
       ),
     );
   }
+
+  void _showAllSheet(BuildContext context, bool isDark) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AllSheet(isDark: isDark),
+    );
+  }
 }
 
 const _items = [
   _ItemData(
     title: 'Find Jobs',
-    desc: 'Browse curated opportunities',
+    desc: 'Browse opportunities',
     icon: Icons.work_outline_rounded,
     color: Color(0xFF034548),
   ),
   _ItemData(
     title: 'Tutors',
-    desc: 'Find expert guidance',
+    desc: 'Expert guidance',
     icon: Icons.school_outlined,
     color: Color(0xFF2563EB),
   ),
@@ -103,7 +118,7 @@ const _items = [
   ),
   _ItemData(
     title: 'Learn',
-    desc: 'Courses & skill building',
+    desc: 'Courses & skills',
     icon: Icons.menu_book_outlined,
     color: Color(0xFF059669),
   ),
@@ -145,55 +160,262 @@ class _ActionCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 150,
-        padding: const EdgeInsets.all(14),
+        width: 120,
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isDark
               ? color.withOpacity(0.10)
               : color.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -4,
+              bottom: -4,
+              child: Icon(
+                icon,
+                size: 52,
+                color: color.withOpacity(isDark ? 0.08 : 0.06),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(icon, size: 14, color: Colors.white),
+                ),
+                const Spacer(),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : const Color(0xFF1F2937),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  desc,
+                  style: TextStyle(
+                    fontSize: 10,
+                    height: 1.3,
+                    color: isDark
+                        ? Colors.white.withOpacity(0.45)
+                        : const Color(0xFF64748B),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AllCard extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _AllCard({required this.isDark, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 72,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isDark
+              ? Colors.white.withOpacity(0.08)
+              : Colors.black.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.grid_view_rounded,
+              size: 22,
+              color: isDark ? Colors.white70 : const Color(0xFF64748B),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'All',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: isDark ? Colors.white : const Color(0xFF1F2937),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AllSheet extends StatelessWidget {
+  final bool isDark;
+
+  const _AllSheet({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.55,
+      minChildSize: 0.3,
+      maxChildSize: 0.85,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white24 : Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Text(
+                      'All Services',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: isDark ? Colors.white : const Color(0xFF1F2937),
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 22,
+                        color: isDark ? Colors.white54 : Colors.black45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.separated(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  itemCount: _items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) {
+                    final item = _items[index];
+                    return _SheetItem(
+                      title: item.title,
+                      desc: item.desc,
+                      icon: item.icon,
+                      color: item.color,
+                      isDark: isDark,
+                      onTap: () => Navigator.pop(context),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SheetItem extends StatelessWidget {
+  final String title;
+  final String desc;
+  final IconData icon;
+  final Color color;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _SheetItem({
+    required this.title,
+    required this.desc,
+    required this.icon,
+    required this.color,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isDark
+              ? color.withOpacity(0.08)
+              : color.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
           children: [
             Container(
-              width: 34,
-              height: 34,
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
                 color: color,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, size: 18, color: Colors.white),
             ),
-            const Spacer(),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: isDark ? Colors.white : const Color(0xFF1F2937),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : const Color(0xFF1F2937),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    desc,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark
+                          ? Colors.white.withOpacity(0.45)
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 3),
-            Text(
-              desc,
-              style: TextStyle(
-                fontSize: 11,
-                color: isDark
-                    ? Colors.white.withOpacity(0.45)
-                    : const Color(0xFF64748B),
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.bottomRight,
-              child: Icon(
-                Icons.arrow_forward_rounded,
-                size: 14,
-                color: color,
-              ),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: isDark ? Colors.white24 : Colors.black26,
             ),
           ],
         ),
