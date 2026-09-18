@@ -15,6 +15,7 @@ import 'package:telnd_mobile/features/jobs/presentation/pages/jobs_page.dart';
 import 'package:telnd_mobile/features/messages/presentation/pages/messages_page.dart';
 import 'package:telnd_mobile/features/profile/presentation/pages/profile_page.dart';
 import 'package:telnd_mobile/shared/presentation/widgets/bottom_nav.dart';
+import 'package:telnd_mobile/shared/presentation/widgets/custom_app_bar.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -96,10 +97,22 @@ class MainShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final location = GoRouterState.of(context).uri.path;
+    final appBar = _getAppBar(location);
+
     return Scaffold(
       extendBody: true,
+      appBar: appBar,
       body: child,
       bottomNavigationBar: const BottomNav(),
     );
+  }
+
+  PreferredSizeWidget? _getAppBar(String location) {
+    if (location.startsWith('/explore')) return null;
+    if (location.startsWith('/ai')) return null;
+    if (location.startsWith('/messages')) return null;
+    if (location.startsWith('/profile')) return null;
+    return const HomeAppBar();
   }
 }

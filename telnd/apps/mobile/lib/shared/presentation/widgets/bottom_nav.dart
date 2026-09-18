@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -14,22 +15,37 @@ class BottomNav extends StatelessWidget {
     final active = isDark ? AppTheme.accent : const Color(0xFF034548);
     final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF94A3B8);
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
-      decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF1A2639)
-            : const Color(0xFFF8F9FB),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: isDark
+                  ? [
+                      const Color(0xFF1A2639).withOpacity(0.85),
+                      const Color(0xFF1A2639).withOpacity(0.95),
+                    ]
+                  : [
+                      const Color(0xFFF8F9FB).withOpacity(0.80),
+                      const Color(0xFFF8F9FB).withOpacity(0.95),
+                    ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: active.withOpacity(isDark ? 0.15 : 0.08),
+                blurRadius: 24,
+                spreadRadius: -4,
+                offset: const Offset(0, -4),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Row(
+          child: Row(
             children: [
               Expanded(
                 child: _Tab(
@@ -83,6 +99,8 @@ class BottomNav extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
       ),
     );
   }
@@ -122,10 +140,9 @@ class _Tab extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? active.withOpacity(0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: const BoxDecoration(
+          color: Colors.transparent,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -133,18 +150,18 @@ class _Tab extends StatelessWidget {
           children: [
             SvgPicture.asset(
               selected ? iconSolid : iconStroke,
-              width: 22,
-              height: 22,
+              width: 24,
+              height: 24,
               colorFilter: ColorFilter.mode(
                 selected ? active : inactive,
                 BlendMode.srcIn,
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 color: selected ? active : inactive,
               ),
@@ -178,18 +195,17 @@ class _CenterTab extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? primary.withOpacity(0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: const BoxDecoration(
+          color: Colors.transparent,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [primary, secondary],
@@ -208,8 +224,8 @@ class _CenterTab extends StatelessWidget {
               child: Center(
                 child: SvgPicture.asset(
                   selected ? 'assets/icons/brain-solid.svg' : 'assets/icons/brain-stroke.svg',
-                  width: 20,
-                  height: 20,
+                  width: 22,
+                  height: 22,
                   colorFilter: const ColorFilter.mode(
                     Colors.white,
                     BlendMode.srcIn,
@@ -217,11 +233,11 @@ class _CenterTab extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 4),
             Text(
-              'TELND',
+              'Telnd AI',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: selected ? primary : inactive,
                 letterSpacing: 0.3,
