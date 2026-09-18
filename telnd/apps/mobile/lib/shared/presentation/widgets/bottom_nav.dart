@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
-import 'package:hugeicons/hugeicons.dart';
 import 'package:telnd_mobile/core/theme.dart';
 
 class BottomNav extends StatelessWidget {
@@ -30,44 +30,57 @@ class BottomNav extends StatelessWidget {
         ],
       ),
       child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _Tab(
-                icon: HugeIcons.strokeRoundedHome01,
-                label: 'Home',
-                selected: selected == 0,
-                active: active,
-                inactive: inactive,
-                onTap: () => context.go('/'),
+              Expanded(
+                child: _Tab(
+                  iconSolid: 'assets/icons/home-solid.svg',
+                  iconStroke: 'assets/icons/home-stroke.svg',
+                  label: 'Home',
+                  selected: selected == 0,
+                  active: active,
+                  inactive: inactive,
+                  onTap: () => context.go('/'),
+                ),
               ),
-              _Tab(
-                icon: HugeIcons.strokeRoundedCompass,
-                label: 'Explore',
-                selected: selected == 1,
-                active: active,
-                inactive: inactive,
-                onTap: () => context.go('/explore'),
+              Expanded(
+                child: _Tab(
+                  iconSolid: 'assets/icons/explore-solid.svg',
+                  iconStroke: 'assets/icons/explore-stroke.svg',
+                  label: 'Explore',
+                  selected: selected == 1,
+                  active: active,
+                  inactive: inactive,
+                  onTap: () => context.go('/explore'),
+                ),
               ),
-              _CenterTab(
-                selected: selected == 2,
-                isDark: isDark,
-                onTap: () => context.go('/ai'),
+              Expanded(
+                child: _CenterTab(
+                  selected: selected == 2,
+                  isDark: isDark,
+                  onTap: () => context.go('/ai'),
+                ),
               ),
-              _Tab(
-                icon: HugeIcons.strokeRoundedChat,
-                label: 'Messages',
-                selected: selected == 3,
-                active: active,
-                inactive: inactive,
-                onTap: () => context.go('/messages'),
+              Expanded(
+                child: _Tab(
+                  iconSolid: 'assets/icons/message-solid.svg',
+                  iconStroke: 'assets/icons/message-stroke.svg',
+                  label: 'Messages',
+                  selected: selected == 3,
+                  active: active,
+                  inactive: inactive,
+                  onTap: () => context.go('/messages'),
+                ),
               ),
-              _Tab(
-                icon: HugeIcons.strokeRoundedUser,
-                label: 'Account',
-                selected: selected == 4,
-                active: active,
-                inactive: inactive,
-                onTap: () => context.go('/profile'),
+              Expanded(
+                child: _Tab(
+                  iconSolid: 'assets/icons/user-solid.svg',
+                  iconStroke: 'assets/icons/user-stroke.svg',
+                  label: 'Account',
+                  selected: selected == 4,
+                  active: active,
+                  inactive: inactive,
+                  onTap: () => context.go('/profile'),
+                ),
               ),
             ],
       ),
@@ -84,7 +97,8 @@ class BottomNav extends StatelessWidget {
 }
 
 class _Tab extends StatelessWidget {
-  final List<List<dynamic>> icon;
+  final String iconSolid;
+  final String iconStroke;
   final String label;
   final bool selected;
   final Color active;
@@ -92,7 +106,8 @@ class _Tab extends StatelessWidget {
   final VoidCallback onTap;
 
   const _Tab({
-    required this.icon,
+    required this.iconSolid,
+    required this.iconStroke,
     required this.label,
     required this.selected,
     required this.active,
@@ -114,11 +129,16 @@ class _Tab extends StatelessWidget {
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            HugeIcon(
-              icon: icon,
-              size: 22,
-              color: selected ? active : inactive,
+            SvgPicture.asset(
+              selected ? iconSolid : iconStroke,
+              width: 22,
+              height: 22,
+              colorFilter: ColorFilter.mode(
+                selected ? active : inactive,
+                BlendMode.srcIn,
+              ),
             ),
             const SizedBox(height: 3),
             Text(
@@ -165,10 +185,11 @@ class _CenterTab extends StatelessWidget {
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [primary, secondary],
@@ -185,10 +206,14 @@ class _CenterTab extends StatelessWidget {
                 ],
               ),
               child: Center(
-                child: HugeIcon(
-                  icon: HugeIcons.strokeRoundedAiBrain03,
-                  size: 20,
-                  color: Colors.white,
+                child: SvgPicture.asset(
+                  selected ? 'assets/icons/brain-solid.svg' : 'assets/icons/brain-stroke.svg',
+                  width: 20,
+                  height: 20,
+                  colorFilter: const ColorFilter.mode(
+                    Colors.white,
+                    BlendMode.srcIn,
+                  ),
                 ),
               ),
             ),
