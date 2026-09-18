@@ -70,7 +70,7 @@ export default function ComponentsPage() {
   return (
     <main className="min-h-screen">
       <Header showSearch searchValue={searchQuery} onSearchChange={setSearchQuery} />
-      <div className="showcase-layout rounded-t-3xl mt-0">
+      <div className="showcase-layout">
         <ShowcaseLeftSidebar
           selectedComponent={selectedComponent}
           onSelectComponent={handleSelectComponent}

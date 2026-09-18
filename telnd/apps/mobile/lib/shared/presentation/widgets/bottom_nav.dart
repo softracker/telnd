@@ -15,28 +15,21 @@ class BottomNav extends StatelessWidget {
     final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF94A3B8);
 
     return Container(
-      color: isDark
-          ? const Color(0xFF141E2D)
-          : Colors.white,
-      child: SafeArea(
-        top: false,
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: isDark
-                ? const Color(0xFF1A2639)
-                : const Color(0xFFF8F9FB),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
-                blurRadius: 20,
-                offset: const Offset(0, 4),
-              ),
-            ],
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+      decoration: BoxDecoration(
+        color: isDark
+            ? const Color(0xFF1A2639)
+            : const Color(0xFFF8F9FB),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
           ),
-          child: Row(
+        ],
+      ),
+      child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _Tab(
@@ -77,8 +70,6 @@ class BottomNav extends StatelessWidget {
                 onTap: () => context.go('/profile'),
               ),
             ],
-          ),
-        ),
       ),
     );
   }
