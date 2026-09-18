@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "marked": "^18.0.12",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174",
+    "pptxgenjs": "^4.0.1",
+    "puppeteer-core": "^25.10.0"
+  },
+  "name": "telnd-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

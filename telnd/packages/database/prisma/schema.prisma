@@ -1,0 +1,2247 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+// ============================================
+// Users & Authentication
+// ============================================
+
+model User {
+  id                String    @id @default(uuid())
+  email             String?   @unique
+  phone             String?   @unique
+  passwordHash      String?
+  role              UserRole  @default(CANDIDATE)
+  firstName         String
+  lastName          String
+  avatar            String?
+  isEmailVerified   Boolean   @default(false)
+  isPhoneVerified    Boolean   @default(false)
+  isIdentityVerified Boolean  @default(false)
+  preferredLanguage String    @default("en")
+  countryId         String?
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  candidateProfile  CandidateProfile?
+  companyMemberships CompanyTeamMember[]
+  companyOwner      Company?
+  refreshTokens     RefreshToken[]
+  sessions          Session[]
+  country           Country?   @relation(fields: [countryId], references: [id])
+  
+  // New relations
+  capabilities      UserCapability[]
+  tutorProfile      TutorProfile?
+  tutorBookingsAsStudent TutorBooking[] @relation("TutorBookingsAsStudent")
+  tutorBookingsAsTutor   TutorBooking[] @relation("TutorBookingsAsTutor")
+  tutorClassesAsStudent  TutorClass[]   @relation("TutorClassesAsStudent")
+  tutorClassesAsTutor    TutorClass[]   @relation("TutorClassesAsTutor")
+  tutorExamsAsStudent    TutorExam[]    @relation("TutorExamsAsStudent")
+  tutorExamsAsTutor      TutorExam[]    @relation("TutorExamsAsTutor")
+  tutorReportsAsStudent  TutorReport[]  @relation("TutorReportsAsStudent")
+  tutorReportsAsTutor    TutorReport[]  @relation("TutorReportsAsTutor")
+  tutorReportsAsGuardian TutorReport[]  @relation("TutorReportsAsGuardian")
+  merchantOwner     Merchant[]
+  merchantStaff     MerchantStaff[]
+  merchantStudent   MerchantStudent[]
+  merchantFees      MerchantFee[]
+  lmsInstructor     LMSCourse[]
+  lmsEnrollments    LMSEnrollment[]
+  lmsProgress       LMSProgress[]
+  lmsDiscussions    LMSDiscussion[]
+  lmsCertificates   LMSCertificate[]
+  subscriptions     UserSubscription[]
+  paymentTransactions PaymentTransaction[]
+  wallet            Wallet?
+  couponUsages      CouponUsage[]
+  invoices          Invoice[]
+  adminUser         AdminUser?
+  adminActions      AdminAction[]
+  supportTickets    SupportTicket[]
+  supportMessages   SupportMessage[]
+  mapPinBookmarks   MapPinBookmark[]
+  notificationPreference NotificationPreference?
+  reports           Report[]
+  verificationAttempts VerificationRequest[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+  @@index([countryId])
+}
+
+enum UserRole {
+  CANDIDATE
+  EMPLOYER
+  ADMIN
+  CREATOR
+  FREELANCER
+  AGENCY
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  token        String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+// ============================================
+// Candidate Profile
+// ============================================
+
+model CandidateProfile {
+  id                   String    @id @default(uuid())
+  userId               String    @unique
+  aboutMe              String?
+  currentPosition      String?
+  desiredPosition      String?
+  careerLevel          CareerLevel?
+  experienceYears      Int?
+  industries           String[]
+  employmentType       EmploymentType?
+  expectedSalary       Int?
+  expectedSalaryCurrency String  @default("BDT")
+  preferredLocations   String[]
+  workPreference       WorkPreference?
+  availability         String?
+  noticePeriod         String?
+  location             String?
+  latitude             Float?
+  longitude            Float?
+  nationality          String?
+  languages            String[]
+  careerScore          Int       @default(0)
+  phoneVerified        VerificationStatus @default(PENDING)
+  emailVerified        VerificationStatus @default(PENDING)
+  identityVerified     VerificationStatus @default(PENDING)
+  educationVerified    VerificationStatus @default(PENDING)
+  experienceVerified   VerificationStatus @default(PENDING)
+  skillsVerified       VerificationStatus @default(PENDING)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  education            Education[]
+  skills               Skill[]
+  experience           Experience[]
+  portfolio            Portfolio[]
+  savedJobs            SavedJob[]
+  applications         Application[]
+
+  @@index([userId])
+  @@index([careerScore])
+  @@index([location])
+}
+
+enum CareerLevel {
+  ENTRY
+  JUNIOR
+  MID
+  SENIOR
+  LEAD
+  MANAGER
+  DIRECTOR
+  VP
+  C_LEVEL
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  FREELANCE
+}
+
+enum WorkPreference {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model Education {
+  id            String   @id @default(uuid())
+  profileId     String
+  institution   String
+  degree        String
+  major         String
+  graduationYear Int
+  gpa           Float?
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  profile       CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model Skill {
+  id                String        @id @default(uuid())
+  profileId         String
+  name              String
+  category          SkillCategory
+  level             SkillLevel
+  yearsOfExperience Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  profile           CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@index([name])
+}
+
+enum SkillCategory {
+  TECHNICAL
+  SOFT
+  INDUSTRY
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model Experience {
+  id            String    @id @default(uuid())
+  profileId     String
+  company       String
+  position      String
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean   @default(false)
+  description   String?
+  achievements  String[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile       CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model Portfolio {
+  id          String        @id @default(uuid())
+  profileId   String
+  title       String
+  description String?
+  url         String
+  type        PortfolioType
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+enum PortfolioType {
+  PROJECT
+  GITHUB
+  LINKEDIN
+  WEBSITE
+  OTHER
+}
+
+// ============================================
+// Company & Employer
+// ============================================
+
+model Company {
+  id            String   @id @default(uuid())
+  ownerId       String
+  name          String
+  slug          String   @unique
+  description   String?
+  website       String?
+  industry      String?
+  location      String?
+  latitude      Float?
+  longitude     Float?
+  size          CompanySize?
+  logo          String?
+  coverImage    String?
+  isVerified    Boolean  @default(false)
+  trustScore    Float    @default(0)
+  responseRate  Float?
+  activeJobs    Int      @default(0)
+  totalHires    Int      @default(0)
+  avgTimeToHire Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner         User     @relation(fields: [ownerId], references: [id])
+  teamMembers   CompanyTeamMember[]
+  jobs          Job[]
+
+  @@unique([ownerId])
+  @@index([slug])
+  @@index([industry])
+}
+
+enum CompanySize {
+  ONE_TO_TEN
+  ELEVEN_TO_50
+  FIFTY_ONE_TO_200
+  TWO_HUNDRED_ONE_TO_500
+  FIVE_HUNDRED_ONE_TO_1000
+  OVER_1000
+}
+
+model CompanyTeamMember {
+  id        String      @id @default(uuid())
+  companyId String
+  userId    String
+  role      CompanyRole @default(RECRUITER)
+  invitedAt DateTime    @default(now())
+  acceptedAt DateTime?
+
+  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id])
+
+  @@unique([companyId, userId])
+  @@index([companyId])
+  @@index([userId])
+}
+
+enum CompanyRole {
+  OWNER
+  ADMIN
+  RECRUITER
+  VIEWER
+}
+
+// ============================================
+// Jobs
+// ============================================
+
+model Job {
+  id                      String    @id @default(uuid())
+  companyId               String
+  title                   String
+  department              String?
+  description             String
+  responsibilities        String[]
+  requirements            String[]
+  preferredQualifications String[]
+  benefits                String[]
+  salaryMin               Int?
+  salaryMax               Int?
+  salaryCurrency          String    @default("BDT")
+  employmentType          EmploymentType
+  workplaceType           WorkplaceType
+  location                String
+  latitude                Float?
+  longitude               Float?
+  vacancies               Int       @default(1)
+  deadline                DateTime?
+  visibility              JobVisibility @default(NORMAL)
+  status                  JobStatus    @default(DRAFT)
+  allowExternalCV         Boolean   @default(true)
+  requireCV               Boolean   @default(true)
+  requirePortfolio        Boolean   @default(false)
+  assessmentId            String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  company                 Company   @relation(fields: [companyId], references: [id])
+  customQuestions         JobCustomQuestion[]
+  mandatoryRequirements   MandatoryRequirement[]
+  applications            Application[]
+  savedJobs               SavedJob[]
+
+  @@index([companyId])
+  @@index([status])
+  @@index([employmentType])
+  @@index([workplaceType])
+  @@index([location])
+  @@index([salaryMin, salaryMax])
+  @@index([createdAt])
+}
+
+enum WorkplaceType {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum JobVisibility {
+  NORMAL
+  FEATURED
+  URGENT
+  SPONSORED
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+model JobCustomQuestion {
+  id       String @id @default(uuid())
+  jobId    String
+  question String
+  type     QuestionType
+  required Boolean @default(true)
+  options  String[]
+
+  job      Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+enum QuestionType {
+  TEXT
+  TEXTAREA
+  SELECT
+  NUMBER
+  FILE
+}
+
+model MandatoryRequirement {
+  id     String @id @default(uuid())
+  jobId  String
+  type   RequirementType
+  value  String
+  strict Boolean @default(true)
+
+  job    Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+enum RequirementType {
+  UNIVERSITY
+  DEGREE
+  MAJOR
+  EXPERIENCE
+  CERTIFICATION
+  OTHER
+}
+
+// ============================================
+// Applications
+// ============================================
+
+model Application {
+  id                    String            @id @default(uuid())
+  jobId                 String
+  candidateId           String
+  status                ApplicationStatus @default(APPLIED)
+  cvUrl                 String?
+  coverLetter           String?
+  assessmentScore       Float?
+  matchScore            Float?
+  appliedAt             DateTime          @default(now())
+  viewedAt              DateTime?
+  shortlistedAt         DateTime?
+  assessmentCompletedAt DateTime?
+  interviewScheduledAt  DateTime?
+  offerSentAt           DateTime?
+  hiredAt               DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  job                   Job               @relation(fields: [jobId], references: [id])
+  candidate             CandidateProfile  @relation(fields: [candidateId], references: [id])
+  answers               ApplicationAnswer[]
+  interviews            Interview[]
+  offers                Offer[]
+  videoInterviews       VideoInterview[]
+
+  @@unique([jobId, candidateId])
+  @@index([jobId])
+  @@index([candidateId])
+  @@index([status])
+  @@index([appliedAt])
+}
+
+enum ApplicationStatus {
+  APPLIED
+  VIEWED
+  SHORTLISTED
+  ASSESSMENT
+  INTERVIEW
+  FINAL_INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+model ApplicationAnswer {
+  id            String      @id @default(uuid())
+  applicationId String
+  questionId    String
+  question      String
+  answer        String
+
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+}
+
+// ============================================
+// Interviews & Offers
+// ============================================
+
+model Interview {
+  id            String          @id @default(uuid())
+  applicationId String
+  type          InterviewType
+  scheduledAt   DateTime
+  duration      Int
+  location      String?
+  meetingUrl    String?
+  notes         String?
+  status        InterviewStatus @default(SCHEDULED)
+  rating        Int?
+  strengths     String[]
+  weaknesses    String[]
+  feedbackNotes String?
+  recommendation String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  application   Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([scheduledAt])
+}
+
+enum InterviewType {
+  PHONE
+  VIDEO
+  ONSITE
+  AI_MOCK
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+model Offer {
+  id              String     @id @default(uuid())
+  applicationId   String
+  position        String
+  salary          Int
+  salaryCurrency  String     @default("BDT")
+  benefits        String[]
+  joiningDate     DateTime
+  location        String
+  probationPeriod String?
+  contractDetails String?
+  status          OfferStatus @default(PENDING)
+  sentAt          DateTime   @default(now())
+  respondedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([status])
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  NEGOTIATING
+}
+
+// ============================================
+// Invitations
+// ============================================
+
+model Invitation {
+  id          String           @id @default(uuid())
+  employerId  String
+  candidateId String
+  jobId       String?
+  type        InvitationType
+  message     String?
+  status      InvitationStatus @default(PENDING)
+  sentAt      DateTime         @default(now())
+  respondedAt DateTime?
+
+  @@index([employerId])
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([status])
+}
+
+enum InvitationType {
+  INTERVIEW
+  JOB_OPPORTUNITY
+  ASSESSMENT
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  ASKED_QUESTIONS
+}
+
+// ============================================
+// Saved Jobs
+// ============================================
+
+model SavedJob {
+  id          String   @id @default(uuid())
+  profileId   String
+  jobId       String
+  createdAt   DateTime @default(now())
+
+  profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job         Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, jobId])
+  @@index([profileId])
+  @@index([jobId])
+}
+
+// ============================================
+// Notifications
+// ============================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  APPLICATION_STATUS
+  INTERVIEW_REMINDER
+  ASSESSMENT_REMINDER
+  OFFER_UPDATE
+  JOB_ALERT
+  PROFILE_IMPROVEMENT
+  NEW_MESSAGE
+  INCOMING_CALL
+  SYSTEM
+}
+
+// ============================================
+// In-App Messaging (Future)
+// ============================================
+
+model Conversation {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    Message[]
+  participants ConversationParticipant[]
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime?
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model Message {
+  id             String      @id @default(uuid())
+  conversationId String
+  senderId       String
+  type           MessageType @default(TEXT)
+  content        String?
+  fileUrl        String?
+  fileName       String?
+  fileSize       Int?
+  replyToId      String?
+  isEdited       Boolean     @default(false)
+  isDeleted      Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  reactions      MessageReaction[]
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  VOICE
+  SYSTEM
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+}
+
+// ============================================
+// Audio/Video Calls (Future)
+// ============================================
+
+model CallLog {
+  id             String     @id @default(uuid())
+  callerId       String
+  receiverId     String
+  type           CallType
+  status         CallStatus @default(MISSED)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  duration       Int?
+  recordingUrl   String?
+  createdAt      DateTime   @default(now())
+
+  @@index([callerId])
+  @@index([receiverId])
+  @@index([createdAt])
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  MISSED
+  ANSWERED
+  REJECTED
+  CANCELLED
+  FAILED
+}
+
+// ============================================
+// Video Interviews (Future)
+// ============================================
+
+model VideoInterview {
+  id            String          @id @default(uuid())
+  applicationId String
+  scheduledAt   DateTime
+  duration      Int
+  meetingUrl    String?
+  status        InterviewStatus @default(SCHEDULED)
+  recordingUrl  String?
+  transcriptUrl String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  application   Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  analysis      InterviewAnalysis?
+
+  @@index([applicationId])
+  @@index([scheduledAt])
+}
+
+model InterviewAnalysis {
+  id              String  @id @default(uuid())
+  interviewId     String  @unique
+  overallScore    Float?
+  communicationScore Float?
+  technicalScore  Float?
+  confidenceScore Float?
+  fillerWordCount Int?
+  transcript      String?
+  strengths       String[]
+  weaknesses      String[]
+  recommendations String[]
+  createdAt       DateTime @default(now())
+
+  interview       VideoInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// Document Verification (Future)
+// ============================================
+
+model VerificationRequest {
+  id          String              @id @default(uuid())
+  userId      String
+  type        VerificationType
+  status      VerificationProcessStatus @default(PENDING)
+  submittedAt DateTime            @default(now())
+  reviewedAt  DateTime?
+  reviewedBy  String?
+  rejectionReason String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  documents   Document[]
+  faceMatch   FaceMatch?
+  user        User         @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+}
+
+enum VerificationType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVING_LICENSE
+  STUDENT_ID
+  PROFESSIONAL_CERT
+}
+
+enum VerificationProcessStatus {
+  PENDING
+  PROCESSING
+  VERIFIED
+  REJECTED
+  FLAGGED_FOR_REVIEW
+}
+
+model Document {
+  id                 String              @id @default(uuid())
+  verificationRequestId String
+  fileUrl            String
+  fileType           String
+  ocrData            Json?
+  extractedText      String?
+  isAuthentic        Boolean?
+  tamperingScore     Float?
+  createdAt          DateTime            @default(now())
+
+  verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+
+  @@index([verificationRequestId])
+}
+
+model FaceMatch {
+  id                 String              @id @default(uuid())
+  verificationRequestId String  @unique
+  selfieUrl          String
+  idPhotoUrl         String
+  matchScore         Float?
+  isMatch            Boolean?
+  createdAt          DateTime            @default(now())
+
+  verificationRequest VerificationRequest @relation(fields: [verificationRequestId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// Internationalization (Future)
+// ============================================
+
+model Country {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  name          String
+  isEnabled     Boolean  @default(false)
+  currency      String
+  currencySymbol String
+  phoneCode     String
+  phoneFormat   String
+  dateFormat    String   @default("DD/MM/YYYY")
+  timeZone      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  languages     CountryLanguage[]
+  users         User[]
+
+  @@index([code])
+}
+
+model Language {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  nativeName String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  countries CountryLanguage[]
+  translations Translation[]
+
+  @@index([code])
+}
+
+model CountryLanguage {
+  id         String   @id @default(uuid())
+  countryId  String
+  languageId String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  country    Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  language   Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, languageId])
+  @@index([countryId])
+  @@index([languageId])
+}
+
+model Translation {
+  id         String   @id @default(uuid())
+  languageId String
+  key        String
+  value      String
+  context    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  language   Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+
+  @@unique([languageId, key])
+  @@index([languageId])
+  @@index([key])
+}
+
+// ============================================
+// 57. User Capabilities
+// ============================================
+model UserCapability {
+  id          String   @id @default(cuid())
+  userId      String
+  type        UserCapabilityType
+  isActive    Boolean  @default(true)
+  verifiedAt DateTime?
+  expiresAt   DateTime?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
+  @@index([type])
+}
+
+enum UserCapabilityType {
+  JOB_SEEKER
+  TUTOR
+  FREELANCER
+  CREATOR
+  STUDENT
+  GUARDIAN
+}
+
+// ============================================
+// 58. Tutor System
+// ============================================
+model TutorProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  bio             String?  @db.Text
+  subjects        String[]
+  hourlyRate      Decimal? @db.Decimal(10, 2)
+  currency        String?  @default("BDT")
+  experience      Int?     @default(0)
+  education       Json?
+  certifications  Json?
+  availability    Json?
+  teachingStyle   String?
+  maxStudents     Int?     @default(5)
+  currentStudents Int?     @default(0)
+  rating          Decimal? @db.Decimal(3, 2) @default(0)
+  totalReviews    Int      @default(0)
+  totalHours      Decimal? @db.Decimal(10, 2) @default(0)
+  isVerified      Boolean  @default(false)
+  isAvailable     Boolean  @default(true)
+  location        Json?
+  lat             Float?
+  lng             Float?
+  address         String?  @db.Text
+  area            String?
+  city            String?
+  country         String?  @default("Bangladesh")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([subjects])
+  @@index([city])
+  @@index([isAvailable])
+}
+
+model TutorBooking {
+  id           String              @id @default(cuid())
+  studentId    String
+  tutorId      String
+  subject      String
+  description  String?             @db.Text
+  startDate    DateTime
+  endDate      DateTime?
+  duration     Int                 @default(60) // minutes
+  rate         Decimal?            @db.Decimal(10, 2)
+  currency     String?             @default("BDT")
+  status       TutorBookingStatus  @default(PENDING)
+  paymentId    String?
+  notes        String?             @db.Text
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  student User          @relation("TutorBookingsAsStudent", fields: [studentId], references: [id])
+  tutor   User          @relation("TutorBookingsAsTutor", fields: [tutorId], references: [id])
+  classes  TutorClass[]
+  exams    TutorExam[]
+  reports  TutorReport[]
+  payment  PaymentTransaction? @relation(fields: [paymentId], references: [id])
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([status])
+}
+
+enum TutorBookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+model TutorClass {
+  id         String   @id @default(cuid())
+  bookingId  String
+  tutorId    String
+  studentId  String
+  subject    String
+  startTime  DateTime
+  endTime    DateTime?
+  status     String   @default("scheduled")
+  notes      String?  @db.Text
+  rating     Int?
+  feedback   String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  booking TutorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tutor   User         @relation("TutorClassesAsTutor", fields: [tutorId], references: [id])
+  student User         @relation("TutorClassesAsStudent", fields: [studentId], references: [id])
+
+  @@index([bookingId])
+  @@index([tutorId])
+  @@index([studentId])
+}
+
+model TutorExam {
+  id         String   @id @default(cuid())
+  bookingId  String
+  tutorId    String
+  studentId  String
+  title      String
+  type       String   @default("quiz")
+  questions  Json
+  totalMarks Int
+  timeLimit  Int?     // minutes
+  startTime  DateTime?
+  endTime    DateTime?
+  score      Int?
+  percentage Decimal? @db.Decimal(5, 2)
+  status     String   @default("pending")
+  feedback   String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  booking TutorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tutor   User         @relation("TutorExamsAsTutor", fields: [tutorId], references: [id])
+  student User         @relation("TutorExamsAsStudent", fields: [studentId], references: [id])
+
+  @@index([bookingId])
+  @@index([tutorId])
+  @@index([studentId])
+}
+
+model TutorReport {
+  id         String   @id @default(cuid())
+  bookingId  String
+  tutorId    String
+  studentId  String
+  guardianId String?
+  title      String
+  content    String   @db.Text
+  type       String   @default("progress")
+  rating     Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  booking  TutorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tutor    User         @relation("TutorReportsAsTutor", fields: [tutorId], references: [id])
+  student  User         @relation("TutorReportsAsStudent", fields: [studentId], references: [id])
+  guardian User?        @relation("TutorReportsAsGuardian", fields: [guardianId], references: [id])
+
+  @@index([bookingId])
+  @@index([tutorId])
+  @@index([studentId])
+  @@index([guardianId])
+}
+
+// ============================================
+// 59. Merchant System
+// ============================================
+model Merchant {
+  id           String       @id @default(cuid())
+  ownerId      String
+  name         String
+  slug         String       @unique
+  type         MerchantType
+  description  String?      @db.Text
+  logo         String?
+  coverImage   String?
+  website      String?
+  email        String?
+  phone        String?
+  address      String?      @db.Text
+  city         String?
+  country      String?      @default("Bangladesh")
+  lat          Float?
+  lng          Float?
+  rating       Decimal?     @db.Decimal(3, 2) @default(0)
+  totalReviews Int          @default(0)
+  isVerified   Boolean      @default(false)
+  isActive     Boolean      @default(true)
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  owner          User                @relation(fields: [ownerId], references: [id])
+  staff          MerchantStaff[]
+  students       MerchantStudent[]
+  courses        MerchantCourse[]
+  attendance     MerchantAttendance[]
+  exams          MerchantExam[]
+  announcements  MerchantAnnouncement[]
+  fees           MerchantFee[]
+  documents      MerchantDocument[]
+  routines       MerchantRoutine[]
+  packages       Package[]           @relation("MerchantPackages")
+  lmsCourses     LMSCourse[]
+
+  @@index([ownerId])
+  @@index([type])
+  @@index([city])
+  @@index([isVerified])
+}
+
+enum MerchantType {
+  COACHING_CENTER
+  SCHOOL
+  COLLEGE
+  UNIVERSITY
+  TRAINING_INSTITUTE
+  OTHER
+}
+
+model MerchantStaff {
+  id         String         @id @default(cuid())
+  merchantId String
+  userId     String
+  role       StaffRole
+  isApproved Boolean        @default(false)
+  joinedAt   DateTime       @default(now())
+  leftAt     DateTime?
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([merchantId, userId])
+  @@index([merchantId])
+  @@index([userId])
+}
+
+enum StaffRole {
+  OWNER
+  ADMIN
+  TEACHER
+  ACCOUNTANT
+  SUPPORT
+  CUSTOM
+}
+
+model MerchantStudent {
+  id         String   @id @default(cuid())
+  merchantId String
+  userId     String
+  courseId   String?
+  enrolledAt DateTime @default(now())
+  leftAt     DateTime?
+  isActive   Boolean  @default(true)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant  Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id])
+  course    MerchantCourse? @relation(fields: [courseId], references: [id])
+  attendance MerchantAttendance[]
+  exams     MerchantExam[]
+
+  @@unique([merchantId, userId])
+  @@index([merchantId])
+  @@index([userId])
+}
+
+model MerchantCourse {
+  id          String   @id @default(cuid())
+  merchantId  String
+  name        String
+  description String?  @db.Text
+  duration    Int?     // weeks
+  fee         Decimal? @db.Decimal(10, 2)
+  currency    String?  @default("BDT")
+  maxStudents Int?
+  isActive    Boolean  @default(true)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant  Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  students  MerchantStudent[]
+  exams     MerchantExam[]
+
+  @@index([merchantId])
+}
+
+model MerchantAttendance {
+  id         String   @id @default(cuid())
+  merchantId String
+  studentId  String
+  date       DateTime @db.Date
+  status     AttendanceStatus
+  checkIn    DateTime?
+  checkOut   DateTime?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  student  MerchantStudent @relation(fields: [studentId], references: [id])
+
+  @@unique([merchantId, studentId, date])
+  @@index([merchantId])
+  @@index([studentId])
+  @@index([date])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+model MerchantExam {
+  id          String   @id @default(cuid())
+  merchantId  String
+  studentId   String
+  courseId    String?
+  title       String
+  description String?  @db.Text
+  totalMarks  Int
+  obtainedMarks Int?
+  percentage  Decimal? @db.Decimal(5, 2)
+  grade       String?
+  examDate    DateTime
+  status      String   @default("pending")
+  feedback    String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  student  MerchantStudent @relation(fields: [studentId], references: [id])
+  course   MerchantCourse? @relation(fields: [courseId], references: [id])
+
+  @@index([merchantId])
+  @@index([studentId])
+  @@index([courseId])
+}
+
+model MerchantAnnouncement {
+  id         String   @id @default(cuid())
+  merchantId String
+  title      String
+  content    String   @db.Text
+  type       String   @default("general")
+  target     String   @default("all")
+  isPinned   Boolean  @default(false)
+  attachments Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([isPinned])
+}
+
+model MerchantFee {
+  id         String   @id @default(cuid())
+  merchantId String
+  studentId  String
+  title      String
+  amount     Decimal  @db.Decimal(10, 2)
+  currency   String   @default("BDT")
+  dueDate    DateTime
+  paidDate   DateTime?
+  status     FeeStatus @default(PENDING)
+  paymentId  String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  student  User     @relation(fields: [studentId], references: [id])
+  payment  PaymentTransaction? @relation(fields: [paymentId], references: [id])
+
+  @@index([merchantId])
+  @@index([studentId])
+  @@index([status])
+}
+
+enum FeeStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model MerchantDocument {
+  id         String   @id @default(cuid())
+  merchantId String
+  title      String
+  type       String
+  url        String
+  size       Int?
+  mimeType   String?
+  uploadedBy String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model MerchantRoutine {
+  id         String   @id @default(cuid())
+  merchantId String
+  dayOfWeek  Int // 0-6 (Sunday-Saturday)
+  startTime  String  // HH:mm
+  endTime    String  // HH:mm
+  subject    String
+  teacher    String?
+  room       String?
+  isActive   Boolean @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([dayOfWeek])
+}
+
+// ============================================
+// 60. LMS System
+// ============================================
+model LMSCourse {
+  id           String   @id @default(cuid())
+  instructorId String
+  merchantId   String?
+  title        String
+  slug         String   @unique
+  description  String?  @db.Text
+  thumbnail    String?
+  price        Decimal? @db.Decimal(10, 2)
+  currency     String?  @default("BDT")
+  isPublished  Boolean  @default(false)
+  isFeatured   Boolean  @default(false)
+  category     String?
+  tags         String[]
+  level        CourseLevel @default(BEGINNER)
+  language     String?  @default("en")
+  duration     Int?     // total minutes
+  totalStudents Int     @default(0)
+  rating       Decimal? @db.Decimal(3, 2) @default(0)
+  totalReviews Int      @default(0)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  instructor User                @relation(fields: [instructorId], references: [id])
+  merchant   Merchant?           @relation(fields: [merchantId], references: [id])
+  modules    LMSModule[]
+  lessons    LMSLesson[]
+  enrollments LMSEnrollment[]
+  quizzes    LMSQuiz[]
+  assignments LMSAssignment[]
+  discussions LMSDiscussion[]
+  certificates LMSCertificate[]
+
+  @@index([instructorId])
+  @@index([merchantId])
+  @@index([category])
+  @@index([isPublished])
+  @@index([level])
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model LMSModule {
+  id          String   @id @default(cuid())
+  courseId     String
+  title       String
+  description String?  @db.Text
+  order       Int
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course  LMSCourse @relation(fields: [courseId], references: [id])
+  lessons LMSLesson[]
+
+  @@index([courseId])
+}
+
+model LMSLesson {
+  id        String   @id @default(cuid())
+  moduleId  String
+  courseId   String
+  title     String
+  type      LessonType
+  content   String?  @db.Text
+  videoUrl  String?
+  duration  Int?     // minutes
+  order     Int
+  isPreview Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  module  LMSModule     @relation(fields: [moduleId], references: [id])
+  course  LMSCourse     @relation(fields: [courseId], references: [id])
+  progress   LMSProgress[]
+
+  @@index([moduleId])
+  @@index([courseId])
+}
+
+enum LessonType {
+  VIDEO
+  TEXT
+  QUIZ
+  ASSIGNMENT
+  LIVE_CLASS
+  DOCUMENT
+}
+
+model LMSEnrollment {
+  id        String   @id @default(cuid())
+  courseId   String
+  userId     String
+  status    EnrollmentStatus @default(ACTIVE)
+  progress  Decimal? @db.Decimal(5, 2) @default(0) // percentage
+  completedAt DateTime?
+  certificateUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course    LMSCourse    @relation(fields: [courseId], references: [id])
+  user      User         @relation(fields: [userId], references: [id])
+  progressRecords  LMSProgress[]
+  certificate  LMSCertificate?
+
+  @@unique([courseId, userId])
+  @@index([courseId])
+  @@index([userId])
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  DROPPED
+  EXPIRED
+}
+
+model LMSProgress {
+  id           String   @id @default(cuid())
+  enrollmentId String
+  lessonId     String
+  userId       String
+  status       ProgressStatus @default(NOT_STARTED)
+  score        Decimal? @db.Decimal(5, 2)
+  timeSpent    Int?     // seconds
+  completedAt  DateTime?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enrollment LMSEnrollment @relation(fields: [enrollmentId], references: [id])
+  lesson     LMSLesson     @relation(fields: [lessonId], references: [id])
+  user       User          @relation(fields: [userId], references: [id])
+
+  @@unique([enrollmentId, lessonId])
+  @@index([enrollmentId])
+  @@index([lessonId])
+  @@index([userId])
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model LMSQuiz {
+  id          String   @id @default(cuid())
+  courseId     String
+  title       String
+  description String?  @db.Text
+  questions   Json
+  timeLimit   Int?     // minutes
+  passingScore Int    @default(60)
+  maxAttempts Int     @default(3)
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course LMSCourse @relation(fields: [courseId], references: [id])
+
+  @@index([courseId])
+}
+
+model LMSAssignment {
+  id          String   @id @default(cuid())
+  courseId     String
+  title       String
+  description String?  @db.Text
+  dueDate     DateTime?
+  maxScore    Int      @default(100)
+  allowLate   Boolean  @default(false)
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course LMSCourse @relation(fields: [courseId], references: [id])
+
+  @@index([courseId])
+}
+
+model LMSDiscussion {
+  id        String   @id @default(cuid())
+  courseId   String
+  userId    String
+  title     String
+  content   String   @db.Text
+  parentId  String?
+  upvotes   Int      @default(0)
+  downvotes Int      @default(0)
+  isAnswer  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course LMSCourse     @relation(fields: [courseId], references: [id])
+  user   User          @relation(fields: [userId], references: [id])
+  parent LMSDiscussion? @relation("DiscussionReplies", fields: [parentId], references: [id])
+  replies LMSDiscussion[] @relation("DiscussionReplies")
+
+  @@index([courseId])
+  @@index([userId])
+  @@index([parentId])
+}
+
+model LMSCertificate {
+  id           String   @id @default(cuid())
+  enrollmentId String
+  userId       String
+  courseId      String
+  certificateUrl String
+  issuedAt     DateTime @default(now())
+  expiresAt    DateTime?
+  metadata     Json?
+
+  enrollment LMSEnrollment @relation(fields: [enrollmentId], references: [id])
+  user       User          @relation(fields: [userId], references: [id])
+  course     LMSCourse     @relation(fields: [courseId], references: [id])
+
+  @@unique([enrollmentId])
+  @@index([userId])
+}
+
+// ============================================
+// 61. Packages & Subscriptions
+// ============================================
+model Package {
+  id           String       @id @default(cuid())
+  name         String
+  slug         String       @unique
+  description  String?      @db.Text
+  type         PackageType
+  tier         PackageTier  @default(FREE)
+  price        Decimal      @db.Decimal(10, 2)
+  currency     String       @default("BDT")
+  billingCycle BillingCycle @default(MONTHLY)
+  features     Json
+  limits       Json
+  isActive     Boolean      @default(true)
+  isPopular    Boolean      @default(false)
+  sortOrder    Int          @default(0)
+  trialDays    Int?         @default(0)
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  subscriptions UserSubscription[]
+  invoices      Invoice[]
+  payments      PaymentTransaction[]
+  merchants     Merchant[]          @relation("MerchantPackages")
+
+  @@index([type])
+  @@index([tier])
+  @@index([isActive])
+}
+
+enum PackageType {
+  USER
+  EMPLOYER
+  MERCHANT
+  TUTOR
+}
+
+enum PackageTier {
+  FREE
+  BASIC
+  PREMIUM
+  ENTERPRISE
+  CUSTOM
+}
+
+enum BillingCycle {
+  ONE_TIME
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+model UserSubscription {
+  id          String             @id @default(cuid())
+  userId      String
+  packageId   String
+  status      SubscriptionStatus @default(ACTIVE)
+  startDate   DateTime           @default(now())
+  endDate     DateTime?
+  trialEndsAt DateTime?
+  autoRenew   Boolean            @default(true)
+  cancelAt    DateTime?
+  metadata    Json?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  package Package @relation(fields: [packageId], references: [id])
+
+  @@index([userId])
+  @@index([packageId])
+  @@index([status])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+  TRIAL
+}
+
+// ============================================
+// 62. Payment System
+// ============================================
+model PaymentTransaction {
+  id            String          @id @default(cuid())
+  userId        String
+  packageId     String?
+  amount        Decimal         @db.Decimal(10, 2)
+  currency      String          @default("BDT")
+  status        PaymentStatus   @default(PENDING)
+  gateway       PaymentGateway
+  gatewayId     String?
+  gatewayResponse Json?
+  description   String?
+  metadata      Json?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  user   User @relation(fields: [userId], references: [id])
+  refunds PaymentRefund[]
+  tutorBookings TutorBooking[]
+  merchantFees MerchantFee[]
+  invoices Invoice[]
+  package Package? @relation(fields: [packageId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([gateway])
+  @@index([gatewayId])
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentGateway {
+  SSLCOMMERZ
+  BKASH
+  NAGAD
+  ROCKET
+  STRIPE
+  WALLET
+}
+
+model PaymentRefund {
+  id        String        @id @default(cuid())
+  paymentId String
+  amount    Decimal       @db.Decimal(10, 2)
+  reason    String?
+  status    RefundStatus  @default(PENDING)
+  gatewayId String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  payment PaymentTransaction @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// 63. Wallet System
+// ============================================
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Decimal  @db.Decimal(10, 2) @default(0)
+  currency  String   @default("BDT")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User          @relation(fields: [userId], references: [id])
+  transactions WalletTransaction[]
+
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id         String           @id @default(cuid())
+  walletId   String
+  amount     Decimal          @db.Decimal(10, 2)
+  type       WalletTxnType
+  balance    Decimal          @db.Decimal(10, 2) // balance after transaction
+  reference  String?
+  description String?
+  metadata   Json?
+  createdAt  DateTime         @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum WalletTxnType {
+  DEBIT
+  CREDIT
+  TRANSFER_IN
+  TRANSFER_OUT
+  REFUND
+  WITHDRAWAL
+}
+
+// ============================================
+// 64. Coupon System
+// ============================================
+model Coupon {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  description   String?    @db.Text
+  type          CouponType
+  value         Decimal    @db.Decimal(10, 2) // percentage or fixed amount
+  currency      String?    @default("BDT")
+  minPurchase   Decimal?   @db.Decimal(10, 2)
+  maxDiscount   Decimal?   @db.Decimal(10, 2)
+  usageLimit    Int?
+  usageCount    Int        @default(0)
+  perUserLimit  Int?       @default(1)
+  validFrom     DateTime   @default(now())
+  validUntil    DateTime
+  applicablePackages String[] // package IDs
+  isActive      Boolean    @default(true)
+  metadata      Json?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  usages CouponUsage[]
+
+  @@index([code])
+  @@index([isActive])
+  @@index([validUntil])
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED
+  FREE_TRIAL
+  UPGRADE
+  REFERRAL
+}
+
+model CouponUsage {
+  id       String   @id @default(cuid())
+  couponId String
+  userId   String
+  orderId  String?
+  amount   Decimal? @db.Decimal(10, 2)
+  usedAt   DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([couponId])
+  @@index([userId])
+  @@index([orderId])
+}
+
+// ============================================
+// 65. Invoice System
+// ============================================
+model Invoice {
+  id            String        @id @default(cuid())
+  userId        String
+  packageId     String?
+  subscriptionId String?
+  amount        Decimal       @db.Decimal(10, 2)
+  tax           Decimal?      @db.Decimal(10, 2) @default(0)
+  discount      Decimal?      @db.Decimal(10, 2) @default(0)
+  total         Decimal       @db.Decimal(10, 2)
+  currency      String        @default("BDT")
+  status        InvoiceStatus @default(PENDING)
+  dueDate       DateTime
+  paidDate      DateTime?
+  paymentId     String?
+  notes         String?       @db.Text
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id])
+  package    Package?            @relation(fields: [packageId], references: [id])
+  payment    PaymentTransaction? @relation(fields: [paymentId], references: [id])
+
+  @@index([userId])
+  @@index([packageId])
+  @@index([status])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ============================================
+// 66. Admin System
+// ============================================
+model AdminRole {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  permissions Json     @default("{}")
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users AdminUser[]
+
+  @@index([name])
+}
+
+model AdminUser {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  roleId    String
+  isActive  Boolean  @default(true)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User      @relation(fields: [userId], references: [id])
+  role   AdminRole @relation(fields: [roleId], references: [id])
+
+  @@index([userId])
+  @@index([roleId])
+}
+
+model AdminAction {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String
+  targetType String
+  targetId  String?
+  details   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([action])
+  @@index([targetType])
+  @@index([createdAt])
+}
+
+// ============================================
+// 67. Feature Flags
+// ============================================
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  isEnabled   Boolean  @default(false)
+  rolloutPercentage Int @default(100)
+  allowedRoles String[]
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+  @@index([isEnabled])
+}
+
+model MaintenanceMode {
+  id        String   @id @default(cuid())
+  isActive  Boolean  @default(false)
+  message   String?
+  startTime DateTime?
+  endTime   DateTime?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+// ============================================
+// 68. Support System
+// ============================================
+model SupportTicket {
+  id         String       @id @default(cuid())
+  userId     String
+  subject    String
+  description String       @db.Text
+  category   String
+  priority   TicketPriority @default(MEDIUM)
+  status     TicketStatus @default(OPEN)
+  assignedTo String?
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id])
+  messages SupportMessage[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+  @@index([category])
+  @@index([assignedTo])
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+model SupportMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  senderId  String
+  content   String   @db.Text
+  isInternal Boolean @default(false)
+  attachments Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+  sender User          @relation(fields: [senderId], references: [id])
+
+  @@index([ticketId])
+  @@index([senderId])
+}
+
+// ============================================
+// 69. Map System
+// ============================================
+model MapPin {
+  id         String   @id @default(cuid())
+  targetType String   // job, merchant, tutor, creator, company
+  targetId   String
+  lat        Float
+  lng        Float
+  address    String?  @db.Text
+  area       String?
+  city       String?
+  country    String?  @default("Bangladesh")
+  isExact    Boolean  @default(true) // exact vs approximate
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  views    MapPinView[]
+  bookmarks MapPinBookmark[]
+
+  @@unique([targetType, targetId])
+  @@index([targetType])
+  @@index([lat, lng])
+  @@index([city])
+}
+
+model MapPinView {
+  id      String   @id @default(cuid())
+  pinId   String
+  userId  String?
+  ip      String?
+  viewedAt DateTime @default(now())
+
+  pin MapPin @relation(fields: [pinId], references: [id])
+
+  @@index([pinId])
+  @@index([userId])
+  @@index([viewedAt])
+}
+
+model MapPinBookmark {
+  id      String   @id @default(cuid())
+  pinId   String
+  userId  String
+  createdAt DateTime @default(now())
+
+  pin  MapPin @relation(fields: [pinId], references: [id])
+  user User   @relation(fields: [userId], references: [id])
+
+  @@unique([pinId, userId])
+  @@index([pinId])
+  @@index([userId])
+}
+
+// ============================================
+// 70. Notifications
+// ============================================
+model NotificationPreference {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  email           Boolean  @default(true)
+  push            Boolean  @default(true)
+  sms             Boolean  @default(false)
+  jobAlerts       Boolean  @default(true)
+  messageAlerts   Boolean  @default(true)
+  marketingEmails Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ============================================
+// 71. Audit Log
+// ============================================
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  targetType String
+  targetId  String?
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([targetType])
+  @@index([createdAt])
+}
+
+// ============================================
+// 72. Reports
+// ============================================
+model Report {
+  id         String       @id @default(cuid())
+  reporterId String
+  targetType String       // user, job, message, content
+  targetId   String
+  reason     String
+  details    String?      @db.Text
+  status     ReportStatus @default(PENDING)
+  reviewedBy String?
+  reviewedAt DateTime?
+  resolution String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  reporter User @relation(fields: [reporterId], references: [id])
+
+  @@index([reporterId])
+  @@index([targetType])
+  @@index([status])
+  @@index([reviewedBy])
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+// ============================================
+// 73. Age Restrictions
+// ============================================
+model AgeRestriction {
+  id          String   @id @default(cuid())
+  feature     String   @unique
+  minAge      Int
+  requiresParentalConsent Boolean @default(false)
+  isActive    Boolean  @default(true)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([feature])
+}
+
+// ============================================
+// 77. Geocoding Cache
+// ============================================
+model GeocodingCache {
+  id        String   @id @default(cuid())
+  address   String   @unique
+  lat       Float
+  lng       Float
+  country   String?
+  city      String?
+  area      String?
+  components Json?
+  createdAt DateTime @default(now())
+
+  @@index([address])
+}

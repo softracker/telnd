@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TELND — Complete Project Commands</title>
+<style>
+  @page { margin: 40px 50px; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b; padding: 40px 50px; line-height: 1.6; }
+
+  .cover { text-align: center; padding: 120px 0 60px; page-break-after: always; }
+  .cover h1 { font-size: 42px; color: #2563eb; margin-bottom: 10px; }
+  .cover h2 { font-size: 20px; color: #64748b; font-weight: 400; margin-bottom: 30px; }
+  .cover .line { width: 80px; height: 4px; background: #2563eb; margin: 30px auto; border-radius: 2px; }
+  .cover p { font-size: 14px; color: #94a3b8; margin-top: 60px; }
+
+  h1 { font-size: 22px; color: #2563eb; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin: 30px 0 15px; }
+  h2 { font-size: 17px; color: #334155; margin: 20px 0 8px; }
+  h3 { font-size: 14px; color: #475569; margin: 14px 0 6px; }
+
+  .section { margin-bottom: 20px; }
+
+  .cmd-block { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin: 8px 0 16px; }
+  .cmd-block code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 12.5px; }
+  .cmd { color: #1e293b; display: block; margin: 3px 0; }
+  .cmd .comment { color: #64748b; }
+  .cmd .flag { color: #2563eb; }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 13px; }
+  th { background: #2563eb; color: white; text-align: left; padding: 8px 12px; font-weight: 600; }
+  td { padding: 7px 12px; border-bottom: 1px solid #e2e8f0; }
+  tr:nth-child(even) { background: #f8fafc; }
+  td code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; background: #e2e8f0; padding: 1px 5px; border-radius: 3px; }
+
+  .env-table td:first-child { font-family: monospace; font-size: 11.5px; white-space: nowrap; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+  .badge-green { background: #dcfce7; color: #166534; }
+  .badge-blue { background: #dbeafe; color: #1e40af; }
+  .badge-orange { background: #ffedd5; color: #9a3412; }
+  .badge-purple { background: #f3e8ff; color: #6b21a8; }
+  .badge-red { background: #fee2e2; color: #991b1b; }
+
+  .page-break { page-break-before: always; }
+
+  .toc { padding: 20px 0; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { padding: 4px 0; font-size: 14px; }
+  .toc li span { color: #64748b; float: right; }
+
+  .footer { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 40px; padding-top: 15px; border-top: 1px solid #e2e8f0; }
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <h1>TELND</h1>
+  <h2>Career &amp; Talent Platform</h2>
+  <div class="line"></div>
+  <h2 style="font-size:16px; color:#334155;">Complete Project Commands Reference</h2>
+  <p>Development Setup &bull; Build &bull; Database &bull; Mobile &bull; Docker &bull; CI/CD</p>
+  <p style="margin-top:100px; font-size:12px;">Generated: September 17, 2026</p>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<h1>Table of Contents</h1>
+<div class="toc">
+<ul>
+  <li>1. Prerequisites &amp; Initial Setup</li>
+  <li>2. Infrastructure (Docker)</li>
+  <li>3. Environment Configuration</li>
+  <li>4. Database Commands (Prisma)</li>
+  <li>5. Web App (Next.js)</li>
+  <li>6. Admin Dashboard (Next.js)</li>
+  <li>7. Background Workers</li>
+  <li>8. Shared Packages</li>
+  <li>9. Code Quality (Lint, Format, Typecheck)</li>
+  <li>10. Testing</li>
+  <li>11. Mobile App (Flutter - Android)</li>
+  <li>12. Mobile App (Flutter - iOS)</li>
+  <li>13. Docker Builds (Production)</li>
+  <li>14. Utility Scripts</li>
+  <li>15. CI/CD Pipeline</li>
+  <li>16. Quick Reference — All Commands</li>
+</ul>
+</div>
+
+<!-- SECTION 1: PREREQUISITES -->
+<div class="page-break"></div>
+<h1>1. Prerequisites &amp; Initial Setup</h1>
+
+<h2>System Requirements</h2>
+<table>
+  <tr><th>Tool</th><th>Version</th><th>Purpose</th></tr>
+  <tr><td>Node.js</td><td>20+</td><td>Runtime for web, admin, workers</td></tr>
+  <tr><td>npm</td><td>10+</td><td>Package manager</td></tr>
+  <tr><td>Docker</td><td>Latest</td><td>PostgreSQL, Redis, MailHog</td></tr>
+  <tr><td>Flutter</td><td>3.2+</td><td>Mobile app (Android/iOS)</td></tr>
+  <tr><td>Java JDK</td><td>17</td><td>Android builds</td></tr>
+  <tr><td>Android SDK</td><td>36</td><td>Android builds</td></tr>
+</table>
+
+<h2>First-Time Setup Commands</h2>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Navigate to project root</span></code>
+  <code class="cmd">cd "telnd app/telnd"</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Install all Node.js dependencies (monorepo workspaces)</span></code>
+  <code class="cmd">npm install</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Start infrastructure containers</span></code>
+  <code class="cmd">docker compose up -d</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Create environment file from template</span></code>
+  <code class="cmd">cp .env.example .env</code>
+  <code class="cmd"><span class="comment"># Then edit .env and fill in your API keys</span></code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Also copy .env to packages/database/</span></code>
+  <code class="cmd">cp .env.example packages/database/.env</code>
+  <code class="cmd"><span class="comment"># Edit packages/database/.env with correct DATABASE_URL</span></code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Generate Prisma client</span></code>
+  <code class="cmd">npm run db:generate</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run database migrations</span></code>
+  <code class="cmd">npm run db:migrate</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Seed the database</span></code>
+  <code class="cmd">npm run db:seed</code>
+</div>
+
+<!-- SECTION 2: INFRASTRUCTURE -->
+<h1>2. Infrastructure (Docker)</h1>
+
+<h2>Docker Services</h2>
+<table>
+  <tr><th>Service</th><th>Image</th><th>Port</th><th>Purpose</th></tr>
+  <tr><td>PostgreSQL + PostGIS</td><td>postgis/postgis:16-3.4</td><td>5432</td><td>Primary database with geospatial support</td></tr>
+  <tr><td>Redis</td><td>redis:7-alpine</td><td>6379</td><td>Cache, queues (BullMQ)</td></tr>
+  <tr><td>MailHog</td><td>mailhog/mailhog</td><td>1025 / 8025</td><td>Email testing (SMTP / Web UI)</td></tr>
+</table>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Start all services in background</span></code>
+  <code class="cmd">docker compose up -d</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Start specific services</span></code>
+  <code class="cmd">docker compose up -d postgres redis</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Stop all services</span></code>
+  <code class="cmd">docker compose down</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># View running containers</span></code>
+  <code class="cmd">docker compose ps</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Tail logs (all services)</span></code>
+  <code class="cmd">docker compose logs -f</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Tail logs (specific service)</span></code>
+  <code class="cmd">docker compose logs -f postgres</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Restart a service</span></code>
+  <code class="cmd">docker compose restart redis</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Destroy all data (volumes)</span></code>
+  <code class="cmd">docker compose down -v</code>
+</div>
+
+<h2>MailHog</h2>
+<p style="font-size:13px; margin-bottom:10px;">MailHog captures all outgoing emails during development.</p>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># SMTP server: localhost:1025</span></code>
+  <code class="cmd"><span class="comment"># Web UI: http://localhost:8025</span></code>
+</div>
+
+<!-- SECTION 3: ENVIRONMENT -->
+<div class="page-break"></div>
+<h1>3. Environment Configuration</h1>
+
+<p style="font-size:13px; margin-bottom:12px;">Copy <code>.env.example</code> to <code>.env</code> (root) and <code>packages/database/.env</code>, then configure:</p>
+
+<h2>Database</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>PostgreSQL connection string (e.g., <code>postgresql://telnd:telnd_password@localhost:5432/telnd</code>)</td></tr>
+  <tr><td><code>REDIS_URL</code></td><td>Redis connection string (e.g., <code>redis://localhost:6379</code>)</td></tr>
+</table>
+
+<h2>Authentication</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>JWT_SECRET</code></td><td>Secret key for JWT access tokens</td></tr>
+  <tr><td><code>JWT_REFRESH_SECRET</code></td><td>Secret key for JWT refresh tokens</td></tr>
+  <tr><td><code>JWT_EXPIRES_IN</code></td><td>Access token expiry (e.g., <code>15m</code>)</td></tr>
+  <tr><td><code>JWT_REFRESH_EXPIRES_IN</code></td><td>Refresh token expiry (e.g., <code>7d</code>)</td></tr>
+</table>
+
+<h2>Third-Party Services</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>GOOGLE_MAPS_API_KEY</code></td><td>Google Maps API key</td></tr>
+  <tr><td><code>OPENAI_API_KEY</code></td><td>OpenAI API key (AI features)</td></tr>
+  <tr><td><code>FIREBASE_PROJECT_ID</code></td><td>Firebase project (push notifications)</td></tr>
+  <tr><td><code>FIREBASE_PRIVATE_KEY</code></td><td>Firebase service account key</td></tr>
+  <tr><td><code>FIREBASE_CLIENT_EMAIL</code></td><td>Firebase service account email</td></tr>
+</table>
+
+<h2>Payment Gateways</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>SSLCOMMERZ_STORE_ID / STORE_PASS</code></td><td>SSLCommerz credentials</td></tr>
+  <tr><td><code>BKASH_APP_KEY / APP_SECRET / USERNAME / PASSWORD</code></td><td>bKash credentials</td></tr>
+  <tr><td><code>NAGAD_MERCHANT_ID / PUBLIC_KEY / PRIVATE_KEY</code></td><td>Nagad credentials</td></tr>
+  <tr><td><code>ROCKET_API_KEY / SECRET_KEY / MERCHANT_ID</code></td><td>Rocket credentials</td></tr>
+</table>
+
+<h2>Email &amp; SMS</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS</code></td><td>SMTP configuration</td></tr>
+  <tr><td><code>EMAIL_FROM</code></td><td>Sender email address</td></tr>
+  <tr><td><code>SMS_API_KEY / SMS_API_URL</code></td><td>SMS provider credentials</td></tr>
+</table>
+
+<h2>Storage</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>STORAGE_PROVIDER</code></td><td><code>local</code> or <code>s3</code></td></tr>
+  <tr><td><code>STORAGE_BUCKET / ACCESS_KEY / SECRET_KEY / REGION / ENDPOINT</code></td><td>S3-compatible storage config</td></tr>
+</table>
+
+<h2>App Configuration</h2>
+<table class="env-table">
+  <tr><th>Variable</th><th>Description</th></tr>
+  <tr><td><code>NEXT_PUBLIC_API_URL</code></td><td>API base URL (default: <code>http://localhost:3001</code>)</td></tr>
+  <tr><td><code>NEXT_PUBLIC_APP_URL</code></td><td>App URL (default: <code>http://localhost:3000</code>)</td></tr>
+  <tr><td><code>NEXT_PUBLIC_GOOGLE_MAPS_KEY</code></td><td>Google Maps client-side key</td></tr>
+  <tr><td><code>APP_ENV</code></td><td><code>development</code> or <code>production</code></td></tr>
+</table>
+
+<!-- SECTION 4: DATABASE -->
+<div class="page-break"></div>
+<h1>4. Database Commands (Prisma)</h1>
+
+<p style="font-size:13px; margin-bottom:12px;">All database commands run via npm scripts from the project root.</p>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Generate Prisma client (run after schema changes)</span></code>
+  <code class="cmd">npm run db:generate</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run development migrations (creates tables)</span></code>
+  <code class="cmd">npm run db:migrate</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Seed database with initial data</span></code>
+  <code class="cmd">npm run db:seed</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Open Prisma Studio (visual database browser)</span></code>
+  <code class="cmd">npx prisma studio</code>
+  <code class="cmd"><span class="comment"># Or from packages/database/:</span></code>
+  <code class="cmd">cd packages/database && npx prisma studio</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Reset database (drops all data, re-runs migrations)</span></code>
+  <code class="cmd">cd packages/database && npx prisma migrate reset</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Deploy migrations to production</span></code>
+  <code class="cmd">cd packages/database && npx prisma migrate deploy</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Format Prisma schema</span></code>
+  <code class="cmd">cd packages/database && npx prisma format</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Validate Prisma schema</span></code>
+  <code class="cmd">cd packages/database && npx prisma validate</code>
+</div>
+
+<!-- SECTION 5: WEB APP -->
+<h1>5. Web App (Next.js)</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Start development server (http://localhost:3000)</span></code>
+  <code class="cmd">npm run dev</code>
+  <code class="cmd"><span class="comment"># Or explicitly:</span></code>
+  <code class="cmd">npm run dev:web</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build for production</span></code>
+  <code class="cmd">npm run build</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Start production server</span></code>
+  <code class="cmd">cd apps/web && npm run start</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Lint web app</span></code>
+  <code class="cmd">cd apps/web && npm run lint</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Typecheck web app</span></code>
+  <code class="cmd">cd apps/web && npm run typecheck</code>
+</div>
+
+<!-- SECTION 6: ADMIN -->
+<h1>6. Admin Dashboard (Next.js)</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Start admin dev server (http://localhost:3002)</span></code>
+  <code class="cmd">npm run dev:admin</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build admin for production</span></code>
+  <code class="cmd">npm run build:admin</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Start admin production server</span></code>
+  <code class="cmd">cd apps/admin && npm run start</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Lint admin app</span></code>
+  <code class="cmd">cd apps/admin && npm run lint</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Typecheck admin app</span></code>
+  <code class="cmd">cd apps/admin && npm run typecheck</code>
+</div>
+
+<!-- SECTION 7: WORKERS -->
+<div class="page-break"></div>
+<h1>7. Background Workers</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Start worker in watch mode (auto-restart on changes)</span></code>
+  <code class="cmd">cd services/workers && npm run dev</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build workers for production</span></code>
+  <code class="cmd">cd services/workers && npm run build</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Start workers in production</span></code>
+  <code class="cmd">cd services/workers && npm run start</code>
+</div>
+
+<!-- SECTION 8: SHARED PACKAGES -->
+<h1>8. Shared Packages</h1>
+
+<table>
+  <tr><th>Package</th><th>Path</th><th>Purpose</th></tr>
+  <tr><td><code>@telnd/types</code></td><td><code>packages/types</code></td><td>Shared TypeScript types</td></tr>
+  <tr><td><code>@telnd/validation</code></td><td><code>packages/validation</code></td><td>Zod validation schemas</td></tr>
+  <tr><td><code>@telnd/config</code></td><td><code>packages/config</code></td><td>Configuration</td></tr>
+  <tr><td><code>@telnd/utils</code></td><td><code>packages/utils</code></td><td>Shared utilities</td></tr>
+  <tr><td><code>@telnd/database</code></td><td><code>packages/database</code></td><td>Prisma + Redis</td></tr>
+  <tr><td><code>@telnd/api</code></td><td><code>packages/api</code></td><td>Hono API layer</td></tr>
+  <tr><td><code>@telnd/ui</code></td><td><code>packages/ui</code></td><td>Shared UI components</td></tr>
+</table>
+
+<!-- SECTION 9: CODE QUALITY -->
+<h1>9. Code Quality</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Lint all packages</span></code>
+  <code class="cmd">npm run lint</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Lint and auto-fix issues</span></code>
+  <code class="cmd">npm run lint:fix</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Format all files with Prettier</span></code>
+  <code class="cmd">npm run format</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Check formatting without writing</span></code>
+  <code class="cmd">npm run format:check</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># TypeScript type check all workspaces</span></code>
+  <code class="cmd">npm run typecheck</code>
+</div>
+
+<!-- SECTION 10: TESTING -->
+<h1>10. Testing</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Run all tests across all workspaces</span></code>
+  <code class="cmd">npm run test</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run tests for a specific workspace</span></code>
+  <code class="cmd">cd apps/web && npm test</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Flutter tests (mobile)</span></code>
+  <code class="cmd">cd apps/mobile && flutter test</code>
+</div>
+
+<!-- SECTION 11: MOBILE ANDROID -->
+<div class="page-break"></div>
+<h1>11. Mobile App — Android</h1>
+
+<h2>Setup (First Time)</h2>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Navigate to mobile directory</span></code>
+  <code class="cmd">cd apps/mobile</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Install Flutter dependencies</span></code>
+  <code class="cmd">flutter pub get</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Check connected devices</span></code>
+  <code class="cmd">flutter devices</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Check Flutter environment</span></code>
+  <code class="cmd">flutter doctor</code>
+</div>
+
+<h2>Run on Android Device (USB)</h2>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Ensure USB debugging is enabled on your phone</span></code>
+  <code class="cmd"><span class="comment"># Verify device is detected:</span></code>
+  <code class="cmd">adb devices</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run app directly on connected device</span></code>
+  <code class="cmd">flutter run</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run in release mode on device</span></code>
+  <code class="cmd">flutter run --release</code>
+</div>
+
+<h2>Build Android APK</h2>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Debug APK (for development/testing)</span></code>
+  <code class="cmd">flutter build apk --debug</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Release APK (for distribution)</span></code>
+  <code class="cmd">flutter build apk --release</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Profile APK (for performance testing)</span></code>
+  <code class="cmd">flutter build apk --profile</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Install debug APK via USB</span></code>
+  <code class="cmd">adb install build/app/outputs/flutter-apk/app-debug.apk</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Install release APK via USB</span></code>
+  <code class="cmd">adb install build/app/outputs/flutter-apk/app-release.apk</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Install (replace existing app)</span></code>
+  <code class="cmd">adb install -r build/app/outputs/flutter-apk/app-debug.apk</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Launch app on device</span></code>
+  <code class="cmd">adb shell am start -n com.example.telnd_mobile/.MainActivity</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Uninstall app from device</span></code>
+  <code class="cmd">adb uninstall com.example.telnd_mobile</code>
+</div>
+
+<h2>Android Code Generation</h2>
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Run build_runner for Riverpod/JSON code generation</span></code>
+  <code class="cmd">dart run build_runner build --delete-conflicting-outputs</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Watch mode (auto-rebuild on changes)</span></code>
+  <code class="cmd">dart run build_runner watch --delete-conflicting-outputs</code>
+</div>
+
+<!-- SECTION 12: MOBILE iOS -->
+<h1>12. Mobile App — iOS</h1>
+
+<p style="font-size:13px; margin-bottom:10px; color:#9a3412;"><strong>Note:</strong> iOS builds require macOS with Xcode installed. Cannot be built on Linux.</p>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Install iOS dependencies</span></code>
+  <code class="cmd">cd apps/mobile && flutter pub get</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run on iOS simulator (macOS only)</span></code>
+  <code class="cmd">flutter run -d ios</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build iOS (macOS only)</span></code>
+  <code class="cmd">flutter build ios --release</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build IPA for distribution (macOS only)</span></code>
+  <code class="cmd">flutter build ipa --release</code>
+</div>
+
+<!-- SECTION 13: DOCKER BUILDS -->
+<div class="page-break"></div>
+<h1>13. Docker Builds (Production)</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Build web app Docker image</span></code>
+  <code class="cmd">docker build -f infrastructure/docker/Dockerfile.web -t telnd-web .</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build worker Docker image</span></code>
+  <code class="cmd">docker build -f infrastructure/docker/Dockerfile.worker -t telnd-worker .</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Build all with docker compose</span></code>
+  <code class="cmd">docker compose build</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Run full production stack</span></code>
+  <code class="cmd">docker compose -f docker-compose.yml up -d</code>
+</div>
+
+<!-- SECTION 14: UTILITY -->
+<h1>14. Utility Scripts</h1>
+
+<div class="cmd-block">
+  <code class="cmd"><span class="comment"># Clean all node_modules (full reinstall)</span></code>
+  <code class="cmd">npm run clean</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Generate PDF from project documentation</span></code>
+  <code class="cmd">node generate-pdf.js</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Generate PPTX presentation</span></code>
+  <code class="cmd">node generate-pptx.js</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Convert HTML to PDF</span></code>
+  <code class="cmd">node convert-to-pdf.js</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Convert to HTML</span></code>
+  <code class="cmd">node convert-to-html.js</code>
+  <code class="cmd"></code>
+  <code class="cmd"><span class="comment"># Chrome to PDF</span></code>
+  <code class="cmd">node chrome-to-pdf.js</code>
+</div>
+
+<!-- SECTION 15: CI/CD -->
+<h1>15. CI/CD Pipeline</h1>
+
+<p style="font-size:13px; margin-bottom:10px;">GitHub Actions workflow at <code>.github/workflows/ci.yml</code></p>
+
+<table>
+  <tr><th>Job</th><th>What It Does</th></tr>
+  <tr><td><code>lint</code></td><td><code>npm ci && npm run lint</code> — Checks code style</td></tr>
+  <tr><td><code>typecheck</code></td><td><code>npm ci && npm run typecheck</code> — Type safety check</td></tr>
+  <tr><td><code>test</code></td><td><code>npm ci && npm run db:migrate && npm run test</code> — Runs tests with database</td></tr>
+</table>
+
+<!-- SECTION 16: QUICK REFERENCE -->
+<div class="page-break"></div>
+<h1>16. Quick Reference — All Commands</h1>
+
+<h2><span class="badge badge-green">START</span> Full Development Setup</h2>
+<div class="cmd-block">
+  <code class="cmd">cd "telnd app/telnd"</code>
+  <code class="cmd">npm install</code>
+  <code class="cmd">docker compose up -d</code>
+  <code class="cmd">cp .env.example .env</code>
+  <code class="cmd">cp .env.example packages/database/.env</code>
+  <code class="cmd"><span class="comment"># Edit both .env files with your credentials</span></code>
+  <code class="cmd">npm run db:generate</code>
+  <code class="cmd">npm run db:migrate</code>
+  <code class="cmd">npm run db:seed</code>
+  <code class="cmd">npm run dev</code>
+</div>
+
+<h2><span class="badge badge-blue">WEB</span> Web App Commands</h2>
+<div class="cmd-block">
+  <code class="cmd">npm run dev                 <span class="comment"># Start dev server (port 3000)</span></code>
+  <code class="cmd">npm run build               <span class="comment"># Build for production</span></code>
+  <code class="cmd">npm run dev:admin           <span class="comment"># Start admin dev server (port 3002)</span></code>
+  <code class="cmd">npm run build:admin         <span class="comment"># Build admin for production</span></code>
+</div>
+
+<h2><span class="badge badge-purple">DB</span> Database Commands</h2>
+<div class="cmd-block">
+  <code class="cmd">npm run db:generate         <span class="comment"># Generate Prisma client</span></code>
+  <code class="cmd">npm run db:migrate          <span class="comment"># Run migrations</span></code>
+  <code class="cmd">npm run db:seed             <span class="comment"># Seed database</span></code>
+  <code class="cmd">npm run db:reset            <span class="comment"># Reset database</span></code>
+  <code class="cmd">npx prisma studio           <span class="comment"># Open DB browser</span></code>
+</div>
+
+<h2><span class="badge badge-orange">MOBILE</span> Android Commands</h2>
+<div class="cmd-block">
+  <code class="cmd">cd apps/mobile</code>
+  <code class="cmd">flutter pub get             <span class="comment"># Install dependencies</span></code>
+  <code class="cmd">flutter devices             <span class="comment"># List devices</span></code>
+  <code class="cmd">flutter run                 <span class="comment"># Run on connected device</span></code>
+  <code class="cmd">flutter build apk --debug   <span class="comment"># Build debug APK</span></code>
+  <code class="cmd">flutter build apk --release <span class="comment"># Build release APK</span></code>
+  <code class="cmd">adb devices                <span class="comment"># List USB-connected devices</span></code>
+  <code class="cmd">adb install -r &lt;apk-path&gt;  <span class="comment"># Install APK on device</span></code>
+</div>
+
+<h2><span class="badge badge-red">QUALITY</span> Code Quality Commands</h2>
+<div class="cmd-block">
+  <code class="cmd">npm run lint                <span class="comment"># Lint all packages</span></code>
+  <code class="cmd">npm run lint:fix            <span class="comment"># Auto-fix lint issues</span></code>
+  <code class="cmd">npm run format              <span class="comment"># Format with Prettier</span></code>
+  <code class="cmd">npm run typecheck           <span class="comment"># Type check all packages</span></code>
+  <code class="cmd">npm run test                <span class="comment"># Run all tests</span></code>
+</div>
+
+<h2><span class="badge badge-green">DOCKER</span> Infrastructure Commands</h2>
+<div class="cmd-block">
+  <code class="cmd">docker compose up -d        <span class="comment"># Start Postgres, Redis, MailHog</span></code>
+  <code class="cmd">docker compose down         <span class="comment"># Stop all containers</span></code>
+  <code class="cmd">docker compose ps           <span class="comment"># List running containers</span></code>
+  <code class="cmd">docker compose logs -f      <span class="comment"># Tail all logs</span></code>
+  <code class="cmd">docker compose down -v      <span class="comment"># Stop and delete all data</span></code>
+</div>
+
+<h2><span class="badge badge-blue">WORKER</span> Background Worker</h2>
+<div class="cmd-block">
+  <code class="cmd">cd services/workers && npm run dev    <span class="comment"># Start in watch mode</span></code>
+  <code class="cmd">cd services/workers && npm run build  <span class="comment"># Build for production</span></code>
+  <code class="cmd">cd services/workers && npm run start  <span class="comment"># Start in production</span></code>
+</div>
+
+<div class="footer">
+  TELND Project Commands Reference &bull; Generated September 17, 2026 &bull; All rights reserved
+</div>
+
+</body>
+</html>

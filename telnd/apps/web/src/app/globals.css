@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 43 20% 96%;
+    --foreground: 160 15% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 160 15% 15%;
+    --primary: 178 76% 15%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 30% 94%;
+    --secondary-foreground: 160 15% 15%;
+    --muted: 213 30% 94%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 176 56% 42%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 16 84% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 160 10% 89%;
+    --input: 160 10% 89%;
+    --ring: 178 76% 15%;
+  }
+
+  .dark {
+    --background: 210 35% 7%;
+    --foreground: 160 10% 90%;
+    --card: 210 35% 9%;
+    --card-foreground: 160 10% 90%;
+    --primary: 176 56% 42%;
+    --primary-foreground: 210 35% 7%;
+    --secondary: 215 25% 14%;
+    --secondary-foreground: 160 10% 90%;
+    --muted: 215 25% 14%;
+    --muted-foreground: 215 15% 55%;
+    --accent: 178 50% 35%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 20 70% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 25% 18%;
+    --input: 215 25% 18%;
+    --ring: 176 56% 42%;
+  }
+
+  body {
+    @apply text-brand-dark dark:text-gray-100;
+    transition: background-color 0.2s, color 0.2s;
+  }
+}
+
+@layer components {
+  .container {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Light glowing background — GPU-friendly */
+  .bg-glow {
+    @apply relative min-h-screen;
+    background-color: #F9F6F0;
+    background-image:
+      radial-gradient(ellipse 600px 400px at 5% 10%, rgba(48, 169, 162, 0.07), transparent 70%),
+      radial-gradient(ellipse 500px 500px at 85% 8%, rgba(254, 121, 63, 0.05), transparent 70%),
+      radial-gradient(ellipse 600px 400px at 50% 85%, rgba(48, 169, 162, 0.04), transparent 70%);
+    contain: layout style;
+  }
+
+  .dark .bg-glow {
+    background-color: #0a0f1a;
+    background-image:
+      radial-gradient(ellipse 600px 400px at 5% 10%, rgba(48, 169, 162, 0.05), transparent 70%),
+      radial-gradient(ellipse 500px 500px at 85% 8%, rgba(254, 121, 63, 0.03), transparent 70%);
+  }
+  
+  .card {
+    @apply bg-white/90 dark:bg-gray-900/90 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm;
+  }
+  
+  .card-hover {
+    @apply card hover:shadow-md hover:border-accent-400/40 dark:hover:border-accent-500/40 transition-colors;
+  }
+  
+  .input {
+    @apply w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 px-4 py-2.5 text-brand-dark dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20 focus:outline-none transition-colors;
+  }
+  
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-primary-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 px-4 py-2.5 text-sm font-semibold text-brand-dark dark:text-gray-100 shadow-sm hover:bg-white dark:hover:bg-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+  
+  .text-primary {
+    @apply text-gray-900 dark:text-gray-100;
+  }
+  
+  .text-secondary {
+    @apply text-gray-600 dark:text-gray-400;
+  }
+  
+  .bg-surface {
+    @apply bg-gray-50 dark:bg-gray-900;
+  }
+  
+  .border-default {
+    @apply border-gray-200 dark:border-gray-800;
+  }
+}

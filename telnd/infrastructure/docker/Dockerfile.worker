@@ -1,0 +1,15 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+COPY services/workers/package.json ./services/workers/
+COPY packages/*/package.json ./packages/
+RUN npm ci --omit=dev
+
+COPY . .
+RUN npm run build --workspace=services/workers
+
+USER node
+
+CMD ["node", "services/workers/dist/index.js"]
