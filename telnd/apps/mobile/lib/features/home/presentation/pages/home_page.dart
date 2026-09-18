@@ -74,8 +74,8 @@ class HomePage extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: isDark
-                    ? Colors.white.withOpacity(0.05)
-                    : Colors.black.withOpacity(0.03),
+                    ? Color.lerp(const Color(0xFF1E293B), Colors.white, 0.04)
+                    : Color.lerp(Colors.white, const Color(0xFF1F2937), 0.03),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
@@ -95,6 +95,7 @@ class HomePage extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _AllSheet(isDark: isDark),
     );
@@ -106,7 +107,7 @@ const _items = [
     title: 'Find Jobs',
     desc: 'Browse opportunities',
     icon: Icons.work_outline_rounded,
-    color: Color(0xFF034548),
+    color: Color(0xFF0891B2),
   ),
   _ItemData(
     title: 'Tutors',
@@ -174,9 +175,14 @@ class _ActionCard extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isDark
-              ? color.withOpacity(0.10)
-              : color.withOpacity(0.06),
+              ? Color.lerp(const Color(0xFF1E293B), color, 0.12)
+              : Color.lerp(Colors.white, color, 0.06),
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withOpacity(0.06)
+                : Colors.black.withOpacity(0.05),
+          ),
         ),
         child: Stack(
           children: [
@@ -247,9 +253,14 @@ class _AllCard extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isDark
-              ? Colors.white.withOpacity(0.08)
-              : Colors.black.withOpacity(0.05),
+              ? Color.lerp(const Color(0xFF1E293B), Colors.white, 0.06)
+              : Color.lerp(Colors.white, const Color(0xFF1F2937), 0.04),
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withOpacity(0.06)
+                : Colors.black.withOpacity(0.05),
+          ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -282,76 +293,70 @@ class _AllSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.55,
-      minChildSize: 0.3,
-      maxChildSize: 0.85,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E293B) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white24 : Colors.black12,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white24 : Colors.black12,
-                  borderRadius: BorderRadius.circular(2),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Text(
+                  'All Services',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : const Color(0xFF1F2937),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Text(
-                      'All Services',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: isDark ? Colors.white : const Color(0xFF1F2937),
-                      ),
-                    ),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Icon(
-                        Icons.close_rounded,
-                        size: 22,
-                        color: isDark ? Colors.white54 : Colors.black45,
-                      ),
-                    ),
-                  ],
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 22,
+                    color: isDark ? Colors.white54 : Colors.black45,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.separated(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final item = _items[index];
-                    return _SheetItem(
-                      title: item.title,
-                      desc: item.desc,
-                      icon: item.icon,
-                      color: item.color,
-                      isDark: isDark,
-                      onTap: () => Navigator.pop(context),
-                    );
-                  },
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int i = 0; i < _items.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 10),
+                  _SheetItem(
+                    title: _items[i].title,
+                    desc: _items[i].desc,
+                    icon: _items[i].icon,
+                    color: _items[i].color,
+                    isDark: isDark,
+                    onTap: () => Navigator.pop(context),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -381,8 +386,8 @@ class _SheetItem extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isDark
-              ? color.withOpacity(0.08)
-              : color.withOpacity(0.05),
+              ? Color.lerp(const Color(0xFF1E293B), color, 0.12)
+              : Color.lerp(Colors.white, color, 0.08),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(

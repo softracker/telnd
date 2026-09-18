@@ -32,11 +32,11 @@ class TelndApp extends ConsumerWidget {
               child: Container(
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
-                    center: const Alignment(0, -0.6),
-                    radius: 1.2,
+                    center: const Alignment(0, -0.5),
+                    radius: 1.5,
                     colors: [
                       (isDark ? AppTheme.accent : AppTheme.primary)
-                          .withOpacity(0.08),
+                          .withOpacity(0.06),
                       Colors.transparent,
                     ],
                     stops: const [0.0, 1.0],

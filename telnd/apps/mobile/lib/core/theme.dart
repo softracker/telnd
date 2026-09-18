@@ -12,7 +12,7 @@ class AppTheme {
 
   // Light theme colors
   static const Color lightSurface = Colors.white;
-  static const Color lightBackground = Color(0xFFF9F6F0); // warm off-white
+  static const Color lightBackground = Color(0xFFFCFCFD); // near white
   static const Color lightTextPrimary = Color(0xFF1F2937);
   static const Color lightTextSecondary = Color(0xFF64748B);
   static const Color lightBorder = Color(0xFFE2E8F0);

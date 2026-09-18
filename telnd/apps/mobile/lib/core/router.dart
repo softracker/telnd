@@ -102,8 +102,12 @@ class MainShell extends StatelessWidget {
 
     return Scaffold(
       extendBody: true,
-      appBar: appBar,
-      body: child,
+      body: Column(
+        children: [
+          if (appBar != null) appBar,
+          Expanded(child: child),
+        ],
+      ),
       bottomNavigationBar: const BottomNav(),
     );
   }
