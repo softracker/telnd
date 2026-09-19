@@ -141,7 +141,9 @@ class _MainShellState extends ConsumerState<MainShell> {
       );
     }
     if (location.startsWith('/ai')) return null;
-    if (location.startsWith('/messages')) return null;
+    if (location.startsWith('/messages')) {
+      return const MessagesAppBar();
+    }
     if (location.startsWith('/profile')) return null;
     return const HomeAppBar();
   }

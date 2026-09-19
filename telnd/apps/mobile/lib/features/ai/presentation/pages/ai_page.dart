@@ -303,7 +303,7 @@ class _UploadSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
@@ -425,7 +425,7 @@ class _AiBackgroundPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = isDark ? const Color(0xFF0B1120) : const Color(0xFFF0F4F8);
+    final bgPaint = Paint()..color = isDark ? const Color(0xFF0D0D0D) : const Color(0xFFF0F4F8);
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
 
     final glow1 = Paint()

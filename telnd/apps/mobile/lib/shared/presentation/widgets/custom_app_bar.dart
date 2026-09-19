@@ -216,3 +216,58 @@ class ExploreAppBar extends StatelessWidget implements PreferredSizeWidget {
     );
   }
 }
+
+class MessagesAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const MessagesAppBar({super.key});
+
+  @override
+  Size get preferredSize => const Size.fromHeight(56);
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
+
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            CustomAppBar.buildLogo(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Messages',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: iconColor,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: () {},
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.primary.withOpacity(0.15),
+                ),
+                child: Center(
+                  child: SvgPicture.asset(
+                    'assets/icons/new-message.svg',
+                    width: 20,
+                    height: 20,
+                    colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

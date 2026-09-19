@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:telnd_mobile/shared/presentation/widgets/theme_toggle.dart';
 
 class MessagesPage extends StatelessWidget {
   const MessagesPage({super.key});
@@ -7,13 +6,6 @@ class MessagesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Messages'),
-        actions: const [
-          ThemeToggle(),
-          SizedBox(width: 8),
-        ],
-      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),

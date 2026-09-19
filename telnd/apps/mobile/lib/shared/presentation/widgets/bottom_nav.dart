@@ -60,8 +60,8 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
                       end: Alignment.bottomCenter,
                       colors: isDark
                           ? [
-                              const Color(0xFF1A2639).withOpacity(0.85),
-                              const Color(0xFF1A2639).withOpacity(0.95),
+                              const Color(0xFF14161A).withOpacity(0.85),
+                              const Color(0xFF14161A).withOpacity(0.95),
                             ]
                           : [
                               const Color(0xFFF8F9FB).withOpacity(0.80),
@@ -252,9 +252,9 @@ class _CenterTab extends StatelessWidget {
             animation: glowController,
             builder: (context, child) {
               final double pulse = glowController.value;
-              final double glowOpacity = selected ? 0.4 + pulse * 0.3 : 0.0;
-              final double glowSpread = selected ? 8.0 + pulse * 8 : 0.0;
-              final double glowBlur = selected ? 30.0 + pulse * 20 : 0.0;
+              final double glowOpacity = selected ? 0.25 + pulse * 0.2 : 0.0;
+              final double glowSpread = selected ? 4.0 + pulse * 4 : 0.0;
+              final double glowBlur = selected ? 20.0 + pulse * 10 : 0.0;
               return Container(
                 width: 52,
                 height: 52,

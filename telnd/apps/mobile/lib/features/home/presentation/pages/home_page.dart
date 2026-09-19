@@ -75,7 +75,7 @@ class HomePage extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: isDark
-                    ? Color.lerp(const Color(0xFF1E293B), Colors.white, 0.04)
+                    ? Color.lerp(const Color(0xFF1C1C1E), Colors.white, 0.04)
                     : Color.lerp(Colors.white, const Color(0xFF1F2937), 0.03),
                 borderRadius: BorderRadius.circular(16),
               ),
@@ -198,7 +198,7 @@ class _ActionCard extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isDark
-              ? Color.lerp(const Color(0xFF1E293B), color, 0.12)
+              ? Color.lerp(const Color(0xFF1C1C1E), color, 0.12)
               : Color.lerp(Colors.white, color, 0.06),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
@@ -289,7 +289,7 @@ class _AllCard extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isDark
-              ? Color.lerp(const Color(0xFF1E293B), Colors.white, 0.06)
+              ? Color.lerp(const Color(0xFF1C1C1E), Colors.white, 0.06)
               : Color.lerp(Colors.white, const Color(0xFF1F2937), 0.04),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
@@ -331,7 +331,7 @@ class _AllSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
@@ -422,7 +422,7 @@ class _SheetItem extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isDark
-              ? Color.lerp(const Color(0xFF1E293B), color, 0.12)
+              ? Color.lerp(const Color(0xFF1C1C1E), color, 0.12)
               : Color.lerp(Colors.white, color, 0.08),
           borderRadius: BorderRadius.circular(14),
         ),
