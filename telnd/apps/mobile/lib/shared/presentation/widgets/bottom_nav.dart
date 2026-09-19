@@ -15,92 +15,111 @@ class BottomNav extends StatelessWidget {
     final active = isDark ? AppTheme.accent : const Color(0xFF034548);
     final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF94A3B8);
 
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
-          decoration: BoxDecoration(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: isDark
-                  ? [
-                      const Color(0xFF1A2639).withOpacity(0.85),
-                      const Color(0xFF1A2639).withOpacity(0.95),
-                    ]
-                  : [
-                      const Color(0xFFF8F9FB).withOpacity(0.80),
-                      const Color(0xFFF8F9FB).withOpacity(0.95),
+    return SizedBox(
+      height: 90,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: isDark
+                          ? [
+                              const Color(0xFF1A2639).withOpacity(0.85),
+                              const Color(0xFF1A2639).withOpacity(0.95),
+                            ]
+                          : [
+                              const Color(0xFFF8F9FB).withOpacity(0.80),
+                              const Color(0xFFF8F9FB).withOpacity(0.95),
+                            ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: active.withOpacity(isDark ? 0.15 : 0.08),
+                        blurRadius: 24,
+                        spreadRadius: -4,
+                        offset: const Offset(0, -4),
+                      ),
                     ],
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _Tab(
+                          iconSolid: 'assets/icons/home-solid.svg',
+                          iconStroke: 'assets/icons/home-stroke.svg',
+                          label: 'Home',
+                          selected: selected == 0,
+                          active: active,
+                          inactive: inactive,
+                          onTap: () => context.go('/'),
+                        ),
+                      ),
+                      Expanded(
+                        child: _Tab(
+                          iconSolid: 'assets/icons/explore-solid.svg',
+                          iconStroke: 'assets/icons/explore-stroke.svg',
+                          label: 'Explore',
+                          selected: selected == 1,
+                          active: active,
+                          inactive: inactive,
+                          onTap: () => context.go('/explore'),
+                        ),
+                      ),
+                      const Spacer(),
+                      Expanded(
+                        child: _Tab(
+                          iconSolid: 'assets/icons/message-solid.svg',
+                          iconStroke: 'assets/icons/message-stroke.svg',
+                          label: 'Messages',
+                          selected: selected == 3,
+                          active: active,
+                          inactive: inactive,
+                          onTap: () => context.go('/messages'),
+                        ),
+                      ),
+                      Expanded(
+                        child: _Tab(
+                          iconSolid: 'assets/icons/user-solid.svg',
+                          iconStroke: 'assets/icons/user-stroke.svg',
+                          label: 'Account',
+                          selected: selected == 4,
+                          active: active,
+                          inactive: inactive,
+                          onTap: () => context.go('/profile'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: active.withOpacity(isDark ? 0.15 : 0.08),
-                blurRadius: 24,
-                spreadRadius: -4,
-                offset: const Offset(0, -4),
-              ),
-            ],
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: _Tab(
-                  iconSolid: 'assets/icons/home-solid.svg',
-                  iconStroke: 'assets/icons/home-stroke.svg',
-                  label: 'Home',
-                  selected: selected == 0,
-                  active: active,
-                  inactive: inactive,
-                  onTap: () => context.go('/'),
-                ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _CenterTab(
+                selected: selected == 2,
+                isDark: isDark,
+                onTap: () => context.go('/ai'),
               ),
-              Expanded(
-                child: _Tab(
-                  iconSolid: 'assets/icons/explore-solid.svg',
-                  iconStroke: 'assets/icons/explore-stroke.svg',
-                  label: 'Explore',
-                  selected: selected == 1,
-                  active: active,
-                  inactive: inactive,
-                  onTap: () => context.go('/explore'),
-                ),
-              ),
-              Expanded(
-                child: _CenterTab(
-                  selected: selected == 2,
-                  isDark: isDark,
-                  onTap: () => context.go('/ai'),
-                ),
-              ),
-              Expanded(
-                child: _Tab(
-                  iconSolid: 'assets/icons/message-solid.svg',
-                  iconStroke: 'assets/icons/message-stroke.svg',
-                  label: 'Messages',
-                  selected: selected == 3,
-                  active: active,
-                  inactive: inactive,
-                  onTap: () => context.go('/messages'),
-                ),
-              ),
-              Expanded(
-                child: _Tab(
-                  iconSolid: 'assets/icons/user-solid.svg',
-                  iconStroke: 'assets/icons/user-stroke.svg',
-                  label: 'Account',
-                  selected: selected == 4,
-                  active: active,
-                  inactive: inactive,
-                  onTap: () => context.go('/profile'),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -193,58 +212,50 @@ class _CenterTab extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: const BoxDecoration(
-          color: Colors.transparent,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [primary, secondary],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: primary.withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [primary, secondary],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              child: Center(
-                child: SvgPicture.asset(
-                  'assets/icons/brain-stroke.svg',
-                  width: 22,
-                  height: 22,
-                  colorFilter: const ColorFilter.mode(
-                    Colors.white,
-                    BlendMode.srcIn,
-                  ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: primary.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/icons/brain-stroke.svg',
+                width: 28,
+                height: 28,
+                colorFilter: const ColorFilter.mode(
+                  Colors.white,
+                  BlendMode.srcIn,
                 ),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              'Telnd AI',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? primary : inactive,
-                letterSpacing: 0.3,
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Telnd AI',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? primary : inactive,
+              letterSpacing: 0.3,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
