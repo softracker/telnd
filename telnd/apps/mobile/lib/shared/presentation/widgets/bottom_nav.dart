@@ -251,8 +251,10 @@ class _CenterTab extends StatelessWidget {
           AnimatedBuilder(
             animation: glowController,
             builder: (context, child) {
-              final double intensity = selected ? 0.35 + glowController.value * 0.25 : 0.3;
-              final double blur = selected ? 14.0 + glowController.value * 10 : 12.0;
+              final double pulse = glowController.value;
+              final double glowOpacity = selected ? 0.4 + pulse * 0.3 : 0.0;
+              final double glowSpread = selected ? 8.0 + pulse * 8 : 0.0;
+              final double glowBlur = selected ? 30.0 + pulse * 20 : 0.0;
               return Container(
                 width: 52,
                 height: 52,
@@ -264,11 +266,30 @@ class _CenterTab extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
-                    BoxShadow(
-                      color: primary.withOpacity(intensity),
-                      blurRadius: blur,
-                      offset: const Offset(0, 4),
-                    ),
+                    if (selected) ...[
+                      BoxShadow(
+                        color: primary.withOpacity(glowOpacity * 0.6),
+                        blurRadius: glowBlur * 1.5,
+                        spreadRadius: glowSpread,
+                      ),
+                      BoxShadow(
+                        color: secondary.withOpacity(glowOpacity * 0.4),
+                        blurRadius: glowBlur,
+                        spreadRadius: glowSpread * 0.5,
+                        offset: const Offset(0, -2),
+                      ),
+                      BoxShadow(
+                        color: primary.withOpacity(glowOpacity),
+                        blurRadius: glowBlur * 0.6,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 4),
+                      ),
+                    ] else
+                      BoxShadow(
+                        color: primary.withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
                   ],
                 ),
                 child: Center(
