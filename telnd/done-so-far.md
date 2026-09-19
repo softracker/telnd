@@ -1,6 +1,6 @@
 # TELND — Done So Far
 
-> Last updated: 2026-09-17
+> Last updated: 2026-09-19
 
 ---
 
@@ -216,6 +216,59 @@ telnd/
 - **DisplayShowcase** — actions dropdown, dropdown (long press), form select, search dropdown, checkbox dropdown, image option dropdown, file upload
 
 All in `_showcase/presentation/pages/` — temporary, to be deleted after project completion.
+
+### 8.6 UI Polish (2026-09-19)
+
+#### Quick Action Cards (Home Page)
+- Increased font sizes: title 15, description 12
+- Horizontal scrollable list extends to right edge (per-child padding only)
+- Updated color scheme: `Color.lerp` with surface colors + subtle borders
+- App background changed to near-white `#FCFCFD` with softer glow gradient
+- Find Jobs icon color changed from `#034548` to `#0891B2` (cyan)
+- Services reordered: Find Jobs, Tutors, Doctors, Matrimony, Fix (cards); + Laundry, Influencers, Learn (all services modal only)
+- All Services modal changed from `DraggableScrollableSheet` to `Container` with `mainAxisSize: MainAxisSize.min`
+- All icons switched from Material Icons to SVGs from `assets/icons/`
+
+#### Explore Page
+- Search bar moved into app bar (`ExploreAppBar`)
+- 5-column Wrap grid in glass card
+- Filtered by Riverpod `exploreSearchQueryProvider`
+- App bar position alignment fixed (search bar height 36px)
+
+#### AI Page
+- Animated glow background (`CustomPainter` with pulse/glow controllers)
+- Pulsing brain icon (removed — already in bottom nav)
+- Search bar with inline icons (file-upload.svg, voice-input.svg, send)
+- Upload modal with Camera/Photos/Files using SVG icons
+- App bar with chat-history.svg + talk to ai.svg + new chat button
+- "Hey, what's on your mind?" text with "Start Talking" gradient button
+
+#### Bottom Navigation
+- AI center button: 52x52 gradient container with `brain-stroke.svg`, protrudes with `top: 0`
+- Animated glow on Telnd AI button only — triple-layered pulsing box shadows (primary + secondary colors, 2s cycle)
+- Static glow on other active tabs (no animation)
+- Dark mode nav bar background changed from navy `#1A2639` to near-black/gray `#14161A`
+
+#### Messages Page
+- Custom `MessagesAppBar` — logo + "Messages" title + new-message icon button
+- Removed duplicate `AppBar` from messages page scaffold
+- Empty state icon: `message-blocked-stroke-rounded.svg`
+
+#### Home App Bar
+- Added "Pro" button with orange (`AppTheme.orange`) background next to logo
+- Red "Free" badge positioned at top-right corner of Pro button
+
+#### Dark Mode Color Updates (2026-09-19)
+- `darkBackground`: `#0F172A` → `#0D0D0D` (near-black)
+- `darkSurface`: `#1E293B` → `#1C1C1E` (dark gray)
+- `darkBorder`: `#334155` → `#2C2C2E` (neutral gray)
+- All hardcoded dark colors in home page, AI page, and bottom nav updated to match
+
+### 8.7 WiFi ADB Setup
+- Phone IP: `192.168.1.2:5555`
+- Connected via `adb connect 192.168.1.2:5555`
+- Package name: `com.example.telnd_mobile`
+- Device: Poco A063, Android 15
 
 ---
 

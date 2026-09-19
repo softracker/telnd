@@ -73,7 +73,55 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
     final iconColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
 
     return CustomAppBar(
-      leading: CustomAppBar.buildLogo(),
+      leading: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CustomAppBar.buildLogo(),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () {},
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.orange,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Pro',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: -6,
+                  right: -8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDC2626),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'Free',
+                      style: TextStyle(
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
       actions: [
         _NavBarIcon(
           asset: 'assets/icons/notification-store.svg',

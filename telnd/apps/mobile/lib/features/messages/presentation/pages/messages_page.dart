@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:telnd_mobile/core/theme.dart';
 
 class MessagesPage extends StatelessWidget {
   const MessagesPage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary = isDark ? AppTheme.accent : AppTheme.primary;
+
     return Scaffold(
       body: Center(
         child: Padding(
@@ -12,10 +17,11 @@ class MessagesPage extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.chat_bubble_outline,
-                size: 64,
-                color: Theme.of(context).colorScheme.primary,
+              SvgPicture.asset(
+                'assets/icons/message-blocked-stroke-rounded.svg',
+                width: 64,
+                height: 64,
+                colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
               ),
               const SizedBox(height: 16),
               Text(
