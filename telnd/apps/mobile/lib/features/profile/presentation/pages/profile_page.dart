@@ -11,7 +11,7 @@ class ProfilePage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profile'),
+        title: const Text('My Telnd'),
         actions: const [
           ThemeToggle(),
           SizedBox(width: 8),

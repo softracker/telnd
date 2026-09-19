@@ -35,7 +35,7 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final selected = _getSelectedIndex(location);
     final active = isDark ? AppTheme.accent : const Color(0xFF034548);
-    final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF94A3B8);
+    final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF475569);
     final isAiSelected = selected == 2;
 
     return SizedBox(
@@ -50,9 +50,9 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
             child: ClipRRect(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                  padding: const EdgeInsets.fromLTRB(8, 10, 8, 16),
                     decoration: BoxDecoration(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                     border: Border(
@@ -64,8 +64,8 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
                       ),
                     ),
                     color: isDark
-                        ? const Color(0xFF1C1C1E).withOpacity(0.5)
-                        : Colors.white.withOpacity(0.5),
+                        ? const Color(0xFF1C1C1E).withOpacity(0.10)
+                        : Colors.white.withOpacity(0.10),
                     boxShadow: [
                       BoxShadow(
                         color: active.withOpacity(isDark ? 0.15 : 0.08),
@@ -115,7 +115,7 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
                         child: _Tab(
                           iconSolid: 'assets/icons/user-solid.svg',
                           iconStroke: 'assets/icons/user-stroke.svg',
-                          label: 'Profile',
+                           label: 'My Telnd',
                           selected: selected == 4,
                           active: active,
                           inactive: inactive,
@@ -238,7 +238,7 @@ class _CenterTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = isDark ? AppTheme.accent : const Color(0xFF034548);
     final secondary = isDark ? const Color(0xFF34D399) : AppTheme.accent;
-    final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF94A3B8);
+    final inactive = isDark ? const Color(0xFF5A6B80) : const Color(0xFF475569);
 
     return GestureDetector(
       onTap: onTap,
