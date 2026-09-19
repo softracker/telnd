@@ -18,6 +18,21 @@ class ExplorePage extends ConsumerWidget {
     _ServiceItem(title: 'Learn', iconAsset: 'assets/icons/learn.svg', color: Color(0xFF059669)),
   ];
 
+  static const _tools = [
+    _ServiceItem(title: 'CV Builder', iconAsset: 'assets/icons/file-upload.svg', color: Color(0xFF8B5CF6)),
+    _ServiceItem(title: 'AI Cover Letter', iconAsset: 'assets/icons/brain-stroke.svg', color: Color(0xFF0891B2)),
+    _ServiceItem(title: 'Doc Compressor', iconAsset: 'assets/icons/file-upload.svg', color: Color(0xFFEA580C)),
+    _ServiceItem(title: 'Image Resizer', iconAsset: 'assets/icons/gallery.svg', color: Color(0xFF059669)),
+  ];
+
+  static const _helpSupport = [
+    _ServiceItem(title: 'Help Center', iconAsset: 'assets/icons/message-stroke.svg', color: Color(0xFF2563EB)),
+    _ServiceItem(title: 'Live Chat', iconAsset: 'assets/icons/message-multiple.svg', color: Color(0xFF059669)),
+    _ServiceItem(title: 'Support Ticket', iconAsset: 'assets/icons/chat-history.svg', color: Color(0xFFEA580C)),
+    _ServiceItem(title: 'Send Feedback', iconAsset: 'assets/icons/new-message.svg', color: Color(0xFF7C3AED)),
+    _ServiceItem(title: 'Report Issue', iconAsset: 'assets/icons/message-blocked-stroke-rounded.svg', color: Color(0xFFDC2626)),
+  ];
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -124,6 +139,201 @@ class ExplorePage extends ConsumerWidget {
                         ),
                       );
                     }).toList(),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withOpacity(0.05)
+                  : Colors.white.withOpacity(0.7),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.08)
+                    : Colors.black.withOpacity(0.05),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (isDark ? AppTheme.accent : AppTheme.primary)
+                      .withOpacity(0.06),
+                  blurRadius: 24,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: Text(
+                    'Tools',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final itemWidth = (constraints.maxWidth - 4 * 4) / 5;
+                      return Wrap(
+                        spacing: 4,
+                        runSpacing: 24,
+                        children: _tools.map((service) {
+                          return SizedBox(
+                            width: itemWidth,
+                            child: GestureDetector(
+                              onTap: () {},
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 52,
+                                    height: 52,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: service.color.withOpacity(isDark ? 0.15 : 0.10),
+                                      border: Border.all(
+                                        color: service.color.withOpacity(isDark ? 0.20 : 0.12),
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(13),
+                                        child: SvgPicture.asset(
+                                          service.iconAsset,
+                                          colorFilter: ColorFilter.mode(
+                                            service.color,
+                                            BlendMode.srcIn,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    service.title,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: isDark ? Colors.white : const Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withOpacity(0.05)
+                  : Colors.white.withOpacity(0.7),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.08)
+                    : Colors.black.withOpacity(0.05),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (isDark ? AppTheme.accent : AppTheme.primary)
+                      .withOpacity(0.06),
+                  blurRadius: 24,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: Text(
+                    'Help & Support',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final itemWidth = (constraints.maxWidth - 4 * 4) / 5;
+                      return Wrap(
+                        spacing: 4,
+                        runSpacing: 24,
+                        children: _helpSupport.map((service) {
+                          return SizedBox(
+                            width: itemWidth,
+                            child: GestureDetector(
+                              onTap: () {},
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 52,
+                                    height: 52,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: service.color.withOpacity(isDark ? 0.15 : 0.10),
+                                      border: Border.all(
+                                        color: service.color.withOpacity(isDark ? 0.20 : 0.12),
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(13),
+                                        child: SvgPicture.asset(
+                                          service.iconAsset,
+                                          colorFilter: ColorFilter.mode(
+                                            service.color,
+                                            BlendMode.srcIn,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    service.title,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: isDark ? Colors.white : const Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
                       );
                     },
                   ),

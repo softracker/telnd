@@ -36,7 +36,7 @@ class TelndApp extends ConsumerWidget {
                     radius: 1.5,
                     colors: [
                       (isDark ? AppTheme.accent : AppTheme.primary)
-                          .withOpacity(0.06),
+                          .withOpacity(0.03),
                       Colors.transparent,
                     ],
                     stops: const [0.0, 1.0],

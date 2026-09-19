@@ -86,6 +86,38 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/showcase/feedback',
         builder: (context, state) => const FeedbackShowcase(),
       ),
+      GoRoute(
+        path: '/explore/jobs',
+        builder: (context, state) => const _PlaceholderPage(title: 'Jobs & Careers'),
+      ),
+      GoRoute(
+        path: '/explore/education',
+        builder: (context, state) => const _PlaceholderPage(title: 'Education & Learning'),
+      ),
+      GoRoute(
+        path: '/explore/health',
+        builder: (context, state) => const _PlaceholderPage(title: 'Health'),
+      ),
+      GoRoute(
+        path: '/explore/social',
+        builder: (context, state) => const _PlaceholderPage(title: 'Social'),
+      ),
+      GoRoute(
+        path: '/explore/home-services',
+        builder: (context, state) => const _PlaceholderPage(title: 'Home Services'),
+      ),
+      GoRoute(
+        path: '/explore/career-tools',
+        builder: (context, state) => const _PlaceholderPage(title: 'Career Tools'),
+      ),
+      GoRoute(
+        path: '/explore/interview',
+        builder: (context, state) => const _PlaceholderPage(title: 'Interview & Assessment'),
+      ),
+      GoRoute(
+        path: '/explore/ai-assistant',
+        builder: (context, state) => const _PlaceholderPage(title: 'AI Assistant'),
+      ),
     ],
   );
 });
@@ -146,5 +178,27 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
     if (location.startsWith('/profile')) return null;
     return const HomeAppBar();
+  }
+}
+
+class _PlaceholderPage extends StatelessWidget {
+  final String title;
+
+  const _PlaceholderPage({required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: Text(
+          '$title\nComing Soon',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          ),
+        ),
+      ),
+    );
   }
 }

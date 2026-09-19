@@ -50,24 +50,22 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
             child: ClipRRect(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
                 child: Container(
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
-                  decoration: BoxDecoration(
+                    decoration: BoxDecoration(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: isDark
-                          ? [
-                              const Color(0xFF14161A).withOpacity(0.85),
-                              const Color(0xFF14161A).withOpacity(0.95),
-                            ]
-                          : [
-                              const Color(0xFFF8F9FB).withOpacity(0.80),
-                              const Color(0xFFF8F9FB).withOpacity(0.95),
-                            ],
+                    border: Border(
+                      top: BorderSide(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.1)
+                            : Colors.black.withOpacity(0.08),
+                        width: 1,
+                      ),
                     ),
+                    color: isDark
+                        ? const Color(0xFF1C1C1E).withOpacity(0.5)
+                        : Colors.white.withOpacity(0.5),
                     boxShadow: [
                       BoxShadow(
                         color: active.withOpacity(isDark ? 0.15 : 0.08),
@@ -117,7 +115,7 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
                         child: _Tab(
                           iconSolid: 'assets/icons/user-solid.svg',
                           iconStroke: 'assets/icons/user-stroke.svg',
-                          label: 'Account',
+                          label: 'Profile',
                           selected: selected == 4,
                           active: active,
                           inactive: inactive,
