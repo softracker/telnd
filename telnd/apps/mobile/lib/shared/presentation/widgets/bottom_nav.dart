@@ -223,7 +223,7 @@ class _CenterTab extends StatelessWidget {
               ),
               child: Center(
                 child: SvgPicture.asset(
-                  selected ? 'assets/icons/brain-solid.svg' : 'assets/icons/brain-stroke.svg',
+                  'assets/icons/brain-stroke.svg',
                   width: 22,
                   height: 22,
                   colorFilter: const ColorFilter.mode(
@@ -238,7 +238,7 @@ class _CenterTab extends StatelessWidget {
               'Telnd AI',
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w800,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 color: selected ? primary : inactive,
                 letterSpacing: 0.3,
               ),

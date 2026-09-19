@@ -90,30 +90,56 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class MainShell extends StatelessWidget {
+final exploreSearchQueryProvider = StateProvider<String>((ref) => '');
+
+class MainShell extends ConsumerStatefulWidget {
   final Widget child;
 
   const MainShell({super.key, required this.child});
+
+  @override
+  ConsumerState<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends ConsumerState<MainShell> {
+  final _exploreSearchController = TextEditingController();
+  final _exploreFocusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _exploreSearchController.dispose();
+    _exploreFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
     final appBar = _getAppBar(location);
 
-    return Scaffold(
-      extendBody: true,
-      body: Column(
-        children: [
-          if (appBar != null) appBar,
-          Expanded(child: child),
-        ],
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        extendBody: true,
+        body: Column(
+          children: [
+            if (appBar != null) appBar,
+            Expanded(child: widget.child),
+          ],
+        ),
+        bottomNavigationBar: const BottomNav(),
       ),
-      bottomNavigationBar: const BottomNav(),
     );
   }
 
   PreferredSizeWidget? _getAppBar(String location) {
-    if (location.startsWith('/explore')) return null;
+    if (location.startsWith('/explore')) {
+      return ExploreAppBar(
+        controller: _exploreSearchController,
+        focusNode: _exploreFocusNode,
+        onChanged: (v) => ref.read(exploreSearchQueryProvider.notifier).state = v,
+      );
+    }
     if (location.startsWith('/ai')) return null;
     if (location.startsWith('/messages')) return null;
     if (location.startsWith('/profile')) return null;

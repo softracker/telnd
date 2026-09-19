@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:telnd_mobile/core/theme.dart';
 
 class HomePage extends StatelessWidget {
@@ -50,7 +51,7 @@ class HomePage extends StatelessWidget {
                   return _ActionCard(
                     title: item.title,
                     desc: item.desc,
-                    icon: item.icon,
+                    iconAsset: item.iconAsset,
                     color: item.color,
                     isDark: isDark,
                     onTap: () {},
@@ -106,31 +107,53 @@ const _items = [
   _ItemData(
     title: 'Find Jobs',
     desc: 'Browse opportunities',
-    icon: Icons.work_outline_rounded,
+    iconAsset: 'assets/icons/find-jobs.svg',
     color: Color(0xFF0891B2),
   ),
   _ItemData(
     title: 'Tutors',
     desc: 'Expert guidance',
-    icon: Icons.school_outlined,
+    iconAsset: 'assets/icons/tutors.svg',
     color: Color(0xFF2563EB),
   ),
   _ItemData(
-    title: 'Influencers',
-    desc: 'Connect with creators',
-    icon: Icons.star_outline_rounded,
-    color: Color(0xFF7C3AED),
+    title: 'Doctors',
+    desc: 'Healthcare specialists',
+    iconAsset: 'assets/icons/doctor.svg',
+    color: Color(0xFF0D9488),
+  ),
+  _ItemData(
+    title: 'Matrimony',
+    desc: 'Find your match',
+    iconAsset: 'assets/icons/matrimony.svg',
+    color: Color(0xFFE11D48),
   ),
   _ItemData(
     title: 'Fix',
     desc: 'Get issues resolved',
-    icon: Icons.build_outlined,
+    iconAsset: 'assets/icons/fix.svg',
     color: Color(0xFFEA580C),
+  ),
+];
+
+const _allItems = [
+  ..._items,
+  _ItemData(
+    title: 'Laundry',
+    desc: 'Wash & fold services',
+    iconAsset: 'assets/icons/laundry.svg',
+    color: Color(0xFF0EA5E9),
+  ),
+  _ItemData(
+    title: 'Influencers',
+    desc: 'Connect with creators',
+    iconAsset: 'assets/icons/user-star-01-stroke-rounded.svg',
+    color: Color(0xFF7C3AED),
   ),
   _ItemData(
     title: 'Learn',
     desc: 'Courses & skills',
-    icon: Icons.menu_book_outlined,
+    iconAsset: 'assets/icons/learn.svg',
     color: Color(0xFF059669),
   ),
 ];
@@ -138,13 +161,13 @@ const _items = [
 class _ItemData {
   final String title;
   final String desc;
-  final IconData icon;
+  final String iconAsset;
   final Color color;
 
   const _ItemData({
     required this.title,
     required this.desc,
-    required this.icon,
+    required this.iconAsset,
     required this.color,
   });
 }
@@ -152,7 +175,7 @@ class _ItemData {
 class _ActionCard extends StatelessWidget {
   final String title;
   final String desc;
-  final IconData icon;
+  final String iconAsset;
   final Color color;
   final bool isDark;
   final VoidCallback onTap;
@@ -160,7 +183,7 @@ class _ActionCard extends StatelessWidget {
   const _ActionCard({
     required this.title,
     required this.desc,
-    required this.icon,
+    required this.iconAsset,
     required this.color,
     required this.isDark,
     required this.onTap,
@@ -189,10 +212,14 @@ class _ActionCard extends StatelessWidget {
             Positioned(
               right: -4,
               bottom: -4,
-              child: Icon(
-                icon,
-                size: 52,
-                color: color.withOpacity(isDark ? 0.08 : 0.06),
+              child: SvgPicture.asset(
+                iconAsset,
+                width: 52,
+                height: 52,
+                colorFilter: ColorFilter.mode(
+                  color.withOpacity(isDark ? 0.08 : 0.06),
+                  BlendMode.srcIn,
+                ),
               ),
             ),
             Column(
@@ -205,7 +232,16 @@ class _ActionCard extends StatelessWidget {
                     color: color,
                     borderRadius: BorderRadius.circular(7),
                   ),
-                  child: Icon(icon, size: 14, color: Colors.white),
+                  child: Padding(
+                    padding: const EdgeInsets.all(5),
+                    child: SvgPicture.asset(
+                      iconAsset,
+                      colorFilter: const ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn,
+                      ),
+                    ),
+                  ),
                 ),
                 const Spacer(),
                 Text(
@@ -341,13 +377,13 @@ class _AllSheet extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (int i = 0; i < _items.length; i++) ...[
+                for (int i = 0; i < _allItems.length; i++) ...[
                   if (i > 0) const SizedBox(height: 10),
                   _SheetItem(
-                    title: _items[i].title,
-                    desc: _items[i].desc,
-                    icon: _items[i].icon,
-                    color: _items[i].color,
+                    title: _allItems[i].title,
+                    desc: _allItems[i].desc,
+                    iconAsset: _allItems[i].iconAsset,
+                    color: _allItems[i].color,
                     isDark: isDark,
                     onTap: () => Navigator.pop(context),
                   ),
@@ -364,7 +400,7 @@ class _AllSheet extends StatelessWidget {
 class _SheetItem extends StatelessWidget {
   final String title;
   final String desc;
-  final IconData icon;
+  final String iconAsset;
   final Color color;
   final bool isDark;
   final VoidCallback onTap;
@@ -372,7 +408,7 @@ class _SheetItem extends StatelessWidget {
   const _SheetItem({
     required this.title,
     required this.desc,
-    required this.icon,
+    required this.iconAsset,
     required this.color,
     required this.isDark,
     required this.onTap,
@@ -399,7 +435,16 @@ class _SheetItem extends StatelessWidget {
                 color: color,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 18, color: Colors.white),
+              child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: SvgPicture.asset(
+                      iconAsset,
+                      colorFilter: const ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn,
+                      ),
+                    ),
+                  ),
             ),
             const SizedBox(width: 14),
             Expanded(
