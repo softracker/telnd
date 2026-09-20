@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:telnd_mobile/_showcase/presentation/pages/buttons/buttons_showcase.dart';
@@ -165,6 +167,7 @@ class MainShell extends ConsumerStatefulWidget {
 class _MainShellState extends ConsumerState<MainShell> {
   final _exploreSearchController = TextEditingController();
   final _exploreFocusNode = FocusNode();
+  DateTime? _lastBackPress;
 
   @override
   void dispose() {
@@ -177,19 +180,43 @@ class _MainShellState extends ConsumerState<MainShell> {
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
     final appBar = _getAppBar(location);
+    final isHome = location == '/';
 
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        extendBody: true,
-        body: Column(
-          children: [
-            if (appBar != null) appBar,
-            Expanded(child: widget.child),
-          ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (isHome) {
+          final now = DateTime.now();
+          if (_lastBackPress == null || now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
+            _lastBackPress = now;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Press back again to exit'),
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            return;
+          }
+          SystemNavigator.pop();
+        } else {
+          context.go('/');
+        }
+      },
+      child: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          extendBody: true,
+          body: Column(
+            children: [
+              if (appBar != null) appBar,
+              Expanded(child: widget.child),
+            ],
+          ),
+          bottomNavigationBar: const BottomNav(),
         ),
-        bottomNavigationBar: const BottomNav(),
       ),
     );
   }

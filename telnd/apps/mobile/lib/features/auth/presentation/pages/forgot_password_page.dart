@@ -24,7 +24,17 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return ColoredBox(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/');
+        }
+      },
+      child: ColoredBox(
       color: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
       child: Material(
         color: Colors.transparent,
@@ -37,7 +47,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
-                    onTap: () => context.go('/auth/login'),
+                    onTap: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go('/auth/login');
+                      }
+                    },
                     child: SvgPicture.asset(
                       'assets/icons/close.svg',
                       width: 28,
@@ -135,7 +151,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 ],
                 const SizedBox(height: 40),
                 GestureDetector(
-                  onTap: () => context.go('/auth/login'),
+                  onTap: () {
+                    if (context.canPop()) {
+                      context.pop();
+                    } else {
+                      context.go('/auth/login');
+                    }
+                  },
                   child: Text(
                     'Back to Sign In',
                     style: TextStyle(
@@ -149,6 +171,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

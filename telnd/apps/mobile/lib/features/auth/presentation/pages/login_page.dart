@@ -26,7 +26,17 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return ColoredBox(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/');
+        }
+      },
+      child: ColoredBox(
       color: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
       child: Material(
         color: Colors.transparent,
@@ -39,7 +49,13 @@ class _LoginPageState extends State<LoginPage> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
-                    onTap: () => context.go('/'),
+                    onTap: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go('/');
+                      }
+                    },
                     child: SvgPicture.asset(
                       'assets/icons/close.svg',
                       width: 28,
@@ -92,7 +108,7 @@ class _LoginPageState extends State<LoginPage> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: GestureDetector(
-                    onTap: () => context.go('/auth/forgot-password'),
+                    onTap: () => context.push('/auth/forgot-password'),
                     child: Text(
                       'Forgot Password?',
                       style: TextStyle(
@@ -119,7 +135,7 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 40),
                 GestureDetector(
-                  onTap: () => context.go('/auth/signup'),
+                  onTap: () => context.push('/auth/signup'),
                   child: Text.rich(
                     TextSpan(
                       text: "Don't have an account? ",
@@ -140,6 +156,7 @@ class _LoginPageState extends State<LoginPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

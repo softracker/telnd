@@ -31,7 +31,17 @@ class _SignUpPageState extends State<SignUpPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return ColoredBox(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/');
+        }
+      },
+      child: ColoredBox(
       color: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
       child: Material(
         color: Colors.transparent,
@@ -44,7 +54,13 @@ class _SignUpPageState extends State<SignUpPage> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
-                    onTap: () => context.go('/'),
+                    onTap: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go('/');
+                      }
+                    },
                     child: SvgPicture.asset(
                       'assets/icons/close.svg',
                       width: 28,
@@ -186,7 +202,7 @@ class _SignUpPageState extends State<SignUpPage> {
                 ),
                 const SizedBox(height: 32),
                 GestureDetector(
-                  onTap: () => context.go('/auth/login'),
+                  onTap: () => context.push('/auth/login'),
                   child: Text.rich(
                     TextSpan(
                       text: 'Already have an account? ',
@@ -207,6 +223,7 @@ class _SignUpPageState extends State<SignUpPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );
