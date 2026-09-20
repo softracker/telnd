@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:telnd_mobile/core/theme.dart';
@@ -70,9 +71,17 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final topBg = isDark ? AppTheme.darkBackground : const Color(0xFFE6F6F5);
     final iconColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
 
-    return CustomAppBar(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: topBg,
+        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      ),
+      child: ColoredBox(
+        color: topBg,
+        child: CustomAppBar(
       leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -149,6 +158,8 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
           ),
         ),
       ],
+    ),
+    ),
     );
   }
 }

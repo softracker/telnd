@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:telnd_mobile/core/theme.dart';
 
@@ -9,84 +10,507 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.only(left: 16, top: 8, bottom: 100),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Text(
-                'Welcome to TELND',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Text(
-                'Discover opportunities, prove your skills, get hired.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+    final topBg = isDark ? AppTheme.darkBackground : const Color(0xFFE6F6F5);
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: topBg,
+        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      ),
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        backgroundColor: topBg,
+        body: ColoredBox(
+          color: topBg,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, right: 16),
+                  child: Text(
+                    'Welcome to TELND',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 120,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.only(right: 16),
-                itemCount: _items.length + 1,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  if (index == _items.length) {
-                    return _AllCard(
-                      isDark: isDark,
-                      onTap: () => _showAllSheet(context, isDark),
-                    );
-                  }
-                  final item = _items[index];
-                  return _ActionCard(
-                    title: item.title,
-                    desc: item.desc,
-                    iconAsset: item.iconAsset,
-                    color: item.color,
-                    isDark: isDark,
-                    onTap: () {},
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 24),
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Text(
-                'Recent Activity',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, right: 16),
+                  child: Text(
+                    'Discover opportunities, prove your skills, get hired.',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Color.lerp(const Color(0xFF1C1C1E), Colors.white, 0.04)
-                    : Color.lerp(Colors.white, const Color(0xFF1F2937), 0.03),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                'No recent activity yet.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: SizedBox(
+                    height: 120,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.only(right: 16),
+                      itemCount: _items.length + 1,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        if (index == _items.length) {
+                          return _AllCard(
+                            isDark: isDark,
+                            onTap: () => _showAllSheet(context, isDark),
+                          );
+                        }
+                        final item = _items[index];
+                        return _ActionCard(
+                          title: item.title,
+                          desc: item.desc,
+                          iconAsset: item.iconAsset,
+                          color: item.color,
+                          isDark: isDark,
+                          onTap: () {},
+                        );
+                      },
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 24),
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Recommended For You',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 100,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _demoCards.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 10),
+                          itemBuilder: (context, index) {
+                            final card = _demoCards[index];
+                            return Container(
+                              width: 140,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: card.color
+                                    .withOpacity(isDark ? 0.15 : 0.08),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(card.icon, size: 24, color: card.color),
+                                  const Spacer(),
+                                  Text(
+                                    card.title,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: isDark
+                                          ? Colors.white
+                                          : const Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    card.subtitle,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isDark
+                                          ? Colors.white.withOpacity(0.45)
+                                          : const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Quick Stats',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            _StatCard(
+                              label: 'Profile Views',
+                              value: '1.2K',
+                              icon: Icons.visibility_outlined,
+                              color: const Color(0xFF3B82F6),
+                              isDark: isDark,
+                            ),
+                            const SizedBox(width: 10),
+                            _StatCard(
+                              label: 'Applications',
+                              value: '24',
+                              icon: Icons.send_outlined,
+                              color: const Color(0xFF10B981),
+                              isDark: isDark,
+                            ),
+                            const SizedBox(width: 10),
+                            _StatCard(
+                              label: 'Matches',
+                              value: '8',
+                              icon: Icons.favorite_outline,
+                              color: const Color(0xFFE11D48),
+                              isDark: isDark,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Nearby Opportunities',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...List.generate(_demoNearby.length, (index) {
+                        final item = _demoNearby[index];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 5),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Color.lerp(
+                                      const Color(0xFF1C1C1E),
+                                      Colors.white,
+                                      0.04,
+                                    )
+                                  : const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: item.color
+                                        .withOpacity(isDark ? 0.2 : 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(item.icon,
+                                      size: 22, color: item.color),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.title,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: isDark
+                                              ? Colors.white
+                                              : const Color(0xFF1F2937),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        item.location,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.45)
+                                              : const Color(0xFF64748B),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: item.color
+                                        .withOpacity(isDark ? 0.2 : 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    item.tag,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: item.color,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Popular Services',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...List.generate(_demoServices.length, (index) {
+                        final svc = _demoServices[index];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 5),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Color.lerp(
+                                      const Color(0xFF1C1C1E),
+                                      Colors.white,
+                                      0.04,
+                                    )
+                                  : const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: svc.color
+                                        .withOpacity(isDark ? 0.2 : 0.1),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child:
+                                      Icon(svc.icon, size: 20, color: svc.color),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        svc.title,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: isDark
+                                              ? Colors.white
+                                              : const Color(0xFF1F2937),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        svc.subtitle,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.45)
+                                              : const Color(0xFF64748B),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 20,
+                                  color:
+                                      isDark ? Colors.white24 : Colors.black26,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Upcoming Events',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...List.generate(_demoEvents.length, (index) {
+                        final evt = _demoEvents[index];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 5),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Color.lerp(
+                                      const Color(0xFF1C1C1E),
+                                      Colors.white,
+                                      0.04,
+                                    )
+                                  : const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: evt.color
+                                        .withOpacity(isDark ? 0.2 : 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        evt.day,
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w800,
+                                          color: evt.color,
+                                        ),
+                                      ),
+                                      Text(
+                                        evt.month,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: evt.color.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        evt.title,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: isDark
+                                              ? Colors.white
+                                              : const Color(0xFF1F2937),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        evt.subtitle,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.45)
+                                              : const Color(0xFF64748B),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 20,
+                                  color:
+                                      isDark ? Colors.white24 : Colors.black26,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 28),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Recent Activity',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Color.lerp(
+                                    const Color(0xFF1C1C1E),
+                                    Colors.white,
+                                    0.04,
+                                  )
+                                : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text(
+                            'No recent activity yet.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.4),
+                                ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 120),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -155,6 +579,175 @@ const _allItems = [
     desc: 'Courses & skills',
     iconAsset: 'assets/icons/learn.svg',
     color: Color(0xFF059669),
+  ),
+];
+
+class _DemoCardData {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+
+  const _DemoCardData({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+  });
+}
+
+const _demoCards = [
+  _DemoCardData(
+    title: 'Top Rated',
+    subtitle: '120+ providers',
+    icon: Icons.star_rounded,
+    color: Color(0xFFF59E0B),
+  ),
+  _DemoCardData(
+    title: 'New Jobs',
+    subtitle: '45 openings',
+    icon: Icons.work_outline_rounded,
+    color: Color(0xFF3B82F6),
+  ),
+  _DemoCardData(
+    title: 'Tutors',
+    subtitle: '80+ experts',
+    icon: Icons.school_outlined,
+    color: Color(0xFF8B5CF6),
+  ),
+  _DemoCardData(
+    title: 'Events',
+    subtitle: '12 this week',
+    icon: Icons.event_outlined,
+    color: Color(0xFF10B981),
+  ),
+];
+
+class _DemoServiceData {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+
+  const _DemoServiceData({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+  });
+}
+
+const _demoServices = [
+  _DemoServiceData(
+    title: 'Resume Builder',
+    subtitle: 'Create professional resumes',
+    icon: Icons.description_outlined,
+    color: Color(0xFF0891B2),
+  ),
+  _DemoServiceData(
+    title: 'Interview Prep',
+    subtitle: 'Practice with AI feedback',
+    icon: Icons.mic_outlined,
+    color: Color(0xFF2563EB),
+  ),
+  _DemoServiceData(
+    title: 'Skill Assessment',
+    subtitle: 'Verify your abilities',
+    icon: Icons.psychology_outlined,
+    color: Color(0xFF7C3AED),
+  ),
+  _DemoServiceData(
+    title: 'Mentorship',
+    subtitle: 'Connect with mentors',
+    icon: Icons.handshake_outlined,
+    color: Color(0xFF059669),
+  ),
+];
+
+class _NearbyData {
+  final String title;
+  final String location;
+  final String tag;
+  final IconData icon;
+  final Color color;
+
+  const _NearbyData({
+    required this.title,
+    required this.location,
+    required this.tag,
+    required this.icon,
+    required this.color,
+  });
+}
+
+const _demoNearby = [
+  _NearbyData(
+    title: 'Senior Flutter Dev',
+    location: 'Dhaka, Bangladesh',
+    tag: 'Remote',
+    icon: Icons.phone_android,
+    color: Color(0xFF0891B2),
+  ),
+  _NearbyData(
+    title: 'UI/UX Designer',
+    location: 'Chittagong, Bangladesh',
+    tag: 'On-site',
+    icon: Icons.palette_outlined,
+    color: Color(0xFF8B5CF6),
+  ),
+  _NearbyData(
+    title: 'Data Scientist',
+    location: 'Sylhet, Bangladesh',
+    tag: 'Hybrid',
+    icon: Icons.analytics_outlined,
+    color: Color(0xFF10B981),
+  ),
+  _NearbyData(
+    title: 'Marketing Lead',
+    location: 'Rajshahi, Bangladesh',
+    tag: 'Remote',
+    icon: Icons.campaign_outlined,
+    color: Color(0xFFEA580C),
+  ),
+];
+
+class _EventData {
+  final String title;
+  final String subtitle;
+  final String day;
+  final String month;
+  final Color color;
+
+  const _EventData({
+    required this.title,
+    required this.subtitle,
+    required this.day,
+    required this.month,
+    required this.color,
+  });
+}
+
+const _demoEvents = [
+  _EventData(
+    title: 'Tech Career Fair',
+    subtitle: 'Meet 50+ employers hiring now',
+    day: '25',
+    month: 'SEP',
+    color: Color(0xFF3B82F6),
+  ),
+  _EventData(
+    title: 'Flutter Workshop',
+    subtitle: 'Build your first app in 2 hours',
+    day: '28',
+    month: 'SEP',
+    color: Color(0xFF0EA5E9),
+  ),
+  _EventData(
+    title: 'Networking Night',
+    subtitle: 'Connect with industry leaders',
+    day: '02',
+    month: 'OCT',
+    color: Color(0xFF7C3AED),
   ),
 ];
 
@@ -476,6 +1069,67 @@ class _SheetItem extends StatelessWidget {
               Icons.chevron_right_rounded,
               size: 20,
               color: isDark ? Colors.white24 : Colors.black26,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final bool isDark;
+
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isDark
+              ? Color.lerp(const Color(0xFF1C1C1E), color, 0.12)
+              : Color.lerp(Colors.white, color, 0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withOpacity(0.06)
+                : Colors.black.withOpacity(0.05),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 10),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: isDark ? Colors.white : const Color(0xFF1F2937),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: isDark
+                    ? Colors.white.withOpacity(0.45)
+                    : const Color(0xFF64748B),
+              ),
             ),
           ],
         ),

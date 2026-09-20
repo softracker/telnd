@@ -31,22 +31,6 @@ class TelndApp extends ConsumerWidget {
                 color: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
               ),
             ),
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: const Alignment(0, -0.5),
-                    radius: 1.5,
-                    colors: [
-                      (isDark ? AppTheme.accent : AppTheme.primary)
-                          .withOpacity(0.03),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 1.0],
-                  ),
-                ),
-              ),
-            ),
             if (child != null) child,
           ],
         );
