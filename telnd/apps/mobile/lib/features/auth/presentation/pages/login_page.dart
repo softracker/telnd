@@ -1,72 +1,342 @@
 import 'package:flutter/material.dart';
-import 'package:telnd_mobile/shared/presentation/widgets/theme_toggle.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
+import 'package:telnd_mobile/core/theme.dart';
 
-class LoginPage extends StatelessWidget {
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
   @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Log In'),
-        actions: const [
-          ThemeToggle(),
-          SizedBox(width: 8),
-        ],
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Welcome Back',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Log in to your TELND account',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                ),
-              ),
-              const SizedBox(height: 32),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    children: [
-                      TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: Icon(Icons.email_outlined),
-                        ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return ColoredBox(
+      color: isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
+      child: Material(
+        color: Colors.transparent,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: GestureDetector(
+                    onTap: () => context.go('/'),
+                    child: SvgPicture.asset(
+                      'assets/icons/close.svg',
+                      width: 28,
+                      height: 28,
+                      colorFilter: ColorFilter.mode(
+                        isDark ? Colors.white70 : const Color(0xFF1F2937),
+                        BlendMode.srcIn,
                       ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: Icon(Icons.lock_outlined),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () {},
-                        child: const Text('Log In'),
-                      ),
-                      const SizedBox(height: 16),
-                      TextButton(
-                        onPressed: () {},
-                        child: const Text('Forgot Password?'),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.asset(
+                    'assets/icons/favicon.png',
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Text(
+                  'Welcome Back',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Sign in to your TELND account',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isDark ? Colors.white.withOpacity(0.5) : const Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 40),
+                _buildInput(
+                  context: context,
+                  label: 'Email or Phone',
+                  hint: 'rahim@example.com or +880...',
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  iconAsset: 'assets/icons/email.svg',
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 16),
+                _buildPasswordField(isDark),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: Text(
+                      'Forgot Password?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                _buildPrimaryButton('Sign In', () {}),
+                const SizedBox(height: 24),
+                _buildDivider(isDark, 'or continue with'),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(child: _socialBtn('Google', 'assets/icons/google.svg', const Color(0xFFDB4437), isDark)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _socialBtn('Facebook', 'assets/icons/facebook.svg', const Color(0xFF1877F2), isDark)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _socialBtn('LinkedIn', 'assets/icons/linked-in.svg', const Color(0xFF0A66C2), isDark)),
+                  ],
+                ),
+                const SizedBox(height: 40),
+                GestureDetector(
+                  onTap: () => context.go('/auth/signup'),
+                  child: Text.rich(
+                    TextSpan(
+                      text: "Don't have an account? ",
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: isDark ? Colors.white.withOpacity(0.5) : const Color(0xFF64748B),
+                      ),
+                      children: [
+                        TextSpan(
+                          text: 'Sign Up',
+                          style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInput({
+    required BuildContext context,
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required bool isDark,
+    required String iconAsset,
+    TextInputType? keyboardType,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: isDark ? Colors.white24 : Colors.black26),
+            prefixIcon: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SvgPicture.asset(
+                iconAsset,
+                width: 20,
+                height: 20,
+                colorFilter: ColorFilter.mode(
+                  isDark ? Colors.white38 : Colors.black38,
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
+            filled: true,
+            fillColor: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPasswordField(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Password', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _passwordController,
+          obscureText: _obscurePassword,
+          style: const TextStyle(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: 'Enter your password',
+            hintStyle: TextStyle(color: isDark ? Colors.white24 : Colors.black26),
+            prefixIcon: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SvgPicture.asset(
+                'assets/icons/password.svg',
+                width: 20,
+                height: 20,
+                colorFilter: ColorFilter.mode(
+                  isDark ? Colors.white38 : Colors.black38,
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
+            suffixIcon: GestureDetector(
+              onTap: () => setState(() => _obscurePassword = !_obscurePassword),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  size: 20,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
+              ),
+            ),
+            filled: true,
+            fillColor: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPrimaryButton(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        height: 50,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [AppTheme.primary, Color(0xFF045E62)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.primary.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDivider(bool isDark, String text) {
+    return Row(
+      children: [
+        Expanded(child: Container(height: 1, color: isDark ? Colors.white.withOpacity(0.08) : const Color(0xFFE2E8F0))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 12, color: isDark ? Colors.white.withOpacity(0.4) : const Color(0xFF94A3B8)),
+          ),
+        ),
+        Expanded(child: Container(height: 1, color: isDark ? Colors.white.withOpacity(0.08) : const Color(0xFFE2E8F0))),
+      ],
+    );
+  }
+
+  Widget _socialBtn(String label, String iconAsset, Color iconColor, bool isDark) {
+    return GestureDetector(
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withOpacity(0.05) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDark ? Colors.white.withOpacity(0.08) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SvgPicture.asset(
+              iconAsset,
+              width: 22,
+              height: 22,
+              colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: isDark ? Colors.white : const Color(0xFF1F2937),
+              ),
+            ),
+          ],
         ),
       ),
     );

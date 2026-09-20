@@ -15,6 +15,7 @@ class TelndApp extends ConsumerWidget {
 
     return MaterialApp.router(
       title: 'TELND',
+      color: Colors.transparent,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeProvider.flutterThemeMode,
