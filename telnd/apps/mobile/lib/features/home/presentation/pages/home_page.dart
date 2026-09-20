@@ -32,6 +32,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    homeScrollProgress.value = 0.0;
     super.dispose();
   }
 
