@@ -131,7 +131,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
   });
 
   @override
-  double get maxExtent => 172;
+  double get maxExtent => 188;
 
   @override
   double get minExtent => 84;
@@ -169,9 +169,15 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
                   if (t >= 0.5)
                     Positioned(
                       top: 0,
+                      bottom: 0,
                       left: 0,
                       right: 0,
-                      child: _buildCompactBar(context),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildCompactBar(context),
+                        ],
+                      ),
                     ),
                 ],
               ),
@@ -194,7 +200,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
     return Padding(
       padding: const EdgeInsets.only(left: 16),
       child: SizedBox(
-        height: 120,
+        height: 132,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.only(right: 16),
@@ -221,7 +227,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   Widget _buildCompactBar(BuildContext context) {
     return Container(
-      height: 52,
+      height: 44,
       alignment: Alignment.centerLeft,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
@@ -231,17 +237,17 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
         itemBuilder: (context, index) {
           final item = _items[index];
           return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(18),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 24,
-                  height: 24,
+                  width: 22,
+                  height: 22,
                   decoration: BoxDecoration(
                     color: item.color,
                     borderRadius: BorderRadius.circular(6),
@@ -257,12 +263,12 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
                 Text(
                   item.title,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
