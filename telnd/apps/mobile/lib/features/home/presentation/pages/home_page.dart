@@ -131,7 +131,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
   });
 
   @override
-  double get maxExtent => 188;
+  double get maxExtent => 194;
 
   @override
   double get minExtent => 84;
@@ -200,7 +200,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
     return Padding(
       padding: const EdgeInsets.only(left: 16),
       child: SizedBox(
-        height: 132,
+        height: 126,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.only(right: 16),
