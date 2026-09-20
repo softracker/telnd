@@ -9,6 +9,7 @@ import 'package:telnd_mobile/_showcase/presentation/pages/showcase_screen.dart';
 import 'package:telnd_mobile/features/ai/presentation/pages/ai_page.dart';
 import 'package:telnd_mobile/features/auth/presentation/pages/login_page.dart';
 import 'package:telnd_mobile/features/auth/presentation/pages/signup_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/forgot_password_page.dart';
 import 'package:telnd_mobile/features/explore/presentation/pages/explore_page.dart';
 import 'package:telnd_mobile/features/home/presentation/pages/home_page.dart';
 import 'package:telnd_mobile/features/jobs/presentation/pages/jobs_page.dart';
@@ -77,6 +78,18 @@ final routerProvider = Provider<GoRouter>((ref) {
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
           child: const SignUpPage(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return child;
+          },
+        ),
+      ),
+      GoRoute(
+        path: '/auth/forgot-password',
+        pageBuilder: (context, state) => CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+          child: const ForgotPasswordPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return child;
           },

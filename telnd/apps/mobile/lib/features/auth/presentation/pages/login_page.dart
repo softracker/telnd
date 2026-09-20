@@ -92,7 +92,7 @@ class _LoginPageState extends State<LoginPage> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: GestureDetector(
-                    onTap: () {},
+                    onTap: () => context.go('/auth/forgot-password'),
                     child: Text(
                       'Forgot Password?',
                       style: TextStyle(
