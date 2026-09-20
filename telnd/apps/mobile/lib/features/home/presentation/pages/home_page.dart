@@ -92,6 +92,7 @@ class _HomePageState extends State<HomePage> {
                     pinned: true,
                     delegate: _PinnedHeaderDelegate(
                       isDark: isDark,
+                      bgColor: bgColor,
                       onTapAll: () => _showAllSheet(context, isDark),
                     ),
                   ),
@@ -120,9 +121,14 @@ class _HomePageState extends State<HomePage> {
 
 class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool isDark;
+  final Color bgColor;
   final VoidCallback onTapAll;
 
-  _PinnedHeaderDelegate({required this.isDark, required this.onTapAll});
+  _PinnedHeaderDelegate({
+    required this.isDark,
+    required this.bgColor,
+    required this.onTapAll,
+  });
 
   @override
   double get maxExtent => 172;
@@ -139,37 +145,46 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     final t = (shrinkOffset / (maxExtent - minExtent)).clamp(0.0, 1.0);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Stack(
+      clipBehavior: Clip.hardEdge,
       children: [
-        Expanded(
-          child: Stack(
-            clipBehavior: Clip.hardEdge,
-            children: [
-              if (t < 0.5)
-                Positioned(
-                  top: 20 * (1 - t * 2),
-                  left: 0,
-                  right: 0,
-                  child: _buildFullCards(context),
-                ),
-              if (t >= 0.5)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _buildCompactBar(context),
-                ),
-            ],
+        if (t >= 0.5)
+          Positioned.fill(
+            child: ColoredBox(color: bgColor),
           ),
-        ),
-        Container(
-          height: 32,
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Expanded(
+              child: Stack(
+                clipBehavior: Clip.hardEdge,
+                children: [
+                  if (t < 0.5)
+                    Positioned(
+                      top: 20 * (1 - t * 2),
+                      left: 0,
+                      right: 0,
+                      child: _buildFullCards(context),
+                    ),
+                  if (t >= 0.5)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildCompactBar(context),
+                    ),
+                ],
+              ),
+            ),
+            Container(
+              height: 32,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+            ),
+          ],
         ),
       ],
     );
