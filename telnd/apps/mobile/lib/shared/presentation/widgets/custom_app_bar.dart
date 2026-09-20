@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:telnd_mobile/core/theme.dart';
+import 'package:telnd_mobile/features/home/presentation/pages/home_page.dart';
 
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final Widget? leading;
@@ -68,60 +69,98 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
+  static const _lightBg = Color(0xFFE6F6F5);
+  static const _darkBg = AppTheme.primary;
+
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final topBg = isDark ? AppTheme.darkBackground : const Color(0xFFE6F6F5);
-    final iconColor = isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
+    return ValueListenableBuilder<double>(
+      valueListenable: homeScrollProgress,
+      builder: (context, progress, _) {
+        final t = progress.clamp(0.0, 1.0);
+        final topBg = Color.lerp(_lightBg, _darkBg, t)!;
+        final statusBarBrightness = t > 0.5 ? Brightness.light : Brightness.dark;
+        final iconColor = t > 0.5 ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        statusBarColor: topBg,
-        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-      ),
-      child: ColoredBox(
-        color: topBg,
-        child: CustomAppBar(
-      leading: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CustomAppBar.buildLogo(),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: () {},
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppTheme.orange,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    'Pro',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: topBg,
+            statusBarIconBrightness: statusBarBrightness,
+          ),
+          child: ColoredBox(
+            color: topBg,
+            child: CustomAppBar(
+              leading: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CustomAppBar.buildLogo(),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {},
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.orange,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            'Pro',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: -6,
+                          right: -8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDC2626),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              'Free',
+                              style: TextStyle(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                ],
+              ),
+              actions: [
+                _NavBarIcon(
+                  asset: 'assets/icons/notification-store.svg',
+                  color: iconColor,
+                  onTap: () {},
                 ),
-                Positioned(
-                  top: -6,
-                  right: -8,
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: () => context.go('/profile'),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFDC2626),
-                      borderRadius: BorderRadius.circular(6),
+                      shape: BoxShape.circle,
+                      color: AppTheme.primary.withOpacity(0.15),
                     ),
-                    child: const Text(
-                      'Free',
-                      style: TextStyle(
-                        fontSize: 8,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                    child: Center(
+                      child: SvgPicture.asset(
+                        'assets/icons/user-stroke.svg',
+                        width: 20,
+                        height: 20,
+                        colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
                       ),
                     ),
                   ),
@@ -129,37 +168,8 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
               ],
             ),
           ),
-        ],
-      ),
-      actions: [
-        _NavBarIcon(
-          asset: 'assets/icons/notification-store.svg',
-          color: iconColor,
-          onTap: () {},
-        ),
-        const SizedBox(width: 16),
-        GestureDetector(
-          onTap: () => context.go('/profile'),
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppTheme.primary.withOpacity(0.15),
-            ),
-            child: Center(
-              child: SvgPicture.asset(
-                'assets/icons/user-stroke.svg',
-                width: 20,
-                height: 20,
-                colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-    ),
+        );
+      },
     );
   }
 }
