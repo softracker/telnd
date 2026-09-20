@@ -11,7 +11,9 @@ class TelndApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
     final themeProvider = ref.watch(themeProviderNotifier);
-    final isDark = themeProvider.flutterThemeMode == ThemeMode.dark;
+    final isDark = themeProvider.flutterThemeMode == ThemeMode.dark ||
+        (themeProvider.flutterThemeMode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
 
     return MaterialApp.router(
       title: 'TELND',

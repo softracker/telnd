@@ -117,10 +117,22 @@ const _items = [
     color: Color(0xFF2563EB),
   ),
   _ItemData(
+    title: 'Study Abroad',
+    desc: 'Explore overseas education',
+    iconAsset: 'assets/icons/study-abroad.svg',
+    color: Color(0xFF0EA5E9),
+  ),
+  _ItemData(
     title: 'Doctors',
     desc: 'Healthcare specialists',
     iconAsset: 'assets/icons/doctor.svg',
     color: Color(0xFF0D9488),
+  ),
+  _ItemData(
+    title: 'Lawyer',
+    desc: 'Legal assistance',
+    iconAsset: 'assets/icons/lawyer.svg',
+    color: Color(0xFFEA580C),
   ),
   _ItemData(
     title: 'Matrimony',
@@ -128,22 +140,10 @@ const _items = [
     iconAsset: 'assets/icons/matrimony.svg',
     color: Color(0xFFE11D48),
   ),
-  _ItemData(
-    title: 'Fix',
-    desc: 'Get issues resolved',
-    iconAsset: 'assets/icons/fix.svg',
-    color: Color(0xFFEA580C),
-  ),
 ];
 
 const _allItems = [
   ..._items,
-  _ItemData(
-    title: 'Laundry',
-    desc: 'Wash & fold services',
-    iconAsset: 'assets/icons/laundry.svg',
-    color: Color(0xFF0EA5E9),
-  ),
   _ItemData(
     title: 'Influencers',
     desc: 'Connect with creators',

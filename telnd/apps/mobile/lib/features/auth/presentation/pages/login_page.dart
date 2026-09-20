@@ -25,6 +25,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final brandColor = isDark ? AppTheme.accent : AppTheme.primary;
 
     return PopScope(
       canPop: false,
@@ -49,13 +50,11 @@ class _LoginPageState extends State<LoginPage> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
-                    onTap: () {
-                      if (context.canPop()) {
-                        context.pop();
-                      } else {
-                        context.go('/');
-                      }
-                    },
+                      onTap: () {
+                        while (context.canPop()) {
+                          context.pop();
+                        }
+                      },
                     child: SvgPicture.asset(
                       'assets/icons/close.svg',
                       width: 28,
@@ -101,9 +100,10 @@ class _LoginPageState extends State<LoginPage> {
                   keyboardType: TextInputType.emailAddress,
                   iconAsset: 'assets/icons/email.svg',
                   isDark: isDark,
+                  brandColor: brandColor,
                 ),
                 const SizedBox(height: 16),
-                _buildPasswordField(isDark),
+                _buildPasswordField(isDark, brandColor),
                 const SizedBox(height: 10),
                 Align(
                   alignment: Alignment.centerRight,
@@ -114,13 +114,13 @@ class _LoginPageState extends State<LoginPage> {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: AppTheme.primary,
+                        color: brandColor,
                       ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 28),
-                _buildPrimaryButton('Sign In', () {}),
+                _buildPrimaryButton('Sign In', () {}, brandColor),
                 const SizedBox(height: 24),
                 _buildDivider(isDark, 'or continue with'),
                 const SizedBox(height: 20),
@@ -146,7 +146,7 @@ class _LoginPageState extends State<LoginPage> {
                       children: [
                         TextSpan(
                           text: 'Sign Up',
-                          style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600),
+                          style: TextStyle(color: brandColor, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -169,6 +169,7 @@ class _LoginPageState extends State<LoginPage> {
     required TextEditingController controller,
     required bool isDark,
     required String iconAsset,
+    required Color brandColor,
     TextInputType? keyboardType,
   }) {
     return Column(
@@ -207,7 +208,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+              borderSide: BorderSide(color: brandColor, width: 1.5),
             ),
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           ),
@@ -216,7 +217,7 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _buildPasswordField(bool isDark) {
+  Widget _buildPasswordField(bool isDark, Color brandColor) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -264,7 +265,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+              borderSide: BorderSide(color: brandColor, width: 1.5),
             ),
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           ),
@@ -273,22 +274,22 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _buildPrimaryButton(String label, VoidCallback onTap) {
+  Widget _buildPrimaryButton(String label, VoidCallback onTap, Color brandColor) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: double.infinity,
         height: 50,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [AppTheme.primary, Color(0xFF045E62)],
+          gradient: LinearGradient(
+            colors: [brandColor, const Color(0xFF045E62)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: AppTheme.primary.withOpacity(0.3),
+              color: brandColor.withOpacity(0.3),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),

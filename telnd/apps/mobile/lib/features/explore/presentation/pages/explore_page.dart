@@ -10,10 +10,10 @@ class ExplorePage extends ConsumerWidget {
   static const _allServices = [
     _ServiceItem(title: 'Find Jobs', iconAsset: 'assets/icons/find-jobs.svg', color: Color(0xFF0891B2)),
     _ServiceItem(title: 'Tutors', iconAsset: 'assets/icons/tutors.svg', color: Color(0xFF2563EB)),
+    _ServiceItem(title: 'Study Abroad', iconAsset: 'assets/icons/study-abroad.svg', color: Color(0xFF0EA5E9)),
     _ServiceItem(title: 'Doctors', iconAsset: 'assets/icons/doctor.svg', color: Color(0xFF0D9488)),
+    _ServiceItem(title: 'Lawyer', iconAsset: 'assets/icons/lawyer.svg', color: Color(0xFFEA580C)),
     _ServiceItem(title: 'Matrimony', iconAsset: 'assets/icons/matrimony.svg', color: Color(0xFFE11D48)),
-    _ServiceItem(title: 'Fix', iconAsset: 'assets/icons/fix.svg', color: Color(0xFFEA580C)),
-    _ServiceItem(title: 'Laundry', iconAsset: 'assets/icons/laundry.svg', color: Color(0xFF0EA5E9)),
     _ServiceItem(title: 'Influencers', iconAsset: 'assets/icons/user-star-01-stroke-rounded.svg', color: Color(0xFF7C3AED)),
     _ServiceItem(title: 'Learn', iconAsset: 'assets/icons/learn.svg', color: Color(0xFF059669)),
   ];
