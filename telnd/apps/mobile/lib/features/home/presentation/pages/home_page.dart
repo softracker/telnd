@@ -470,7 +470,7 @@ class _WhiteContent extends StatelessWidget {
                   children: [
                     Container(
                       width: 44,
-                      height: 44,
+      height: 38,
                       decoration: BoxDecoration(
                         color: item.color.withOpacity(isDark ? 0.2 : 0.1),
                         borderRadius: BorderRadius.circular(12),
