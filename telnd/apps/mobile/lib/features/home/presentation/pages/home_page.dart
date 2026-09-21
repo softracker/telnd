@@ -134,7 +134,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// Paints everything EXCEPT a rounded-top rectangle, i.e. just the two top
+/// Paints everything EXCEPT a rounded- rectangle, i.e. just the two top
 /// corner notches. The middle stays transparent so the sheet shows through.
 class _TopCornerPainter extends CustomPainter {
   final Color color;
@@ -247,7 +247,7 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.only(right: 16),
           itemCount: _items.length + 1,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (context, index) {
             if (index == _items.length) {
               return _AllCard(isDark: isDark, onTap: onTapAll);
@@ -269,13 +269,14 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   Widget _buildCompactBar(BuildContext context) {
     return Container(
-      height: 44,
+      height: 48,
+      padding: const EdgeInsets.symmetric(vertical: 4),
       alignment: Alignment.centerLeft,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: _items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final item = _items[index];
           return Container(
@@ -1236,7 +1237,7 @@ class _SheetItem extends StatelessWidget {
           children: [
             Container(
               width: 38,
-              height: 38,
+      height: 38,
               decoration: BoxDecoration(
                 color: color,
                 borderRadius: BorderRadius.circular(10),
