@@ -77,10 +77,13 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
     return ValueListenableBuilder<double>(
       valueListenable: homeScrollProgress,
       builder: (context, progress, _) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
         final t = progress.clamp(0.0, 1.0);
-        final topBg = Color.lerp(_lightBg, _darkBg, t)!;
-        final statusBarBrightness = t > 0.5 ? Brightness.light : Brightness.dark;
-        final iconColor = t > 0.5 ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
+        final topBg = isDark
+            ? AppTheme.darkBackground
+            : Color.lerp(_lightBg, _darkBg, t)!;
+        final statusBarBrightness = isDark || t > 0.5 ? Brightness.light : Brightness.dark;
+        final iconColor = isDark || t > 0.5 ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
 
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(

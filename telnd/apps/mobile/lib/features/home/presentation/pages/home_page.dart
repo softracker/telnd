@@ -43,14 +43,13 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final lightBg =
-        isDark ? AppTheme.darkBackground : const Color(0xFFE6F6F5);
-    const darkBg = AppTheme.primary;
 
     return ValueListenableBuilder<double>(
       valueListenable: homeScrollProgress,
       builder: (context, progress, _) {
-        final bgColor = Color.lerp(lightBg, darkBg, progress)!;
+        final bgColor = isDark
+            ? AppTheme.darkBackground
+            : Color.lerp(const Color(0xFFE6F6F5), AppTheme.primary, progress)!;
         final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
 
         return AnnotatedRegion<SystemUiOverlayStyle>(
