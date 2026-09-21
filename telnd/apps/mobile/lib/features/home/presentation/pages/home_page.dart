@@ -63,9 +63,15 @@ class _HomePageState extends State<HomePage> {
             backgroundColor: bgColor,
             body: ColoredBox(
               color: bgColor,
-              child: CustomScrollView(
-                controller: _scrollController,
-                slivers: [
+              child: RefreshIndicator(
+                color: AppTheme.primary,
+                backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                onRefresh: () async {
+                  await Future.delayed(const Duration(seconds: 1));
+                },
+                child: CustomScrollView(
+                  controller: _scrollController,
+                  slivers: [
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                     sliver: SliverToBoxAdapter(
@@ -118,7 +124,8 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-        );
+        ),
+      );
       },
     );
   }

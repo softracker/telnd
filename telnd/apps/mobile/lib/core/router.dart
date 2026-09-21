@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,12 +8,13 @@ import 'package:telnd_mobile/_showcase/presentation/pages/feedback/feedback_show
 import 'package:telnd_mobile/_showcase/presentation/pages/forms/forms_showcase.dart';
 import 'package:telnd_mobile/_showcase/presentation/pages/showcase_screen.dart';
 import 'package:telnd_mobile/features/ai/presentation/pages/ai_page.dart';
-import 'package:telnd_mobile/features/auth/presentation/pages/login_page.dart';
-import 'package:telnd_mobile/features/auth/presentation/pages/signup_page.dart';
-import 'package:telnd_mobile/features/auth/presentation/pages/forgot_password_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/auth_welcome_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/auth_email_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/auth_email_password_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/auth_phone_page.dart';
+import 'package:telnd_mobile/features/auth/presentation/pages/auth_otp_page.dart';
 import 'package:telnd_mobile/features/explore/presentation/pages/explore_page.dart';
 import 'package:telnd_mobile/features/home/presentation/pages/home_page.dart';
-import 'package:telnd_mobile/features/jobs/presentation/pages/jobs_page.dart';
 import 'package:telnd_mobile/features/messages/presentation/pages/messages_page.dart';
 import 'package:telnd_mobile/features/profile/presentation/pages/profile_page.dart';
 import 'package:telnd_mobile/shared/presentation/widgets/bottom_nav.dart';
@@ -62,36 +62,60 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
       GoRoute(
-        path: '/auth/login',
+        path: '/auth/welcome',
         pageBuilder: (context, state) => CustomTransitionPage(
           key: state.pageKey,
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
-          child: const LoginPage(),
+          child: const AuthWelcomePage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return child;
           },
         ),
       ),
       GoRoute(
-        path: '/auth/signup',
+        path: '/auth/email',
         pageBuilder: (context, state) => CustomTransitionPage(
           key: state.pageKey,
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
-          child: const SignUpPage(),
+          child: const AuthEmailPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return child;
           },
         ),
       ),
       GoRoute(
-        path: '/auth/forgot-password',
+        path: '/auth/email-password',
         pageBuilder: (context, state) => CustomTransitionPage(
           key: state.pageKey,
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
-          child: const ForgotPasswordPage(),
+          child: AuthEmailPasswordPage(email: state.extra as String? ?? ''),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return child;
+          },
+        ),
+      ),
+      GoRoute(
+        path: '/auth/phone',
+        pageBuilder: (context, state) => CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+          child: const AuthPhonePage(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return child;
+          },
+        ),
+      ),
+      GoRoute(
+        path: '/auth/otp',
+        pageBuilder: (context, state) => CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+          child: const AuthOtpPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return child;
           },

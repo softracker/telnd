@@ -400,7 +400,7 @@ class _ProfileHeader extends StatelessWidget {
                     child: _HeaderButton(
                       label: 'Sign In',
                       filled: true,
-                      onTap: () => context.push('/auth/login'),
+                      onTap: () => context.push('/auth/welcome'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -408,7 +408,7 @@ class _ProfileHeader extends StatelessWidget {
                     child: _HeaderButton(
                       label: 'Sign Up',
                       filled: false,
-                      onTap: () => context.push('/auth/signup'),
+                      onTap: () => context.push('/auth/welcome'),
                     ),
                   ),
                 ],

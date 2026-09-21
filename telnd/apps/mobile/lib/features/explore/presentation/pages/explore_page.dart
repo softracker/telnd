@@ -33,313 +33,241 @@ class ExplorePage extends ConsumerWidget {
     _ServiceItem(title: 'Report Issue', iconAsset: 'assets/icons/message-blocked-stroke-rounded.svg', color: Color(0xFFDC2626)),
   ];
 
+  List<_ServiceItem> _filter(List<_ServiceItem> items, String query) {
+    if (query.isEmpty) return items;
+    final q = query.toLowerCase();
+    return items.where((s) => s.title.toLowerCase().contains(q)).toList();
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final searchQuery = ref.watch(exploreSearchQueryProvider);
+    final query = ref.watch(exploreSearchQueryProvider);
 
-    final filtered = searchQuery.isEmpty
-        ? _allServices
-        : _allServices
-            .where((s) => s.title.toLowerCase().contains(searchQuery.toLowerCase()))
-            .toList();
+    // A single brand accent runs through the page chrome (section markers);
+    // each item's own color is reserved for its icon, not for backgrounds
+    // or borders scattered everywhere.
+    final accent = isDark ? AppTheme.accent : AppTheme.primary;
+
+    final services = _filter(_allServices, query);
+    final tools = _filter(_tools, query);
+    final help = _filter(_helpSupport, query);
+    final isSearching = query.isNotEmpty;
+    final hasResults = services.isNotEmpty || tools.isNotEmpty || help.isNotEmpty;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 100),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+      child: isSearching && !hasResults
+          ? _EmptySearchState(query: query, isDark: isDark)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (services.isNotEmpty)
+                  _ServiceSection(title: 'All Services', items: services, isDark: isDark, accent: accent),
+                if (tools.isNotEmpty) ...[
+                  const SizedBox(height: 36),
+                  _ServiceSection(title: 'Tools', items: tools, isDark: isDark, accent: accent),
+                ],
+                if (help.isNotEmpty) ...[
+                  const SizedBox(height: 36),
+                  _ServiceSection(title: 'Help & Support', items: help, isDark: isDark, accent: accent),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+/// Header, hairline divider, grid. No card shell around the section — the
+/// accent bar and divider are enough to group it, keeping the page flat
+/// and quiet rather than stacking bordered boxes inside bordered boxes.
+class _ServiceSection extends StatelessWidget {
+  const _ServiceSection({
+    required this.title,
+    required this.items,
+    required this.isDark,
+    required this.accent,
+  });
+
+  final String title;
+  final List<_ServiceItem> items;
+  final bool isDark;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 3,
+              height: 16,
+              decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.3,
+                color: isDark ? const Color(0xFFF5F5F7) : const Color(0xFF0A0A0B),
+              ),
+            ),
+            const Spacer(),
+            _CountPill(count: items.length, isDark: isDark),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Container(
+          height: 1,
+          color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.07),
+        ),
+        const SizedBox(height: 18),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 340 ? 5 : 4;
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: items.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisSpacing: 20,
+                crossAxisSpacing: 4,
+                childAspectRatio: 0.72,
+              ),
+              itemBuilder: (context, index) => _ServiceTile(item: items[index], isDark: isDark),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.count, required this.isDark});
+
+  final int count;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = isDark ? Colors.white : Colors.black;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: muted.withOpacity(0.16)),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: muted.withOpacity(0.6)),
+      ),
+    );
+  }
+}
+
+/// One consistent shape across every tile: a rounded rect with two sharp
+/// corners and two soft ones. It's a repeatable geometric signature rather
+/// than a different literal shape per icon, so the grid reads as a system,
+/// not a novelty grab-bag.
+class _ServiceTile extends StatelessWidget {
+  const _ServiceTile({required this.item, required this.isDark});
+
+  final _ServiceItem item;
+  final bool isDark;
+
+  static const _cornerRadius = BorderRadius.only(
+    topLeft: Radius.circular(18),
+    bottomRight: Radius.circular(18),
+    topRight: Radius.circular(6),
+    bottomLeft: Radius.circular(6),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: double.infinity,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white.withOpacity(0.7),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withOpacity(0.08)
-                    : Colors.black.withOpacity(0.05),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: (isDark ? AppTheme.accent : AppTheme.primary)
-                      .withOpacity(0.06),
-                  blurRadius: 24,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              borderRadius: _cornerRadius,
+              color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+              border: Border.all(color: item.color.withOpacity(isDark ? 0.28 : 0.18)),
+              boxShadow: isDark
+                  ? [
+                      BoxShadow(
+                        color: item.color.withOpacity(0.22),
+                        blurRadius: 18,
+                        spreadRadius: -6,
+                      ),
+                    ]
+                  : null,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  child: Text(
-                    'All Services',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final itemWidth = (constraints.maxWidth - 4 * 4) / 5;
-                      return Wrap(
-                        spacing: 4,
-                        runSpacing: 24,
-                        children: filtered.map((service) {
-                          return SizedBox(
-                            width: itemWidth,
-                        child: GestureDetector(
-                          onTap: () {},
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 52,
-                                height: 52,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: service.color.withOpacity(isDark ? 0.15 : 0.10),
-                                  border: Border.all(
-                                    color: service.color.withOpacity(isDark ? 0.20 : 0.12),
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(13),
-                                    child: SvgPicture.asset(
-                                      service.iconAsset,
-                                      colorFilter: ColorFilter.mode(
-                                        service.color,
-                                        BlendMode.srcIn,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                service.title,
-                                textAlign: TextAlign.center,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: isDark ? Colors.white : const Color(0xFF1F2937),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                      );
-                    },
-                  ),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: SvgPicture.asset(
+                item.iconAsset,
+                colorFilter: ColorFilter.mode(item.color, BlendMode.srcIn),
+              ),
             ),
           ),
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white.withOpacity(0.7),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withOpacity(0.08)
-                    : Colors.black.withOpacity(0.05),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: (isDark ? AppTheme.accent : AppTheme.primary)
-                      .withOpacity(0.06),
-                  blurRadius: 24,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  child: Text(
-                    'Tools',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final itemWidth = (constraints.maxWidth - 4 * 4) / 5;
-                      return Wrap(
-                        spacing: 4,
-                        runSpacing: 24,
-                        children: _tools.map((service) {
-                          return SizedBox(
-                            width: itemWidth,
-                            child: GestureDetector(
-                              onTap: () {},
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 52,
-                                    height: 52,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: service.color.withOpacity(isDark ? 0.15 : 0.10),
-                                      border: Border.all(
-                                        color: service.color.withOpacity(isDark ? 0.20 : 0.12),
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(13),
-                                        child: SvgPicture.asset(
-                                          service.iconAsset,
-                                          colorFilter: ColorFilter.mode(
-                                            service.color,
-                                            BlendMode.srcIn,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    service.title,
-                                    textAlign: TextAlign.center,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark ? Colors.white : const Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-                ),
-              ],
+          const SizedBox(height: 8),
+          Text(
+            item.title,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.1,
+              height: 1.2,
+              color: isDark ? const Color(0xFFE4E4E7) : const Color(0xFF1F2937),
             ),
           ),
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white.withOpacity(0.7),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withOpacity(0.08)
-                    : Colors.black.withOpacity(0.05),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: (isDark ? AppTheme.accent : AppTheme.primary)
-                      .withOpacity(0.06),
-                  blurRadius: 24,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  child: Text(
-                    'Help & Support',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final itemWidth = (constraints.maxWidth - 4 * 4) / 5;
-                      return Wrap(
-                        spacing: 4,
-                        runSpacing: 24,
-                        children: _helpSupport.map((service) {
-                          return SizedBox(
-                            width: itemWidth,
-                            child: GestureDetector(
-                              onTap: () {},
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 52,
-                                    height: 52,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: service.color.withOpacity(isDark ? 0.15 : 0.10),
-                                      border: Border.all(
-                                        color: service.color.withOpacity(isDark ? 0.20 : 0.12),
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(13),
-                                        child: SvgPicture.asset(
-                                          service.iconAsset,
-                                          colorFilter: ColorFilter.mode(
-                                            service.color,
-                                            BlendMode.srcIn,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    service.title,
-                                    textAlign: TextAlign.center,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark ? Colors.white : const Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when a search matches nothing across any section, instead of the
+/// old behavior of silently rendering an empty grid while other sections
+/// stayed fully populated underneath it.
+class _EmptySearchState extends StatelessWidget {
+  const _EmptySearchState({required this.query, required this.isDark});
+
+  final String query;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = isDark ? Colors.white : Colors.black;
+    return Padding(
+      padding: const EdgeInsets.only(top: 56),
+      child: Column(
+        children: [
+          Icon(Icons.search_off_rounded, size: 40, color: muted.withOpacity(0.25)),
+          const SizedBox(height: 12),
+          Text(
+            'No services match "$query"',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: muted.withOpacity(0.55)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Try a different search term.',
+            style: TextStyle(fontSize: 13, color: muted.withOpacity(0.35)),
           ),
         ],
       ),
