@@ -69,7 +69,6 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
-  static const _lightBg = Color(0xFFE6F6F5);
   static const _darkBg = AppTheme.primary;
 
   @override
@@ -80,8 +79,8 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final t = progress.clamp(0.0, 1.0);
         final topBg = isDark
-            ? AppTheme.darkBackground
-            : Color.lerp(_lightBg, _darkBg, t)!;
+            ? Color.lerp(AppTheme.darkBackground, _darkBg, t)!
+            : Color.lerp(const Color(0xFFE6F6F5), _darkBg, t)!;
         final statusBarBrightness = isDark || t > 0.5 ? Brightness.light : Brightness.dark;
         final iconColor = isDark || t > 0.5 ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary;
 

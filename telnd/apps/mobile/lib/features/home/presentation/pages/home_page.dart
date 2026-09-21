@@ -48,7 +48,7 @@ class _HomePageState extends State<HomePage> {
       valueListenable: homeScrollProgress,
       builder: (context, progress, _) {
         final bgColor = isDark
-            ? AppTheme.darkBackground
+            ? Color.lerp(AppTheme.darkBackground, AppTheme.primary, progress)!
             : Color.lerp(const Color(0xFFE6F6F5), AppTheme.primary, progress)!;
         final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
 
