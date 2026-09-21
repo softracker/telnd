@@ -165,9 +165,12 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
                       top: 20 * (1 - t * 2),
                       left: 0,
                       right: 0,
-                      child: _buildFullCards(context),
+                      child: Opacity(
+                        opacity: (1.0 - t * 2).clamp(0.0, 1.0),
+                        child: _buildFullCards(context),
+                      ),
                     ),
-                  if (t >= 0.5)
+                  if (t > 0.5)
                     Positioned(
                       top: 0,
                       bottom: 0,
