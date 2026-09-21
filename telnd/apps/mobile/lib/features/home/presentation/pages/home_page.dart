@@ -6,6 +6,10 @@ import 'package:telnd_mobile/core/theme.dart';
 
 final ValueNotifier<double> homeScrollProgress = ValueNotifier<double>(0.0);
 
+/// Corner radius of the white sheet. The pinned header paints only the two
+/// corner "notches" of this radius, so scrolling content can reach the curve.
+const double _kSheetRadius = 24;
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -47,6 +51,8 @@ class _HomePageState extends State<HomePage> {
       valueListenable: homeScrollProgress,
       builder: (context, progress, _) {
         final bgColor = Color.lerp(lightBg, darkBg, progress)!;
+        final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(
             statusBarColor: bgColor,
@@ -97,8 +103,17 @@ class _HomePageState extends State<HomePage> {
                       onTapAll: () => _showAllSheet(context, isDark),
                     ),
                   ),
+                  // The sheet is pulled up by _kSheetRadius so it sits
+                  // underneath the corner notches painted by the header.
+                  // The ColoredBox fills the gap this leaves at the bottom.
                   SliverToBoxAdapter(
-                    child: _WhiteContent(isDark: isDark),
+                    child: ColoredBox(
+                      color: sheetColor,
+                      child: Transform.translate(
+                        offset: const Offset(0, -_kSheetRadius),
+                        child: _WhiteContent(isDark: isDark),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -120,6 +135,40 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+/// Paints everything EXCEPT a rounded-top rectangle, i.e. just the two top
+/// corner notches. The middle stays transparent so the sheet shows through.
+class _TopCornerPainter extends CustomPainter {
+  final Color color;
+
+  const _TopCornerPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Offset.zero & size),
+      Path()
+        ..addRRect(
+          RRect.fromRectAndCorners(
+            Rect.fromLTWH(0, 0, size.width, size.height + _kSheetRadius),
+            topLeft: const Radius.circular(_kSheetRadius),
+            topRight: const Radius.circular(_kSheetRadius),
+          ),
+        ),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..isAntiAlias = true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TopCornerPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
   final bool isDark;
   final Color bgColor;
@@ -132,69 +181,59 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
   });
 
   @override
-  double get maxExtent => 194;
+  double get maxExtent => 186;
 
   @override
-  double get minExtent => 84;
+  double get minExtent => 76;
 
   @override
   bool shouldRebuild(covariant _PinnedHeaderDelegate oldDelegate) =>
-      isDark != oldDelegate.isDark;
+      isDark != oldDelegate.isDark || bgColor != oldDelegate.bgColor;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     final t = (shrinkOffset / (maxExtent - minExtent)).clamp(0.0, 1.0);
 
-    return Stack(
-      clipBehavior: Clip.hardEdge,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (t >= 0.5)
-          Positioned.fill(
-            child: ColoredBox(color: bgColor),
+        Expanded(
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              // Always opaque: the sheet genuinely scrolls underneath now.
+              Positioned.fill(child: ColoredBox(color: bgColor)),
+              if (t < 0.5)
+                Positioned(
+                  top: 20 * (1 - t * 2),
+                  left: 0,
+                  right: 0,
+                  child: Opacity(
+                    opacity: (1.0 - t * 2).clamp(0.0, 1.0),
+                    child: _buildFullCards(context),
+                  ),
+                ),
+              if (t > 0.5)
+                Positioned.fill(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildCompactBar(context),
+                    ],
+                  ),
+                ),
+            ],
           ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Expanded(
-              child: Stack(
-                clipBehavior: Clip.hardEdge,
-                children: [
-                  if (t < 0.5)
-                    Positioned(
-                      top: 20 * (1 - t * 2),
-                      left: 0,
-                      right: 0,
-                      child: Opacity(
-                        opacity: (1.0 - t * 2).clamp(0.0, 1.0),
-                        child: _buildFullCards(context),
-                      ),
-                    ),
-                  if (t > 0.5)
-                    Positioned(
-                      top: 0,
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _buildCompactBar(context),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Container(
-              height: 32,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-            ),
-          ],
+        ),
+        // Only the corner notches — the centre is transparent, so content
+        // scrolling under it is visible right up to the curve.
+        SizedBox(
+          height: _kSheetRadius,
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _TopCornerPainter(color: bgColor),
+          ),
         ),
       ],
     );
@@ -300,6 +339,8 @@ class _WhiteContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Breathing room under the pinned curve.
+          const SizedBox(height: _kSheetRadius),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
