@@ -181,6 +181,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     final location = GoRouterState.of(context).uri.path;
     final appBar = _getAppBar(location);
     final isHome = location == '/';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return PopScope(
       canPop: false,
@@ -206,16 +207,22 @@ class _MainShellState extends ConsumerState<MainShell> {
       },
       child: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
-        child: Scaffold(
-          backgroundColor: Colors.transparent,
-          extendBody: true,
-          body: Column(
-            children: [
-              if (appBar != null) appBar,
-              Expanded(child: widget.child),
-            ],
+        child: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
           ),
-          bottomNavigationBar: const BottomNav(),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            extendBody: true,
+            body: Column(
+              children: [
+                if (appBar != null) appBar,
+                Expanded(child: widget.child),
+              ],
+            ),
+            bottomNavigationBar: const BottomNav(),
+          ),
         ),
       ),
     );
