@@ -11,6 +11,7 @@
     "dev": "npm run dev --workspace=apps/web",
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:admin": "npm run dev --workspace=apps/admin",
+    "dev:api": "npm run dev --workspace=packages/api",
     "build": "npm run build --workspace=apps/web",
     "build:admin": "npm run build --workspace=apps/admin",
     "lint": "eslint . --ext .ts,.tsx",

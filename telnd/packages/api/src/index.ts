@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { secureHeaders } from 'hono/secure-headers';
 import { authRoutes } from './routes/auth';
 import { jobRoutes } from './routes/jobs';
 import { userRoutes } from './routes/users';
@@ -18,9 +17,8 @@ const app = new Hono().basePath('/api');
 
 // Middleware
 app.use('*', logger());
-app.use('*', secureHeaders());
 app.use('*', cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001'],
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -58,11 +56,12 @@ app.notFound((c) => {
 // Error handler
 app.onError((err, c) => {
   console.error('API Error:', err);
+  const message = process.env.NODE_ENV === 'development' ? String(err?.message || err) : 'An unexpected error occurred';
   return c.json({
     success: false,
     error: {
       code: 'INTERNAL_ERROR',
-      message: 'An unexpected error occurred',
+      message,
     },
   }, 500);
 });

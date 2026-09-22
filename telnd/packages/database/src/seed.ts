@@ -1,26 +1,31 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+const ADMIN_EMAIL = 'admin@telnd.com';
+const ADMIN_PASSWORD = 'admin12345';
 
 async function main() {
   console.log('Seeding database...');
 
-  // Create a demo admin user
+  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@telnd.com' },
-    update: {},
+    where: { email: ADMIN_EMAIL },
+    update: { passwordHash },
     create: {
-      email: 'admin@telnd.com',
+      email: ADMIN_EMAIL,
       firstName: 'Admin',
       lastName: 'User',
       role: 'ADMIN',
       isEmailVerified: true,
+      passwordHash,
     },
   });
 
-  console.log('Created admin user:', admin.id);
+  console.log(`Admin user: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
 
-  // Create a demo company
   const company = await prisma.company.upsert({
     where: { slug: 'telnd-demo' },
     update: {},
@@ -35,7 +40,6 @@ async function main() {
   });
 
   console.log('Created demo company:', company.id);
-
   console.log('Database seeded successfully!');
 }
 
