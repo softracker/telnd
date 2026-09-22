@@ -52,7 +52,7 @@ class _AuthWelcomePageState extends State<AuthWelcomePage>
         canPop: false,
         onPopInvokedWithResult: (didPop, result) {
           if (didPop) return;
-          context.go('/');
+          context.pop();
         },
         child: Scaffold(
           backgroundColor: bgColor,
@@ -64,7 +64,7 @@ class _AuthWelcomePageState extends State<AuthWelcomePage>
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
-                    onTap: () => context.go('/'),
+                    onTap: () => context.pop(),
                     child: Container(
                       width: 40,
                       height: 40,
@@ -75,8 +75,8 @@ class _AuthWelcomePageState extends State<AuthWelcomePage>
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 18,
+                        Icons.close_rounded,
+                        size: 20,
                         color: isDark ? Colors.white70 : const Color(0xFF1F2937),
                       ),
                     ),
