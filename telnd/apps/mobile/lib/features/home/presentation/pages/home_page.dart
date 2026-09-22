@@ -20,6 +20,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final ScrollController _scrollController = ScrollController();
+  final Map<int, int> _storyProgress = {};
   final Set<int> _viewedStories = {};
 
   @override
@@ -121,8 +122,15 @@ class _HomePageState extends State<HomePage> {
                         child: _WhiteContent(
                           isDark: isDark,
                           viewedStories: _viewedStories,
+                          storyProgress: _storyProgress,
                           onStoryViewed: (index) {
-                            setState(() => _viewedStories.add(index));
+                            setState(() {
+                              _viewedStories.add(index);
+                              _storyProgress.remove(index);
+                            });
+                          },
+                          onStoryProgress: (index, position) {
+                            setState(() => _storyProgress[index] = position);
                           },
                         ),
                       ),
@@ -342,12 +350,16 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
 class _WhiteContent extends StatelessWidget {
   final bool isDark;
   final Set<int> viewedStories;
+  final Map<int, int> storyProgress;
   final void Function(int index) onStoryViewed;
+  final void Function(int index, int position) onStoryProgress;
 
   const _WhiteContent({
     required this.isDark,
     required this.viewedStories,
+    required this.storyProgress,
     required this.onStoryViewed,
+    required this.onStoryProgress,
   });
 
   @override
@@ -416,6 +428,12 @@ class _WhiteContent extends StatelessWidget {
               itemBuilder: (context, index) {
                 final story = _stories[index];
                 final viewed = viewedStories.contains(index);
+                final savedPos = storyProgress[index];
+                final startIndex = viewed
+                    ? 0
+                    : (savedPos != null && savedPos < story.images.length)
+                        ? savedPos
+                        : 0;
                 return GestureDetector(
                   onTap: () async {
                     await Navigator.of(context, rootNavigator: true).push(
@@ -426,7 +444,9 @@ class _WhiteContent extends StatelessWidget {
                           images: story.images,
                           action: story.action,
                           actionLabel: story.actionLabel,
+                          startIndex: startIndex,
                           onCompleted: () => onStoryViewed(index),
+                          onProgress: (pos) => onStoryProgress(index, pos),
                         ),
                       ),
                     );

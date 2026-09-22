@@ -12,6 +12,8 @@ class StoryViewerPage extends StatefulWidget {
   final StoryAction action;
   final String? actionLabel;
   final VoidCallback? onCompleted;
+  final void Function(int position)? onProgress;
+  final int startIndex;
 
   const StoryViewerPage({
     super.key,
@@ -20,6 +22,8 @@ class StoryViewerPage extends StatefulWidget {
     this.action = StoryAction.none,
     this.actionLabel,
     this.onCompleted,
+    this.onProgress,
+    this.startIndex = 0,
   });
 
   @override
@@ -27,11 +31,12 @@ class StoryViewerPage extends StatefulWidget {
 }
 
 class _StoryViewerPageState extends State<StoryViewerPage> {
-  int _currentIndex = 0;
+  late int _currentIndex;
   bool _paused = false;
   Timer? _timer;
   double _progress = 0.0;
   bool _finished = false;
+  bool _allViewed = false;
   Color _dominantColor = Colors.black;
 
   static const Duration _imageDuration = Duration(seconds: 5);
@@ -40,8 +45,9 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.startIndex;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _extractColor(0);
+    _extractColor(_currentIndex);
     _startTimer();
   }
 
@@ -114,7 +120,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
       setState(() {});
       _startTimer();
     } else {
-      widget.onCompleted?.call();
+      _allViewed = true;
       _finish();
     }
   }
@@ -133,6 +139,12 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     if (_finished || !mounted) return;
     _finished = true;
     _timer?.cancel();
+    final isOnLastImage = _currentIndex >= widget.images.length - 1;
+    if (_allViewed || isOnLastImage) {
+      widget.onCompleted?.call();
+    } else {
+      widget.onProgress?.call(_currentIndex + 1);
+    }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     Navigator.of(context, rootNavigator: true).pop();
   }
