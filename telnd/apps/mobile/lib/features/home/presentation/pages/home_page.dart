@@ -20,6 +20,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final ScrollController _scrollController = ScrollController();
+  final Set<int> _viewedStories = {};
 
   @override
   void initState() {
@@ -117,7 +118,13 @@ class _HomePageState extends State<HomePage> {
                       color: sheetColor,
                       child: Transform.translate(
                         offset: const Offset(0, -_kSheetRadius),
-                        child: _WhiteContent(isDark: isDark),
+                        child: _WhiteContent(
+                          isDark: isDark,
+                          viewedStories: _viewedStories,
+                          onStoryViewed: (index) {
+                            setState(() => _viewedStories.add(index));
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -334,8 +341,14 @@ class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
 
 class _WhiteContent extends StatelessWidget {
   final bool isDark;
+  final Set<int> viewedStories;
+  final void Function(int index) onStoryViewed;
 
-  const _WhiteContent({required this.isDark});
+  const _WhiteContent({
+    required this.isDark,
+    required this.viewedStories,
+    required this.onStoryViewed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -402,9 +415,10 @@ class _WhiteContent extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
                 final story = _stories[index];
+                final viewed = viewedStories.contains(index);
                 return GestureDetector(
-                  onTap: () {
-                    Navigator.of(context, rootNavigator: true).push(
+                  onTap: () async {
+                    await Navigator.of(context, rootNavigator: true).push(
                       PageRouteBuilder(
                         opaque: true,
                         pageBuilder: (_, __, ___) => StoryViewerPage(
@@ -412,6 +426,7 @@ class _WhiteContent extends StatelessWidget {
                           images: story.images,
                           action: story.action,
                           actionLabel: story.actionLabel,
+                          onCompleted: () => onStoryViewed(index),
                         ),
                       ),
                     );
@@ -422,9 +437,13 @@ class _WhiteContent extends StatelessWidget {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: isDark
-                            ? const Color(0xFF30A9A2)
-                            : const Color(0xFF034548),
+                        color: viewed
+                            ? (isDark
+                                ? Colors.white.withOpacity(0.12)
+                                : const Color(0xFFCBD5E1))
+                            : (isDark
+                                ? const Color(0xFF30A9A2)
+                                : const Color(0xFF034548)),
                         width: 1.5,
                       ),
                     ),

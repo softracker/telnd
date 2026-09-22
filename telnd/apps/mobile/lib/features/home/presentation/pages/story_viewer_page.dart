@@ -11,6 +11,7 @@ class StoryViewerPage extends StatefulWidget {
   final List<String> images;
   final StoryAction action;
   final String? actionLabel;
+  final VoidCallback? onCompleted;
 
   const StoryViewerPage({
     super.key,
@@ -18,6 +19,7 @@ class StoryViewerPage extends StatefulWidget {
     required this.images,
     this.action = StoryAction.none,
     this.actionLabel,
+    this.onCompleted,
   });
 
   @override
@@ -112,6 +114,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
       setState(() {});
       _startTimer();
     } else {
+      widget.onCompleted?.call();
       _finish();
     }
   }
