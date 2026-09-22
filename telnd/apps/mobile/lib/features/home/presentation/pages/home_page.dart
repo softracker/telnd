@@ -410,6 +410,7 @@ class _WhiteContent extends StatelessWidget {
                         pageBuilder: (_, __, ___) => StoryViewerPage(
                           title: story.title,
                           images: story.images,
+                          action: story.action,
                           actionLabel: story.actionLabel,
                         ),
                       ),
@@ -1416,11 +1417,13 @@ class _StatCard extends StatelessWidget {
 class _StoryData {
   final String title;
   final List<String> images;
+  final StoryAction action;
   final String? actionLabel;
 
   const _StoryData({
     required this.title,
     required this.images,
+    this.action = StoryAction.none,
     this.actionLabel,
   });
 }
@@ -1429,16 +1432,18 @@ const _stories = [
   _StoryData(
     title: 'Top Companies Hiring',
     images: ['assets/ads/1.jpeg', 'assets/ads/2.avif'],
+    action: StoryAction.viewDetails,
     actionLabel: 'View Details',
   ),
   _StoryData(
     title: 'Career Fair 2026',
     images: ['assets/ads/3.avif', 'assets/ads/4.avif', 'assets/ads/5.avif'],
+    action: StoryAction.swipeUp,
     actionLabel: 'Swipe to learn more',
   ),
   _StoryData(
     title: 'New Opportunities',
     images: ['assets/ads/6.avif', 'assets/ads/7.png'],
-    actionLabel: 'View Details',
+    action: StoryAction.none,
   ),
 ];

@@ -1,16 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+enum StoryAction { none, swipeUp, viewDetails }
 
 class StoryViewerPage extends StatefulWidget {
   final String title;
   final List<String> images;
+  final StoryAction action;
   final String? actionLabel;
 
   const StoryViewerPage({
     super.key,
     required this.title,
     required this.images,
+    this.action = StoryAction.none,
     this.actionLabel,
   });
 
@@ -82,6 +87,13 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     Navigator.of(context, rootNavigator: true).pop();
   }
 
+  void _openLink() {
+    launchUrl(
+      Uri.parse('https://telnd.com'),
+      mode: LaunchMode.inAppWebView,
+    );
+  }
+
   void _onTapDown(TapDownDetails details) {
     setState(() => _paused = true);
   }
@@ -110,6 +122,8 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -122,6 +136,14 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
         body: GestureDetector(
           onTapDown: _onTapDown,
           onTapUp: _onTapUp,
+          onVerticalDragEnd: widget.action == StoryAction.swipeUp
+              ? (details) {
+                  if (details.primaryVelocity != null &&
+                      details.primaryVelocity! < -100) {
+                    _openLink();
+                  }
+                }
+              : null,
           child: SizedBox.expand(
             child: Stack(
               children: [
@@ -219,14 +241,42 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Action button
-                if (widget.actionLabel != null)
+                // Swipe up indicator
+                if (widget.action == StoryAction.swipeUp)
                   Positioned(
-                    bottom: MediaQuery.of(context).padding.bottom + 20,
+                    bottom: bottomPadding + 20,
+                    left: 0,
+                    right: 0,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.keyboard_arrow_up_rounded,
+                          size: 28,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.actionLabel ?? 'Swipe to learn more',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white.withOpacity(0.8),
+                            decoration: TextDecoration.underline,
+                            decorationColor: Colors.white.withOpacity(0.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // View Details button
+                if (widget.action == StoryAction.viewDetails)
+                  Positioned(
+                    bottom: bottomPadding + 20,
                     left: 24,
                     right: 24,
                     child: GestureDetector(
-                      onTap: () {},
+                      onTap: _openLink,
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         decoration: BoxDecoration(
@@ -237,7 +287,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              widget.actionLabel!,
+                              widget.actionLabel ?? 'View Details',
                               style: const TextStyle(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w600,
