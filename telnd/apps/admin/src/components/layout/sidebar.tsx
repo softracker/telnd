@@ -2,69 +2,203 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4' },
-  { name: 'Users', href: '/users', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z' },
-  { name: 'Companies', href: '/companies', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
-  { name: 'Jobs', href: '/jobs', icon: 'M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
-  { name: 'Applications', href: '/applications', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-  { name: 'Reports', href: '/reports', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-  { name: 'Settings', href: '/settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+interface SidebarProps {
+  collapsed: boolean;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
+}
+
+const navSections = [
+  {
+    title: 'Main',
+    items: [
+      {
+        label: 'Dashboard',
+        href: '/',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
+      },
+    ],
+  },
+  {
+    title: 'Management',
+    items: [
+      {
+        label: 'Users',
+        href: '/users',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+      },
+      {
+        label: 'Companies',
+        href: '/companies',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>,
+      },
+      {
+        label: 'Jobs',
+        href: '/jobs',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
+      },
+      {
+        label: 'Applications',
+        href: '/applications',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+      },
+      {
+        label: 'Packages',
+        href: '/packages',
+        hasSubmenu: true,
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+        submenu: [
+          { label: 'All Packages', href: '/packages' },
+          { label: 'Subscriptions', href: '/packages/subscriptions' },
+          { label: 'Coupons', href: '/packages/coupons' },
+        ],
+        matchPrefix: ['/packages'],
+      },
+      {
+        label: 'Reports',
+        href: '/reports',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>,
+      },
+    ],
+  },
+  {
+    title: 'Platform',
+    items: [
+      {
+        label: 'Support',
+        href: '/support',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+      },
+      {
+        label: 'Activity Logs',
+        href: '/activity-logs',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+      },
+      {
+        label: 'Settings',
+        href: '/settings',
+        icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+      },
+    ],
+  },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }: SidebarProps) {
   const pathname = usePathname();
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (collapsed && sidebarRef.current && !sidebarRef.current.contains(e.target as Node)) {
+        document.querySelectorAll('.sidebar-sub.open').forEach(s => s.classList.remove('open'));
+        document.querySelectorAll('.sidebar-item.active.open-sub').forEach(s => {
+          s.classList.remove('active', 'open-sub');
+          const a = s.querySelector('.sidebar-arrow');
+          if (a) a.classList.remove('open');
+        });
+      }
+    }
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [collapsed]);
+
+  function toggleSubmenu(el: HTMLElement) {
+    const isOpen = el.classList.contains('active');
+    document.querySelectorAll('.sidebar-item.active.open-sub').forEach(s => {
+      s.classList.remove('active', 'open-sub');
+      const sa = s.querySelector('.sidebar-arrow');
+      if (sa) sa.classList.remove('open');
+    });
+    document.querySelectorAll('.sidebar-sub.open').forEach(s => {
+      s.classList.remove('open');
+      (s as HTMLElement).style.top = '';
+    });
+    if (!isOpen) {
+      el.classList.add('active', 'open-sub');
+      const arrow = el.querySelector('.sidebar-arrow');
+      if (arrow) arrow.classList.add('open');
+      const sub = el.nextElementSibling;
+      if (sub && sub.classList.contains('sidebar-sub')) {
+        sub.classList.add('open');
+        if (collapsed) {
+          const rect = el.getBoundingClientRect();
+          (sub as HTMLElement).style.top = rect.top + 'px';
+        }
+      }
+    }
+  }
+
+  function isActive(href: string) {
+    if (href === '/') return pathname === '/';
+    return pathname.startsWith(href);
+  }
+
+  function isSubmenuActive(prefixes: string[]) {
+    return prefixes.some(p => pathname.startsWith(p));
+  }
 
   return (
-    <aside className="w-64 bg-secondary-800 text-white flex flex-col min-h-screen">
-      <div className="p-6 border-b border-secondary-700">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-accent-500 flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
+    <>
+      <div
+        className={`admin-sidebar-overlay${mobileOpen ? ' active' : ''}`}
+        onClick={onCloseMobile}
+      />
+      <aside
+        ref={sidebarRef}
+        className={`admin-sidebar${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}
+      >
+        {navSections.map((section) => (
+          <div key={section.title}>
+            <div className="sidebar-section-title">{section.title}</div>
+            <ul className="sidebar-nav">
+              {section.items.map((item) => {
+                if (item.hasSubmenu && item.submenu) {
+                  const open = isSubmenuActive(item.matchPrefix || []);
+                  return (
+                    <li key={item.label}>
+                      <div
+                        className={`sidebar-item${open ? ' active open-sub' : ''}`}
+                        onClick={(e) => toggleSubmenu(e.currentTarget)}
+                      >
+                        <span className="sidebar-icon">{item.icon}</span>
+                        <span className="sidebar-label">{item.label}</span>
+                        <span className="sidebar-arrow">&#9654;</span>
+                      </div>
+                      <ul className={`sidebar-sub${open ? ' open' : ''}`}>
+                        {item.submenu.map((sub) => (
+                          <li key={sub.href}>
+                            <Link
+                              href={sub.href}
+                              className={`sidebar-item${isActive(sub.href) ? ' active' : ''}`}
+                              onClick={onCloseMobile}
+                            >
+                              {sub.label}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  );
+                }
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={`sidebar-item${isActive(item.href) ? ' active' : ''}`}
+                      onClick={onCloseMobile}
+                    >
+                      <span className="sidebar-icon">{item.icon}</span>
+                      <span className="sidebar-label">{item.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-          <div>
-            <h1 className="text-lg font-bold">TELND</h1>
-            <p className="text-xs text-secondary-300">Admin Panel</p>
-          </div>
-        </div>
-      </div>
-
-      <nav className="flex-1 p-4 space-y-1">
-        {navigation.map((item) => {
-          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-primary-700 text-white'
-                  : 'text-secondary-300 hover:bg-secondary-700 hover:text-white'
-              }`}
-            >
-              <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={item.icon} />
-              </svg>
-              {item.name}
-            </Link>
-          );
-        })}
-      </nav>
-
-      <div className="p-4 border-t border-secondary-700">
-        <div className="flex items-center gap-3 px-3 py-2">
-          <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-sm font-medium text-white">
-            A
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">Admin User</p>
-            <p className="text-xs text-secondary-400 truncate">admin@telnd.com</p>
-          </div>
-        </div>
-      </div>
-    </aside>
+        ))}
+      </aside>
+    </>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, usePathname } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Sidebar from './sidebar';
 import Header from './header';
 
@@ -10,31 +10,55 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-
   const isLoginPage = pathname === '/login';
+
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('adminSidebarCollapsed');
+    if (saved === 'true') setCollapsed(true);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('adminSidebarCollapsed', String(collapsed));
+  }, [collapsed]);
 
   useEffect(() => {
     if (isLoading) return;
-
-    if (!isAuthenticated && !isLoginPage) {
-      router.replace('/login');
-    }
-
-    if (isAuthenticated && isLoginPage) {
-      router.replace('/');
-    }
+    if (!isAuthenticated && !isLoginPage) router.replace('/login');
+    if (isAuthenticated && isLoginPage) router.replace('/');
   }, [isAuthenticated, isLoading, router, isLoginPage]);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  const handleToggleSidebar = useCallback(() => {
+    setCollapsed(prev => !prev);
+  }, []);
+
+  const handleToggleMobile = useCallback(() => {
+    setMobileOpen(prev => !prev);
+  }, []);
+
+  const handleCloseMobile = useCallback(() => {
+    setMobileOpen(false);
+  }, []);
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-3">
-          <svg className="animate-spin h-8 w-8 text-primary-600" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="text-sm text-gray-500">Loading...</p>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+        <div style={{
+          display: 'inline-block',
+          width: 32,
+          height: 32,
+          border: '3px solid #e2e5ea',
+          borderTopColor: '#034548',
+          borderRadius: '50%',
+          animation: 'dt-spin 0.7s linear infinite',
+        }} />
+        <style>{`@keyframes dt-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -43,16 +67,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return <>{children}</>;
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <Header />
-        <main className="flex-1 p-6 bg-gray-50 overflow-auto">
+    <div className="admin-body">
+      <Header
+        onToggleSidebar={handleToggleSidebar}
+        collapsed={collapsed}
+        onToggleMobile={handleToggleMobile}
+      />
+      <div className="admin-layout">
+        <Sidebar
+          collapsed={collapsed}
+          mobileOpen={mobileOpen}
+          onCloseMobile={handleCloseMobile}
+        />
+        <main className="admin-content">
           {children}
         </main>
       </div>

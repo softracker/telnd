@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { AuthProvider } from '@/lib/auth-context';
 import AdminLayout from '@/components/layout/admin-layout';
 import './globals.css';
+import '@/styles/admin.css';
 
 export const metadata: Metadata = {
   title: 'TELND Admin',
