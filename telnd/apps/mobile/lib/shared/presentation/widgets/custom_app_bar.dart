@@ -162,8 +162,14 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
                           child: CircularProgressIndicator(
                             value: 0.65,
                             strokeWidth: 2.5,
-                            backgroundColor: iconColor.withOpacity(0.12),
-                            valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                            backgroundColor: t > 0.5
+                                ? Colors.white.withOpacity(0.15)
+                                : iconColor.withOpacity(0.12),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              t > 0.5
+                                  ? AppTheme.accent
+                                  : (isDark ? AppTheme.accent : AppTheme.primary),
+                            ),
                           ),
                         ),
                         Container(
