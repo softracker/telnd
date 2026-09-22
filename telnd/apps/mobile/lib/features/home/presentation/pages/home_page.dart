@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:telnd_mobile/core/theme.dart';
+import 'package:telnd_mobile/features/home/presentation/pages/story_viewer_page.dart';
 
 final ValueNotifier<double> homeScrollProgress = ValueNotifier<double>(0.0);
 
@@ -348,6 +349,98 @@ class _WhiteContent extends StatelessWidget {
         children: [
           // Breathing room under the pinned curve.
           const SizedBox(height: _kSheetRadius),
+          // ── Quick Stats ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Quick Stats',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                _StatCard(
+                  label: 'Profile Views',
+                  value: '1.2K',
+                  icon: Icons.visibility_outlined,
+                  color: const Color(0xFF3B82F6),
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 10),
+                _StatCard(
+                  label: 'Applications',
+                  value: '24',
+                  icon: Icons.send_outlined,
+                  color: const Color(0xFF10B981),
+                  isDark: isDark,
+                ),
+                const SizedBox(width: 10),
+                _StatCard(
+                  label: 'Matches',
+                  value: '8',
+                  icon: Icons.favorite_outline,
+                  color: const Color(0xFFE11D48),
+                  isDark: isDark,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
+          // ── Stories / Ads ──
+          SizedBox(
+            height: 100,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _stories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final story = _stories[index];
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        opaque: true,
+                        pageBuilder: (_, __, ___) => StoryViewerPage(
+                          title: story.title,
+                          images: story.images,
+                          actionLabel: story.actionLabel,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    width: 72,
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isDark
+                            ? const Color(0xFF30A9A2)
+                            : const Color(0xFF034548),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(11),
+                      child: Image.asset(
+                        story.images.first,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 28),
+          // ── Recommended For You ──
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
@@ -404,48 +497,6 @@ class _WhiteContent extends StatelessWidget {
                   ),
                 );
               },
-            ),
-          ),
-          const SizedBox(height: 28),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Quick Stats',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                _StatCard(
-                  label: 'Profile Views',
-                  value: '1.2K',
-                  icon: Icons.visibility_outlined,
-                  color: const Color(0xFF3B82F6),
-                  isDark: isDark,
-                ),
-                const SizedBox(width: 10),
-                _StatCard(
-                  label: 'Applications',
-                  value: '24',
-                  icon: Icons.send_outlined,
-                  color: const Color(0xFF10B981),
-                  isDark: isDark,
-                ),
-                const SizedBox(width: 10),
-                _StatCard(
-                  label: 'Matches',
-                  value: '8',
-                  icon: Icons.favorite_outline,
-                  color: const Color(0xFFE11D48),
-                  isDark: isDark,
-                ),
-              ],
             ),
           ),
           const SizedBox(height: 28),
@@ -1359,3 +1410,35 @@ class _StatCard extends StatelessWidget {
     );
   }
 }
+
+// ── Stories ──
+
+class _StoryData {
+  final String title;
+  final List<String> images;
+  final String? actionLabel;
+
+  const _StoryData({
+    required this.title,
+    required this.images,
+    this.actionLabel,
+  });
+}
+
+const _stories = [
+  _StoryData(
+    title: 'Top Companies Hiring',
+    images: ['assets/ads/1.jpeg', 'assets/ads/2.avif'],
+    actionLabel: 'View Details',
+  ),
+  _StoryData(
+    title: 'Career Fair 2026',
+    images: ['assets/ads/3.avif', 'assets/ads/4.avif', 'assets/ads/5.avif'],
+    actionLabel: 'Swipe to learn more',
+  ),
+  _StoryData(
+    title: 'New Opportunities',
+    images: ['assets/ads/6.avif', 'assets/ads/7.png'],
+    actionLabel: 'View Details',
+  ),
+];

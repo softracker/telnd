@@ -150,20 +150,39 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
                 const SizedBox(width: 16),
                 GestureDetector(
                   onTap: () => context.go('/profile'),
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppTheme.primary.withOpacity(0.15),
-                    ),
-                    child: Center(
-                      child: SvgPicture.asset(
-                        'assets/icons/user-stroke.svg',
-                        width: 20,
-                        height: 20,
-                        colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
-                      ),
+                  child: SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: CircularProgressIndicator(
+                            value: 0.65,
+                            strokeWidth: 2.5,
+                            backgroundColor: iconColor.withOpacity(0.12),
+                            valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                          ),
+                        ),
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppTheme.primary.withOpacity(0.15),
+                          ),
+                          child: Center(
+                            child: SvgPicture.asset(
+                              'assets/icons/user-stroke.svg',
+                              width: 18,
+                              height: 18,
+                              colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
