@@ -28,7 +28,7 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
         child: Row(
           children: [
             if (showBackButton)
@@ -73,9 +73,64 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Logo + Pro/Free badge never depend on scroll progress, so build them
+    // once here and hand them to ValueListenableBuilder via `child` instead
+    // of reconstructing this whole subtree on every scroll frame.
+    final logoAndBadge = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CustomAppBar.buildLogo(),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () {},
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.orange,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Pro',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Positioned(
+                top: -6,
+                right: -8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDC2626),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'Free',
+                    style: TextStyle(
+                      fontSize: 8,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
     return ValueListenableBuilder<double>(
       valueListenable: homeScrollProgress,
-      builder: (context, progress, _) {
+      // Built once above; reused every scroll frame.
+      child: logoAndBadge,
+      builder: (context, progress, child) {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final t = progress.clamp(0.0, 1.0);
         final topBg = isDark
@@ -92,55 +147,7 @@ class HomeAppBar extends StatelessWidget implements PreferredSizeWidget {
           child: ColoredBox(
             color: topBg,
             child: CustomAppBar(
-              leading: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CustomAppBar.buildLogo(),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: AppTheme.orange,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Pro',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: -6,
-                          right: -8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFDC2626),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Text(
-                              'Free',
-                              style: TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              leading: child,
               actions: [
                 _NavBarIcon(
                   asset: 'assets/icons/notification-store.svg',

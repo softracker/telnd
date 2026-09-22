@@ -32,7 +32,13 @@ class _HomePageState extends State<HomePage> {
   void _onScroll() {
     const maxScroll = 150.0;
     final progress = (_scrollController.offset / maxScroll).clamp(0.0, 1.0);
-    homeScrollProgress.value = progress;
+    // Cheap early-out: avoid notifying listeners (and therefore rebuilding
+    // the header) when the clamped value hasn't actually changed, e.g. once
+    // fully scrolled past 150px every subsequent scroll event would otherwise
+    // still fire a "1.0 -> 1.0" notification.
+    if (homeScrollProgress.value != progress) {
+      homeScrollProgress.value = progress;
+    }
   }
 
   @override
@@ -46,14 +52,77 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+
+    // ── Static subtrees below are built ONCE per real State rebuild
+    // (e.g. when a story is viewed), NOT once per scroll frame. They are
+    // handed to ValueListenableBuilder via `child` so scrolling never
+    // reconstructs them. ──
+
+    final welcomeSliver = SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      sliver: SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Welcome to TELND',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Discover opportunities, prove your skills, get hired.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.6),
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // The sheet is pulled up by _kSheetRadius so it sits underneath the
+    // corner notches painted by the header. RepaintBoundary means that even
+    // though this whole tree sits below a ColoredBox whose color changes
+    // every scroll frame, Flutter only needs to re-composite a cached layer
+    // here instead of re-painting every card/list inside it.
+    final whiteContentSliver = SliverToBoxAdapter(
+      child: RepaintBoundary(
+        child: ColoredBox(
+          color: sheetColor,
+          child: Transform.translate(
+            offset: const Offset(0, -_kSheetRadius),
+            child: _WhiteContent(
+              isDark: isDark,
+              viewedStories: _viewedStories,
+              storyProgress: _storyProgress,
+              onStoryViewed: (index) {
+                setState(() {
+                  _viewedStories.add(index);
+                  _storyProgress.remove(index);
+                });
+              },
+              onStoryProgress: (index, position) {
+                setState(() => _storyProgress[index] = position);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
 
     return ValueListenableBuilder<double>(
       valueListenable: homeScrollProgress,
-      builder: (context, progress, _) {
+      // Only the pinned header actually needs `progress`, so only it is
+      // rebuilt inside `builder`. Everything else is passed once as `child`.
+      child: whiteContentSliver,
+      builder: (context, progress, child) {
         final bgColor = isDark
             ? Color.lerp(AppTheme.darkBackground, AppTheme.primary, progress)!
             : Color.lerp(const Color(0xFFE6F6F5), AppTheme.primary, progress)!;
-        final sheetColor = isDark ? const Color(0xFF1C1C1E) : Colors.white;
 
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(
@@ -68,80 +137,31 @@ class _HomePageState extends State<HomePage> {
               color: bgColor,
               child: RefreshIndicator(
                 color: AppTheme.primary,
-                backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                backgroundColor:
+                    isDark ? const Color(0xFF1C1C1E) : Colors.white,
                 onRefresh: () async {
                   await Future.delayed(const Duration(seconds: 1));
                 },
                 child: CustomScrollView(
                   controller: _scrollController,
                   slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    sliver: SliverToBoxAdapter(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Welcome to TELND',
-                            style:
-                                Theme.of(context).textTheme.headlineMedium,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Discover opportunities, prove your skills, get hired.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyLarge
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withOpacity(0.6),
-                                ),
-                          ),
-                        ],
+                    welcomeSliver,
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _PinnedHeaderDelegate(
+                        isDark: isDark,
+                        bgColor: bgColor,
+                        onTapAll: () => _showAllSheet(context, isDark),
                       ),
                     ),
-                  ),
-                  SliverPersistentHeader(
-                    pinned: true,
-                    delegate: _PinnedHeaderDelegate(
-                      isDark: isDark,
-                      bgColor: bgColor,
-                      onTapAll: () => _showAllSheet(context, isDark),
-                    ),
-                  ),
-                  // The sheet is pulled up by _kSheetRadius so it sits
-                  // underneath the corner notches painted by the header.
-                  // The ColoredBox fills the gap this leaves at the bottom.
-                  SliverToBoxAdapter(
-                    child: ColoredBox(
-                      color: sheetColor,
-                      child: Transform.translate(
-                        offset: const Offset(0, -_kSheetRadius),
-                        child: _WhiteContent(
-                          isDark: isDark,
-                          viewedStories: _viewedStories,
-                          storyProgress: _storyProgress,
-                          onStoryViewed: (index) {
-                            setState(() {
-                              _viewedStories.add(index);
-                              _storyProgress.remove(index);
-                            });
-                          },
-                          onStoryProgress: (index, position) {
-                            setState(() => _storyProgress[index] = position);
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+                    // Built once above; reused every scroll frame.
+                    child!,
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
       },
     );
   }
