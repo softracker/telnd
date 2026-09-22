@@ -23,6 +23,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   bool _paused = false;
   Timer? _timer;
   double _progress = 0.0;
+  bool _finished = false;
 
   static const Duration _imageDuration = Duration(seconds: 5);
   static const int _progressTicks = 100;
@@ -39,7 +40,10 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     _progress = 0.0;
     final tickMs = _imageDuration.inMilliseconds ~/ _progressTicks;
     _timer = Timer.periodic(Duration(milliseconds: tickMs), (timer) {
-      if (_paused) return;
+      if (!mounted || _paused || _finished) {
+        timer.cancel();
+        return;
+      }
       setState(() {
         _progress += 1.0 / _progressTicks;
         if (_progress >= 1.0) {
@@ -71,8 +75,11 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   }
 
   void _finish() {
+    if (_finished || !mounted) return;
+    _finished = true;
+    _timer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    Navigator.of(context).pop();
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _onTapDown(TapDownDetails details) {
@@ -80,6 +87,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   }
 
   void _onTapUp(TapUpDetails details) {
+    if (_finished) return;
     final screenWidth = MediaQuery.of(context).size.width;
     final tapX = details.globalPosition.dx;
 
@@ -94,6 +102,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
 
   @override
   void dispose() {
+    _finished = true;
     _timer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -123,7 +132,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                     fit: BoxFit.cover,
                   ),
                 ),
-                // Gradient overlay for readability
+                // Gradient overlay
                 Positioned.fill(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
@@ -141,7 +150,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                     ),
                   ),
                 ),
-                // Progress bars — at very top
+                // Progress bars
                 Positioned(
                   top: MediaQuery.of(context).padding.top + 6,
                   left: 10,
@@ -210,7 +219,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Action button — bottom
+                // Action button
                 if (widget.actionLabel != null)
                   Positioned(
                     bottom: MediaQuery.of(context).padding.bottom + 20,

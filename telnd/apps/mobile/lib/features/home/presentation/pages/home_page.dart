@@ -404,7 +404,7 @@ class _WhiteContent extends StatelessWidget {
                 final story = _stories[index];
                 return GestureDetector(
                   onTap: () {
-                    Navigator.of(context).push(
+                    Navigator.of(context, rootNavigator: true).push(
                       PageRouteBuilder(
                         opaque: true,
                         pageBuilder: (_, __, ___) => StoryViewerPage(
