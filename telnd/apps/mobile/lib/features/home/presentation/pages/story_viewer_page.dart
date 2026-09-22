@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,6 +30,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   Timer? _timer;
   double _progress = 0.0;
   bool _finished = false;
+  Color _dominantColor = Colors.black;
 
   static const Duration _imageDuration = Duration(seconds: 5);
   static const int _progressTicks = 100;
@@ -37,7 +39,50 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _extractColor(0);
     _startTimer();
+  }
+
+  Future<void> _extractColor(int index) async {
+    try {
+      final data = await DefaultAssetBundle.of(context).load(widget.images[index]);
+      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (byteData == null) return;
+
+      final pixels = byteData.buffer.asUint8List();
+      final width = image.width;
+      final height = image.height;
+
+      int r = 0, g = 0, b = 0, count = 0;
+      // Sample pixels from top and bottom rows
+      for (int row = 0; row < height; row += (height / 20).ceil()) {
+        for (int col = 0; col < width; col += (width / 20).ceil()) {
+          final offset = (row * width + col) * 4;
+          if (offset + 3 < pixels.length) {
+            r += pixels[offset];
+            g += pixels[offset + 1];
+            b += pixels[offset + 2];
+            count++;
+          }
+        }
+      }
+
+      image.dispose();
+
+      if (count > 0 && mounted) {
+        setState(() {
+          _dominantColor = Color.fromARGB(
+            255,
+            r ~/ count,
+            g ~/ count,
+            b ~/ count,
+          );
+        });
+      }
+    } catch (_) {}
   }
 
   void _startTimer() {
@@ -63,6 +108,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     if (_currentIndex < widget.images.length - 1) {
       _currentIndex++;
       _progress = 0.0;
+      _extractColor(_currentIndex);
       setState(() {});
       _startTimer();
     } else {
@@ -74,6 +120,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     if (_currentIndex > 0) {
       _currentIndex--;
       _progress = 0.0;
+      _extractColor(_currentIndex);
       setState(() {});
       _startTimer();
     }
@@ -132,7 +179,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
         systemNavigationBarIconBrightness: Brightness.light,
       ),
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: _dominantColor,
         body: GestureDetector(
           onTapDown: _onTapDown,
           onTapUp: _onTapUp,
@@ -147,14 +194,14 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
           child: SizedBox.expand(
             child: Stack(
               children: [
-                // Full-screen image
+                // Full-screen image with contain
                 Positioned.fill(
                   child: Image.asset(
                     widget.images[_currentIndex],
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                   ),
                 ),
-                // Gradient overlay
+                // Gradient overlay for top/bottom readability
                 Positioned.fill(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
@@ -162,12 +209,12 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Colors.black.withOpacity(0.35),
+                          Colors.black.withOpacity(0.2),
                           Colors.transparent,
                           Colors.transparent,
-                          Colors.black.withOpacity(0.5),
+                          Colors.black.withOpacity(0.3),
                         ],
-                        stops: const [0.0, 0.12, 0.8, 1.0],
+                        stops: const [0.0, 0.1, 0.85, 1.0],
                       ),
                     ),
                   ),
