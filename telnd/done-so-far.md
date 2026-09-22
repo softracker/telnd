@@ -1,6 +1,6 @@
 # TELND — Done So Far
 
-> Last updated: 2026-09-19
+> Last updated: 2026-09-22
 
 ---
 
@@ -278,14 +278,86 @@ All in `_showcase/presentation/pages/` — temporary, to be deleted after projec
 
 ---
 
-## 10. Known Issues
+## 10. Admin Dashboard (2026-09-22)
+
+### 10.1 Overview
+Full Next.js admin dashboard built from scratch with real authentication, API integration, and advanced responsive layout matching the reference project.
+
+### 10.2 Authentication System
+- **Login**: `admin@telnd.com` / `admin12345` → JWT → dashboard
+- **JWT**: `hono/jwt`, 7d access / 30d refresh tokens, bcrypt password hashing
+- **Session**: Stored in DB, cookie-based middleware protection
+- **Auth context**: `useAuth()` hook, login/logout, token persistence (localStorage + cookies)
+- **Middleware**: Server-side route protection, redirects unauthenticated to `/login`, authenticated away from `/login`
+
+### 10.3 API Server (`packages/api`)
+- Standalone server via `@hono/node-server` on port 3001
+- Auth routes: real bcrypt comparison, JWT signing, session creation, `lastLoginAt` update
+- Rate limiter: Redis-backed with graceful fallback when Redis unavailable
+- CORS: configured for ports 3000, 3001, 3002
+- Dev mode: returns actual error messages for debugging
+
+### 10.4 Admin App (`apps/admin`)
+- **Config**: `tailwind.config.ts` (TELND brand colors), `postcss.config.js`, `globals.css`
+- **API client**: `src/lib/api.ts` — typed fetch wrapper with `ApiError` class
+- **Auth context**: `src/lib/auth-context.tsx` — `AuthProvider`, `useAuth` hook
+- **Middleware**: `src/middleware.ts` — server-side route protection
+- **Root layout**: `src/app/layout.tsx` — wraps in `AuthProvider` + `AdminLayout`
+- **Dashboard**: `src/app/page.tsx` — stat cards (users, companies, jobs, applications), skeleton loading
+
+### 10.5 Advanced Admin Layout
+Built to match reference project (`/home/pranta-biswas/next-js/`):
+
+**`src/styles/admin.css`** — Full layout CSS:
+- Fixed header (56px), fixed sidebar (250px expanded / 60px collapsed)
+- Sidebar collapse with `0.3s ease` transitions
+- Collapsed mode: flyout submenus as fixed-position cards with shadow
+- Submenu expand/collapse with `max-height` animation
+- User dropdown with fade-in/slide-up animation
+- Mobile responsive (≤768px): sidebar slides off-screen, hamburger menu, overlay backdrop
+
+**`src/components/layout/sidebar.tsx`** — Navigation sidebar:
+- 3 sections (Main, Management, Platform) with SVG icons
+- Submenu toggle with arrow rotation, auto-opens active submenu
+- Click-outside closes flyout menus in collapsed mode
+
+**`src/components/layout/header.tsx`** — Top header bar:
+- Desktop toggle (collapse/expand) + mobile hamburger
+- User avatar + name + dropdown (Dashboard, Settings, Sign out)
+
+**`src/components/layout/admin-layout.tsx`** — Orchestrator:
+- Persisted collapse state in `localStorage`
+- Auth redirects (login ↔ dashboard)
+- Shows children directly on login page when unauthenticated
+
+### 10.6 Login Page Design
+Redesigned 60/40 split layout:
+- **Left 60%**: Light teal gradient background, decorative circles, "Welcome to TELND Admin" tagline, bunny character image (`/images/bunny.png`), copyright footer
+- **Right 40%**: Clean white login form with TELND icon, email/password inputs with teal focus ring, sign-in button with loading spinner
+- Mobile: left panel hidden, form goes full-width (≤768px)
+
+### 10.7 Database Seed
+- Admin user created with hashed password
+- Demo company created
+- `packages/database/src/seed.ts`
+
+### 10.8 Running Services
+- API: `localhost:3001`
+- Admin: `localhost:3002`
+- PostgreSQL: `localhost:5432`
+- Redis: `localhost:6379`
+- MailHog: `localhost:8025`
+
+---
+
+## 11. Known Issues
 
 - Linux desktop Flutter build fails due to `flutter_secure_storage_linux` / clang 21 incompatibility
 - `flutter run -d chrome` crashes with "Dart compiler exited unexpectedly" (headless environment issue; `flutter build web` succeeds)
 
 ---
 
-## 11. Next Steps (Planned)
+## 12. Next Steps (Planned)
 
 ### Web
 - Build remaining component categories: Data Display, Feedback, Navigation, Layout
@@ -295,6 +367,11 @@ All in `_showcase/presentation/pages/` — temporary, to be deleted after projec
 - Add more Display components: Avatar, Badge, Card, Divider
 - Continue mobile app feature development
 
+### Admin
+- Build out management pages: Users, Companies, Jobs, Applications, Packages, Reports
+- Add Settings page, Activity Logs, Support pages
+- Add data tables with search, filter, pagination
+- Add chart/graph widgets for dashboard
+
 ### Both
 - Delete `_showcase/` folders and `/components` page after all components are complete
-- API backend setup
