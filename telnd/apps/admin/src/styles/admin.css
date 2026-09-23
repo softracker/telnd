@@ -2,7 +2,7 @@
   --sidebar-width: 250px;
   --sidebar-collapsed: 60px;
   --admin-header-height: 56px;
-  --sidebar-bg: #fff;
+  --sidebar-bg: #ffffff;
   --sidebar-text: #5f6368;
   --sidebar-active: #034548;
   --sidebar-hover: rgba(0,0,0,0.04);
@@ -12,33 +12,55 @@
   --text-main: #1a1a1a;
   --text-muted: #555555;
   --text-light: #888888;
-  --bg-main: #ffffff;
+  --bg-main: #f4f5f6;
   --bg-secondary: #f9fafb;
   --bg-hover: #f0f0f0;
   --border-color: rgba(0,0,0,0.06);
   --input-bg: #ffffff;
   --input-border: #d1d5db;
   --card-bg: #ffffff;
+  --accent: #034548;
+  --accent-light: #e6f4f1;
+  --accent-hover: #5aa6a4;
+  --success-bg: #f0fdf4;
+  --success-text: #166534;
+  --error-bg: #fef2f2;
+  --error-text: #991b1b;
+  --dropdown-bg: #ffffff;
+  --muted-text: #9ca3af;
+  --label-text: #374151;
+  --disabled-bg: #f3f4f6;
 }
 
 [data-theme="dark"] {
-  --sidebar-bg: #1a1a2e;
+  --sidebar-bg: #16161e;
   --sidebar-text: #a0a0b0;
   --sidebar-active: #5aa6a4;
   --sidebar-hover: rgba(255,255,255,0.06);
-  --sidebar-sub-bg: #16162a;
+  --sidebar-sub-bg: #12141f;
   --sidebar-border: rgba(255,255,255,0.08);
   --sidebar-label-muted: rgba(160,160,176,0.45);
   --text-main: #e4e4e7;
   --text-muted: #a1a1aa;
   --text-light: #71717a;
-  --bg-main: #111827;
+  --bg-main: #12141a;
   --bg-secondary: #1f2937;
   --bg-hover: #1e293b;
   --border-color: rgba(255,255,255,0.08);
   --input-bg: #1f2937;
   --input-border: #374151;
   --card-bg: #1f2937;
+  --accent: #5aa6a4;
+  --accent-light: rgba(90,166,164,0.15);
+  --accent-hover: #7ec8c6;
+  --success-bg: rgba(34,197,94,0.1);
+  --success-text: #86efac;
+  --error-bg: rgba(239,68,68,0.1);
+  --error-text: #fca5a5;
+  --dropdown-bg: #1f2937;
+  --muted-text: #9ca3af;
+  --label-text: #d1d5db;
+  --disabled-bg: #374151;
 }
 
 /* Override Tailwind's base layer (outside @layer = higher priority) */
@@ -47,7 +69,7 @@ html, body {
   color: var(--text-main);
 }
 
-.admin-body { overflow: hidden; height: 100vh; background: var(--bg-main); }
+.admin-body { overflow: hidden; height: 100vh; background: var(--sidebar-bg); }
 
 /* ── Header ── */
 .admin-header {
@@ -56,7 +78,7 @@ html, body {
   left: 0;
   right: 0;
   height: var(--admin-header-height);
-  background: var(--bg-main);
+  background: var(--sidebar-bg);
   border-bottom: 1px solid var(--border-color);
   z-index: 1000;
   display: flex;
@@ -143,7 +165,7 @@ html, body {
   top: calc(100% + 6px);
   right: 0;
   width: 200px;
-  background: var(--bg-main);
+  background: var(--sidebar-bg);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   box-shadow: 0 10px 40px rgba(0,0,0,0.12);
@@ -180,7 +202,7 @@ html, body {
 .admin-user-dropdown a:hover,
 .admin-user-dropdown button:hover {
   background: var(--bg-hover);
-  color: #034548;
+  color: var(--accent);
 }
 
 .admin-user-dropdown .dropdown-divider {
@@ -236,7 +258,7 @@ html, body {
   left: var(--sidebar-collapsed);
   top: 0;
   width: 200px;
-  background: var(--bg-main);
+  background: var(--sidebar-bg);
   border: 1px solid var(--border-color);
   border-left: none;
   border-radius: 0 10px 10px 0;
@@ -285,7 +307,7 @@ html, body {
 }
 .sidebar-item:hover {
   background: var(--sidebar-hover);
-  color: #202124;
+  color: var(--text-main);
 }
 .sidebar-item.active {
   background: rgba(3,69,72,0.08);
@@ -349,6 +371,7 @@ html, body {
   overflow-y: auto;
   height: calc(100vh - var(--admin-header-height));
   transition: margin-left 0.3s ease;
+  background-color: var(--bg-main);
 }
 
 .admin-sidebar.collapsed ~ .admin-content {

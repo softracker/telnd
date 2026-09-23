@@ -58,36 +58,38 @@ export default function CaptchaSettingsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem', color: '#6b7280' }}>Loading settings...</div>;
+    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>Loading settings...</div>;
   }
 
   const inputStyle = {
     width: '100%',
     height: '40px',
     borderRadius: '8px',
-    border: '1px solid #d1d5db',
+    border: '1px solid var(--input-border)',
     padding: '0 0.75rem',
     fontSize: '0.875rem',
     outline: 'none',
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--text-main)',
     transition: 'border-color 0.2s, box-shadow 0.2s',
   };
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#034548', marginBottom: '0.5rem' }}>
+      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem' }}>
         CAPTCHA Settings
       </h1>
-      <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1.5rem' }}>
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
         Configure Cloudflare Turnstile CAPTCHA for the login page. When enabled, users who fail 3+ login attempts will be required to solve a CAPTCHA.
       </p>
 
       {message && (
-        <div style={{ borderRadius: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#166534', marginBottom: '1rem' }}>
+        <div style={{ borderRadius: '8px', backgroundColor: 'var(--success-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--success-text)', marginBottom: '1rem' }}>
           {message}
         </div>
       )}
       {error && (
-        <div style={{ borderRadius: '8px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#b91c1c', marginBottom: '1rem' }}>
+        <div style={{ borderRadius: '8px', backgroundColor: 'var(--error-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--error-text)', marginBottom: '1rem' }}>
           {error}
         </div>
       )}
@@ -107,7 +109,7 @@ export default function CaptchaSettingsPage() {
               border: 'none',
               cursor: 'pointer',
               position: 'relative',
-              backgroundColor: settings.enabled ? '#034548' : '#d1d5db',
+              backgroundColor: settings.enabled ? 'var(--accent)' : 'var(--disabled-bg)',
               transition: 'background-color 0.2s',
               flexShrink: 0,
             }}
@@ -119,19 +121,19 @@ export default function CaptchaSettingsPage() {
               width: '20px',
               height: '20px',
               borderRadius: '50%',
-              backgroundColor: '#fff',
+              backgroundColor: 'var(--card-bg)',
               transition: 'left 0.2s',
               boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
             }} />
           </button>
-          <span style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
+          <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
             {settings.enabled ? 'Enabled' : 'Disabled'}
           </span>
         </div>
 
         {/* Site Key */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
             Site Key
           </label>
           <input
@@ -141,14 +143,14 @@ export default function CaptchaSettingsPage() {
             placeholder="0x4AAAAA..."
             style={inputStyle}
           />
-          <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
             Found in the Cloudflare Turnstile dashboard.
           </p>
         </div>
 
         {/* Secret Key */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
             Secret Key
           </label>
           <input
@@ -158,7 +160,7 @@ export default function CaptchaSettingsPage() {
             placeholder="Enter your secret key"
             style={inputStyle}
           />
-          <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
             This is stored server-side and used for verification. Never share this key.
           </p>
         </div>
@@ -170,7 +172,7 @@ export default function CaptchaSettingsPage() {
             width: '100%',
             height: '40px',
             borderRadius: '8px',
-            backgroundColor: saving ? '#5aa6a4' : '#034548',
+            backgroundColor: saving ? 'var(--accent-hover)' : 'var(--accent)',
             color: '#fff',
             fontSize: '0.875rem',
             fontWeight: 600,

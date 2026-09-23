@@ -220,12 +220,12 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const sidebarContent = (
     <>
       <div style={{ padding: '1.25rem 1rem 0.75rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#034548', marginBottom: '0.75rem' }}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.75rem' }}>
           Settings
         </h2>
         <div style={{ position: 'relative' }}>
           <svg
-            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"
+            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-text)" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round"
             style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
           >
@@ -241,22 +241,22 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
               width: '100%',
               height: '36px',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid var(--input-border)',
               padding: '0 0.75rem 0 2.25rem',
               fontSize: '0.8125rem',
               outline: 'none',
-              backgroundColor: '#fff',
-              color: '#374151',
+              backgroundColor: 'var(--input-bg)',
+              color: 'var(--text-main)',
               transition: 'border-color 0.15s',
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = '#0d9488'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
           />
         </div>
       </div>
       <nav style={{ flex: 1, overflowY: 'auto', padding: '0.25rem 0.75rem 1rem' }}>
         {filtered.length === 0 && (
-          <p style={{ fontSize: '0.8125rem', color: '#9ca3af', padding: '1rem 0.5rem', textAlign: 'center' }}>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', padding: '1rem 0.5rem', textAlign: 'center' }}>
             No settings found
           </p>
         )}
@@ -274,15 +274,15 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                 borderRadius: '8px',
                 marginBottom: '0.125rem',
                 textDecoration: 'none',
-                backgroundColor: isActive ? '#e6f4f1' : 'transparent',
+                backgroundColor: isActive ? 'var(--accent-light)' : 'transparent',
                 transition: 'background-color 0.15s',
               }}
-              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
               onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'; }}
             >
               <span style={{
                 marginTop: '1px',
-                color: isActive ? '#034548' : '#6b7280',
+                color: isActive ? 'var(--accent)' : 'var(--text-muted)',
                 flexShrink: 0,
               }}>
                 {item.icon}
@@ -291,14 +291,14 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                 <div style={{
                   fontSize: '0.875rem',
                   fontWeight: isActive ? 600 : 500,
-                  color: isActive ? '#034548' : '#374151',
+                  color: isActive ? 'var(--accent)' : 'var(--label-text)',
                   lineHeight: 1.3,
                 }}>
                   {item.label}
                 </div>
                 <div style={{
                   fontSize: '0.75rem',
-                  color: '#9ca3af',
+                  color: 'var(--muted-text)',
                   lineHeight: 1.4,
                   marginTop: '0.125rem',
                 }}>
@@ -325,11 +325,11 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
               gap: '0.5rem',
               padding: '0.5rem 0.75rem',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
-              backgroundColor: '#fff',
+              border: '1px solid var(--input-border)',
+              backgroundColor: 'var(--input-bg)',
               fontSize: '0.875rem',
               fontWeight: 500,
-              color: '#374151',
+              color: 'var(--label-text)',
               cursor: 'pointer',
               width: '100%',
             }}
@@ -347,15 +347,15 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
           {mobileOpen && (
             <div style={{
               marginTop: '0.5rem',
-              backgroundColor: '#f5f5f5',
+              backgroundColor: 'var(--bg-secondary)',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid var(--input-border)',
               overflow: 'hidden',
             }}>
-              <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--border-color)' }}>
                 <div style={{ position: 'relative' }}>
                   <svg
-                    width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"
+                    width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-text)" strokeWidth="2"
                     strokeLinecap="round" strokeLinejoin="round"
                     style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
                   >
@@ -371,20 +371,20 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                       width: '100%',
                       height: '36px',
                       borderRadius: '8px',
-                      border: '1px solid #e5e7eb',
+                      border: '1px solid var(--input-border)',
                       padding: '0 0.75rem 0 2.25rem',
                       fontSize: '0.8125rem',
                       outline: 'none',
-                      backgroundColor: '#fff',
-                      color: '#374151',
+                      backgroundColor: 'var(--input-bg)',
+                      color: 'var(--text-main)',
                     }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = '#0d9488'; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
                   />
                 </div>
               </div>
               {filtered.length === 0 && (
-                <p style={{ fontSize: '0.8125rem', color: '#9ca3af', padding: '1rem', textAlign: 'center' }}>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', padding: '1rem', textAlign: 'center' }}>
                   No settings found
                 </p>
               )}
@@ -401,14 +401,14 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                       gap: '0.75rem',
                       padding: '0.75rem 1rem',
                       textDecoration: 'none',
-                      backgroundColor: isActive ? '#e6f4f1' : 'transparent',
-                      borderBottom: '1px solid #e5e7eb',
+                      backgroundColor: isActive ? 'var(--accent-light)' : 'transparent',
+                      borderBottom: '1px solid var(--border-color)',
                     }}
                   >
-                    <span style={{ color: isActive ? '#034548' : '#6b7280', flexShrink: 0 }}>{item.icon}</span>
+                    <span style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)', flexShrink: 0 }}>{item.icon}</span>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? '#034548' : '#374151' }}>{item.label}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.125rem' }}>{item.description}</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? 'var(--accent)' : 'var(--label-text)' }}>{item.label}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.125rem' }}>{item.description}</div>
                     </div>
                   </Link>
                 );
@@ -429,8 +429,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
           display: 'flex',
           flexDirection: 'column',
           height: '100%',
-          backgroundColor: '#f5f5f5',
-          borderRight: collapsed ? 'none' : '1px solid #e5e7eb',
+          backgroundColor: 'var(--bg-secondary)',
+          borderRight: collapsed ? 'none' : '1px solid var(--border-color)',
           flexShrink: 0,
           overflow: 'hidden',
           transition: 'width 0.2s ease, min-width 0.2s ease',
@@ -454,8 +454,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             width: '24px',
             height: '24px',
             borderRadius: '50%',
-            backgroundColor: '#fff',
-            border: '1px solid #d1d5db',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--input-border)',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -465,12 +465,12 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             transition: 'left 0.2s ease, background-color 0.15s, opacity 0.15s',
             opacity: 0.5,
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.opacity = '1'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fff'; e.currentTarget.style.opacity = '0.5'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.opacity = '1'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--card-bg)'; e.currentTarget.style.opacity = '0.5'; }}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           <svg
-            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"
+            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round"
             style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
           >

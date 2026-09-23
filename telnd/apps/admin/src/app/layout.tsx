@@ -19,7 +19,7 @@ const themeScript = `
         ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
         : t;
       document.documentElement.setAttribute('data-theme', r);
-      document.documentElement.style.backgroundColor = r === 'dark' ? '#111827' : '#ffffff';
+      document.documentElement.style.backgroundColor = r === 'dark' ? '#12141a' : '#f4f5f6';
     } catch(e) {}
   })();
 `;

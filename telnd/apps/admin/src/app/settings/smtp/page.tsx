@@ -88,36 +88,38 @@ export default function SmtpSettingsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem', color: '#6b7280' }}>Loading settings...</div>;
+    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>Loading settings...</div>;
   }
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
     height: '40px',
     borderRadius: '8px',
-    border: '1px solid #d1d5db',
+    border: '1px solid var(--input-border)',
     padding: '0 0.75rem',
     fontSize: '0.875rem',
     outline: 'none',
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--text-main)',
     transition: 'border-color 0.2s, box-shadow 0.2s',
   };
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#034548', marginBottom: '0.5rem' }}>
+      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem' }}>
         SMTP / Email Settings
       </h1>
-      <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1.5rem' }}>
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
         Configure your SMTP server for sending emails. This is used for account notifications, password resets, and other system emails.
       </p>
 
       {message && (
-        <div style={{ borderRadius: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#166534', marginBottom: '1rem' }}>
+        <div style={{ borderRadius: '8px', backgroundColor: 'var(--success-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--success-text)', marginBottom: '1rem' }}>
           {message}
         </div>
       )}
       {error && (
-        <div style={{ borderRadius: '8px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#b91c1c', marginBottom: '1rem' }}>
+        <div style={{ borderRadius: '8px', backgroundColor: 'var(--error-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--error-text)', marginBottom: '1rem' }}>
           {error}
         </div>
       )}
@@ -125,11 +127,10 @@ export default function SmtpSettingsPage() {
       {testResult && (
         <div style={{
           borderRadius: '8px',
-          backgroundColor: testResult.ok ? '#f0fdf4' : '#fef2f2',
-          border: `1px solid ${testResult.ok ? '#bbf7d0' : '#fecaca'}`,
+          backgroundColor: testResult.ok ? 'var(--success-bg)' : 'var(--error-bg)',
           padding: '0.75rem 1rem',
           fontSize: '0.875rem',
-          color: testResult.ok ? '#166534' : '#b91c1c',
+          color: testResult.ok ? 'var(--success-text)' : 'var(--error-text)',
           marginBottom: '1rem',
         }}>
           {testResult.msg}
@@ -139,7 +140,7 @@ export default function SmtpSettingsPage() {
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '500px' }}>
         {/* Host */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
             SMTP Host
           </label>
           <input
@@ -155,7 +156,7 @@ export default function SmtpSettingsPage() {
         {/* Port + Secure toggle */}
         <div style={{ display: 'flex', gap: '1rem' }}>
           <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
               Port
             </label>
             <input
@@ -182,7 +183,7 @@ export default function SmtpSettingsPage() {
                   border: 'none',
                   cursor: 'pointer',
                   position: 'relative',
-                  backgroundColor: settings.secure ? '#034548' : '#d1d5db',
+                  backgroundColor: settings.secure ? 'var(--accent)' : 'var(--disabled-bg)',
                   transition: 'background-color 0.2s',
                   flexShrink: 0,
                 }}
@@ -194,12 +195,12 @@ export default function SmtpSettingsPage() {
                   width: '20px',
                   height: '20px',
                   borderRadius: '50%',
-                  backgroundColor: '#fff',
+                  backgroundColor: 'var(--card-bg)',
                   transition: 'left 0.2s',
                   boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
                 }} />
               </button>
-              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
+              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
                 SSL/TLS
               </span>
             </div>
@@ -208,8 +209,8 @@ export default function SmtpSettingsPage() {
 
         {/* Username */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
-            Username <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+            Username <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>(optional)</span>
           </label>
           <input
             type="text"
@@ -222,8 +223,8 @@ export default function SmtpSettingsPage() {
 
         {/* Password */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
-            Password <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+            Password <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>(optional)</span>
           </label>
           <input
             type="password"
@@ -236,7 +237,7 @@ export default function SmtpSettingsPage() {
 
         {/* From Email */}
         <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}>
+          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
             From Email
           </label>
           <input
@@ -247,7 +248,7 @@ export default function SmtpSettingsPage() {
             required
             style={inputStyle}
           />
-          <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.25rem' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
             The address emails will be sent from.
           </p>
         </div>
@@ -262,11 +263,11 @@ export default function SmtpSettingsPage() {
               flex: 1,
               height: '40px',
               borderRadius: '8px',
-              backgroundColor: '#fff',
-              color: '#034548',
+              backgroundColor: 'var(--card-bg)',
+              color: 'var(--accent)',
               fontSize: '0.875rem',
               fontWeight: 600,
-              border: '1px solid #034548',
+              border: '1px solid var(--accent)',
               cursor: testing ? 'not-allowed' : 'pointer',
               opacity: testing || !settings.host || !settings.port ? 0.6 : 1,
               transition: 'background-color 0.15s',
@@ -281,7 +282,7 @@ export default function SmtpSettingsPage() {
               flex: 1,
               height: '40px',
               borderRadius: '8px',
-              backgroundColor: saving ? '#5aa6a4' : '#034548',
+              backgroundColor: saving ? 'var(--accent-hover)' : 'var(--accent)',
               color: '#fff',
               fontSize: '0.875rem',
               fontWeight: 600,

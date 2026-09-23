@@ -38,13 +38,13 @@ export default function PreferencesSettingsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '0.25rem' }}>{t('preferences.title')}</h1>
-      <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '2rem' }}>{t('preferences.description')}</p>
+      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>{t('preferences.title')}</h1>
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>{t('preferences.description')}</p>
 
       {/* Language Section */}
       <div style={{ marginBottom: '2rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 600, color: '#111827', marginBottom: '0.25rem' }}>{t('preferences.language')}</h2>
-        <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '1rem' }}>{t('preferences.languageDesc')}</p>
+        <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>{t('preferences.language')}</h2>
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>{t('preferences.languageDesc')}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem' }}>
           {languages.map((lang) => {
             const isActive = language === lang.value;
@@ -58,8 +58,8 @@ export default function PreferencesSettingsPage() {
                   gap: '0.75rem',
                   padding: '1rem',
                   borderRadius: '10px',
-                  border: `2px solid ${isActive ? '#034548' : '#e5e7eb'}`,
-                  backgroundColor: isActive ? '#f0fdf9' : '#fff',
+                  border: `2px solid ${isActive ? 'var(--accent)' : 'var(--input-border)'}`,
+                  backgroundColor: isActive ? 'var(--accent-light)' : 'var(--card-bg)',
                   cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'all 0.15s',
@@ -67,13 +67,13 @@ export default function PreferencesSettingsPage() {
               >
                 <span style={{ fontSize: '1.5rem' }}>{lang.flag}</span>
                 <div>
-                  <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? '#034548' : '#374151' }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? 'var(--accent)' : 'var(--label-text)' }}>
                     {lang.label}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{lang.native}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--muted-text)' }}>{lang.native}</div>
                 </div>
                 {isActive && (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#034548" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto' }}>
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 )}
@@ -85,8 +85,8 @@ export default function PreferencesSettingsPage() {
 
       {/* Theme Section */}
       <div>
-        <h2 style={{ fontSize: '1rem', fontWeight: 600, color: '#111827', marginBottom: '0.25rem' }}>{t('preferences.theme')}</h2>
-        <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '1rem' }}>{t('preferences.themeDesc')}</p>
+        <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>{t('preferences.theme')}</h2>
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>{t('preferences.themeDesc')}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem' }}>
           {themes.map((item) => {
             const isActive = theme === item.value;
@@ -101,8 +101,8 @@ export default function PreferencesSettingsPage() {
                   gap: '0.5rem',
                   padding: '1.25rem 1rem',
                   borderRadius: '10px',
-                  border: `2px solid ${isActive ? '#034548' : '#e5e7eb'}`,
-                  backgroundColor: isActive ? '#f0fdf9' : '#fff',
+                  border: `2px solid ${isActive ? 'var(--accent)' : 'var(--input-border)'}`,
+                  backgroundColor: isActive ? 'var(--accent-light)' : 'var(--card-bg)',
                   cursor: 'pointer',
                   textAlign: 'center',
                   transition: 'all 0.15s',
@@ -112,25 +112,25 @@ export default function PreferencesSettingsPage() {
                   width: '40px',
                   height: '40px',
                   borderRadius: '10px',
-                  backgroundColor: isActive ? '#034548' : '#f3f4f6',
+                  backgroundColor: isActive ? 'var(--accent)' : 'var(--disabled-bg)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: isActive ? '#fff' : '#6b7280',
+                  color: isActive ? '#fff' : 'var(--text-muted)',
                   transition: 'all 0.15s',
                 }}>
                   {item.icon}
                 </div>
                 <div>
-                  <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? '#034548' : '#374151' }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: isActive ? 600 : 500, color: isActive ? 'var(--accent)' : 'var(--label-text)' }}>
                     {item.label}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.125rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.125rem' }}>
                     {item.description}
                   </div>
                 </div>
                 {isActive && (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#034548" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 )}
