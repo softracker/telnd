@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 export default function SettingsPage() {
   const router = useRouter();
   useEffect(() => {
-    router.replace('/settings/captcha');
+    router.replace('/settings/general');
   }, [router]);
   return null;
 }
