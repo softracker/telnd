@@ -18,5 +18,11 @@ export const testSmtpSchema = z.object({
   from: z.string().email(),
 });
 
+export const userPreferencesSchema = z.object({
+  language: z.enum(['en', 'bn']).optional(),
+  theme: z.enum(['light', 'dark', 'system']).optional(),
+});
+
 export type SmtpSettingsInput = z.infer<typeof smtpSettingsSchema>;
 export type TestSmtpInput = z.infer<typeof testSmtpSchema>;
+export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;

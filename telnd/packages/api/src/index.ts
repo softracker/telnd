@@ -13,6 +13,7 @@ import mapRoutes from './routes/map';
 import packagesRoutes from './routes/packages';
 import supportRoutes from './routes/support';
 import settingsRoutes from './routes/settings';
+import userPreferencesRoutes from './routes/user-preferences';
 import { authMiddleware, roleGuard } from './middleware/auth';
 import { prisma } from '@telnd/database';
 
@@ -55,6 +56,7 @@ app.route('/map', mapRoutes);
 app.route('/packages', packagesRoutes);
 app.route('/support', supportRoutes);
 app.route('/settings', settingsRoutes);
+app.route('/user-preferences', userPreferencesRoutes);
 
 // Public: only exposes CAPTCHA site key (safe for unauthenticated users)
 app.get('/captcha-config', async (c) => {
