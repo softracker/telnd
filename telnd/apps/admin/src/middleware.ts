@@ -2,23 +2,9 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const token = request.cookies.get('telnd_admin_token')?.value;
-  const isLoginPage = pathname === '/login';
-
-  if (isLoginPage) {
-    if (token) {
-      return NextResponse.redirect(new URL('/', request.url));
-    }
-    return NextResponse.next();
-  }
-
-  if (!token) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
+  // Auth is handled client-side by AdminLayout + auth-context.
+  // Cookie-based middleware can't work here because the API (localhost:3001)
+  // sets cookies on its own origin, not the admin app's origin (localhost:3000).
   return NextResponse.next();
 }
 

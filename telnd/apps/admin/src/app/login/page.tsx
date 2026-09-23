@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { ApiError } from '@/lib/api';
 
@@ -9,7 +9,72 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const turnstileWidgetId = useRef<string | null>(null);
+
+  const showCaptcha = failedAttempts >= 3 && turnstileSiteKey;
+
+  // Load Turnstile site key from public captcha config
+  useEffect(() => {
+    async function loadSiteKey() {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/captcha-config`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.data.enabled && data.data.siteKey) {
+            setTurnstileSiteKey(data.data.siteKey);
+          }
+        }
+      } catch {
+        // ignore — captcha won't show
+      }
+    }
+    loadSiteKey();
+  }, []);
+
+  // Render Turnstile widget when captcha becomes required
+  useEffect(() => {
+    if (!showCaptcha || !turnstileRef.current) return;
+
+    // Load script if not loaded
+    if (!document.getElementById('turnstile-script')) {
+      const script = document.createElement('script');
+      script.id = 'turnstile-script';
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+
+    const renderWidget = () => {
+      if (turnstileRef.current && (window as any).turnstile && !turnstileWidgetId.current) {
+        turnstileWidgetId.current = (window as any).turnstile.render(turnstileRef.current, {
+          sitekey: turnstileSiteKey,
+          callback: (token: string) => setTurnstileToken(token),
+          'expired-callback': () => setTurnstileToken(''),
+          theme: 'light',
+        });
+      }
+    };
+
+    // Try to render, or wait for script
+    if ((window as any).turnstile) {
+      renderWidget();
+    } else {
+      const interval = setInterval(() => {
+        if ((window as any).turnstile) {
+          clearInterval(interval);
+          renderWidget();
+        }
+      }, 200);
+      return () => clearInterval(interval);
+    }
+  }, [showCaptcha, turnstileSiteKey]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -17,13 +82,31 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      await login(email, password, showCaptcha ? turnstileToken : undefined);
+      setFailedAttempts(0);
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        if (err.status === 429) {
+          setError('Too many failed attempts. Please wait and try again.');
+          setFailedAttempts(3);
+        } else if (err.status === 400 && (err as any)?.data?.error?.code === 'CAPTCHA_REQUIRED') {
+          setError('Please complete the CAPTCHA verification.');
+          setFailedAttempts(3);
+        } else if (err.status === 400 && (err as any)?.data?.error?.code === 'CAPTCHA_FAILED') {
+          setError('CAPTCHA verification failed. Please try again.');
+          // Reset turnstile widget
+          if ((window as any).turnstile && turnstileWidgetId.current) {
+            (window as any).turnstile.reset(turnstileWidgetId.current);
+            setTurnstileToken('');
+          }
+        } else {
+          setError(err.message);
+        }
       } else {
         setError('Something went wrong. Please try again.');
       }
+      setFailedAttempts(prev => prev + 1);
+    } finally {
       setIsSubmitting(false);
     }
   }
@@ -84,7 +167,7 @@ export default function LoginPage() {
             maxWidth: '320px',
             margin: '0 auto',
           }}>
-            Manage your platform, users, and operations — all in one place.
+            Manage platform, users, and operations — all in one place.
           </p>
         </div>
 
@@ -196,11 +279,11 @@ export default function LoginPage() {
                   padding: '0 0.75rem',
                   fontSize: '0.875rem',
                   outline: 'none',
-                  transition: 'border-color 0.15s, box-shadow 0.15s',
+                  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
                 }}
                 onFocus={(e) => {
-                  e.currentTarget.style.borderColor = '#034548';
-                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(3, 69, 72, 0.1)';
+                  e.currentTarget.style.borderColor = '#0d9488';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(13, 148, 136, 0.15), 0 2px 8px rgba(3, 69, 72, 0.08)';
                 }}
                 onBlur={(e) => {
                   e.currentTarget.style.borderColor = '#d1d5db';
@@ -219,34 +302,80 @@ export default function LoginPage() {
               }}>
                 Password
               </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
-                required
-                autoComplete="current-password"
-                style={{
-                  width: '100%',
-                  height: '44px',
-                  borderRadius: '8px',
-                  border: '1px solid #d1d5db',
-                  padding: '0 0.75rem',
-                  fontSize: '0.875rem',
-                  outline: 'none',
-                  transition: 'border-color 0.15s, box-shadow 0.15s',
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = '#034548';
-                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(3, 69, 72, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = '#d1d5db';
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  autoComplete="current-password"
+                  style={{
+                    width: '100%',
+                    height: '44px',
+                    borderRadius: '8px',
+                    border: '1px solid #d1d5db',
+                    padding: '0 2.5rem 0 0.75rem',
+                    fontSize: '0.875rem',
+                    outline: 'none',
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = '#0d9488';
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(13, 148, 136, 0.15), 0 2px 8px rgba(3, 69, 72, 0.08)';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = '#d1d5db';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '0.75rem',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#9ca3af',
+                    transition: 'color 0.15s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#374151'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                >
+                  {showPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                      <path d="M14.12 14.12a3 3 0 11-4.24-4.24" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
+
+            {showCaptcha && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
+                  Verify you are human
+                </label>
+                <div ref={turnstileRef} id="turnstile-widget" />
+              </div>
+            )}
 
             <button
               type="submit"

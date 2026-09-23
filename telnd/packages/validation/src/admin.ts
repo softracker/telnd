@@ -42,8 +42,13 @@ export const adminDashboardQuerySchema = z.object({
   endDate: z.string().datetime().optional(),
 });
 
+export const suspendUserSchema = z.object({
+  reason: z.string().min(1).max(1000).optional(),
+});
+
 export type AdminRoleInput = z.infer<typeof adminRoleSchema>;
 export type AdminActionInput = z.infer<typeof adminActionSchema>;
 export type FeatureFlagInput = z.infer<typeof featureFlagSchema>;
 export type MaintenanceModeInput = z.infer<typeof maintenanceModeSchema>;
 export type ReportInput = z.infer<typeof reportSchema>;
+export type SuspendUserInput = z.infer<typeof suspendUserSchema>;

@@ -1,17 +1,27 @@
 import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { authMiddleware, roleGuard } from '../middleware/auth';
+import { validate } from '../middleware/validate';
+import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const admin = new Hono();
+type AdminEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    admin: any;
+    validatedData: any;
+  };
+};
+
+const admin = new Hono<AdminEnv>();
+
+// All admin routes require auth + admin role
+admin.use('*', authMiddleware, roleGuard('ADMIN'));
 
 // Middleware: require admin role
 const requireAdmin = async (c: any, next: any) => {
   const user = c.get('user');
-  if (!user) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
   
   const adminUser = await prisma.adminUser.findUnique({
     where: { userId: user.id },
@@ -25,6 +35,18 @@ const requireAdmin = async (c: any, next: any) => {
   c.set('admin', adminUser);
   await next();
 };
+
+function clampLimit(value: string | undefined, max = 100): number {
+  const parsed = parseInt(value || '20');
+  if (isNaN(parsed) || parsed < 1) return 20;
+  return Math.min(parsed, max);
+}
+
+function clampPage(value: string | undefined): number {
+  const parsed = parseInt(value || '1');
+  if (isNaN(parsed) || parsed < 1) return 1;
+  return parsed;
+}
 
 // Log admin action
 const logAction = async (adminId: string, action: string, targetType: string, targetId?: string, details?: any, c?: any) => {
@@ -49,8 +71,8 @@ admin.get('/dashboard', requireAdmin, async (c) => {
     prisma.user.count(),
     prisma.user.count({ where: { lastActiveAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } }),
     prisma.user.count({ where: { createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
-    prisma.jobPosting.count(),
-    prisma.jobPosting.count({ where: { status: 'ACTIVE' } }),
+    prisma.job.count(),
+    prisma.job.count({ where: { status: 'PUBLISHED' } }),
     prisma.company.count(),
     prisma.merchant.count(),
     prisma.report.count({ where: { status: 'PENDING' } }),
@@ -74,8 +96,8 @@ admin.get('/dashboard', requireAdmin, async (c) => {
 // Users Management
 // ============================================
 admin.get('/users', requireAdmin, async (c) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '20');
+  const page = clampPage(c.req.query('page'));
+  const limit = clampLimit(c.req.query('limit'));
   const search = c.req.query('search');
   const role = c.req.query('role');
 
@@ -115,15 +137,20 @@ admin.get('/users/:id', requireAdmin, async (c) => {
   return c.json(user);
 });
 
-admin.patch('/users/:id/suspend', requireAdmin, async (c) => {
+admin.patch('/users/:id/suspend', requireAdmin, validate(suspendUserSchema), async (c) => {
   const id = c.req.param('id');
-  const { reason } = await c.req.json();
+  const body = c.get('validatedData');
+  const reason = body.reason;
   const adminUser = c.get('admin');
 
   const user = await prisma.user.update({
     where: { id },
     data: { isActive: false },
   });
+
+  // Revoke all active sessions for the suspended user
+  await prisma.session.deleteMany({ where: { userId: id } });
+  await prisma.refreshToken.deleteMany({ where: { userId: id } });
 
   await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason }, c);
   return c.json(user);
@@ -150,8 +177,8 @@ admin.get('/features', requireAdmin, async (c) => {
   return c.json(features);
 });
 
-admin.post('/features', requireAdmin, async (c) => {
-  const body = await c.req.json();
+admin.post('/features', requireAdmin, validate(featureFlagSchema), async (c) => {
+  const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
   const feature = await prisma.featureFlag.create({ data: body });
@@ -159,9 +186,9 @@ admin.post('/features', requireAdmin, async (c) => {
   return c.json(feature, 201);
 });
 
-admin.patch('/features/:id', requireAdmin, async (c) => {
+admin.patch('/features/:id', requireAdmin, validate(featureFlagSchema.partial()), async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
   const feature = await prisma.featureFlag.update({ where: { id }, data: body });
@@ -186,8 +213,8 @@ admin.get('/maintenance', requireAdmin, async (c) => {
   return c.json(mode || { isActive: false });
 });
 
-admin.post('/maintenance', requireAdmin, async (c) => {
-  const body = await c.req.json();
+admin.post('/maintenance', requireAdmin, validate(maintenanceModeSchema), async (c) => {
+  const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
   // Deactivate any existing maintenance
@@ -204,8 +231,8 @@ admin.post('/maintenance', requireAdmin, async (c) => {
 // Reports
 // ============================================
 admin.get('/reports', requireAdmin, async (c) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '20');
+  const page = clampPage(c.req.query('page'));
+  const limit = clampLimit(c.req.query('limit'));
   const status = c.req.query('status');
 
   const where: any = {};
@@ -225,9 +252,9 @@ admin.get('/reports', requireAdmin, async (c) => {
   return c.json({ reports, total, page, limit, totalPages: Math.ceil(total / limit) });
 });
 
-admin.patch('/reports/:id', requireAdmin, async (c) => {
+admin.patch('/reports/:id', requireAdmin, validate(reportSchema.partial()), async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
   const report = await prisma.report.update({
@@ -243,8 +270,8 @@ admin.patch('/reports/:id', requireAdmin, async (c) => {
 // Audit Log
 // ============================================
 admin.get('/audit-log', requireAdmin, async (c) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '50');
+  const page = clampPage(c.req.query('page'));
+  const limit = clampLimit(c.req.query('limit'), 50);
   const action = c.req.query('action');
   const targetType = c.req.query('targetType');
 
@@ -273,8 +300,8 @@ admin.get('/roles', requireAdmin, async (c) => {
   return c.json(roles);
 });
 
-admin.post('/roles', requireAdmin, async (c) => {
-  const body = await c.req.json();
+admin.post('/roles', requireAdmin, validate(adminRoleSchema), async (c) => {
+  const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
   const role = await prisma.adminRole.create({ data: body });

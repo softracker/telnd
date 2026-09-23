@@ -1,17 +1,27 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { validate } from '../middleware/validate';
+import { roleGuard } from '../middleware/auth';
+import { supportTicketSchema, supportMessageSchema, ticketUpdateSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const support = new Hono();
+type SupportEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+const support = new Hono<SupportEnv>();
 
 // ============================================
 // Create Ticket
 // ============================================
-support.post('/tickets', async (c) => {
+support.post('/tickets', validate(supportTicketSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = await c.req.json();
+  const body = c.get('validatedData');
   const ticket = await prisma.supportTicket.create({
     data: { ...body, userId: user.id },
     include: { messages: true },
@@ -70,18 +80,18 @@ support.get('/tickets/:id', async (c) => {
 // ============================================
 // Add Message to Ticket
 // ============================================
-support.post('/tickets/:id/messages', async (c) => {
+support.post('/tickets/:id/messages', validate(supportMessageSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const ticket = await prisma.supportTicket.findUnique({ where: { id } });
 
   if (!ticket || ticket.userId !== user.id) {
     return c.json({ error: 'Ticket not found' }, 404);
   }
 
-  const body = await c.req.json();
+  const body = c.get('validatedData');
   const message = await prisma.supportMessage.create({
     data: {
       ticketId: id,
@@ -104,10 +114,7 @@ support.post('/tickets/:id/messages', async (c) => {
 // ============================================
 // Admin: List all tickets
 // ============================================
-support.get('/admin/tickets', async (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
-
+support.get('/admin/tickets', roleGuard('ADMIN'), async (c) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '20');
   const status = c.req.query('status');
@@ -136,12 +143,9 @@ support.get('/admin/tickets', async (c) => {
 // ============================================
 // Admin: Update ticket
 // ============================================
-support.patch('/admin/tickets/:id', async (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
-
+support.patch('/admin/tickets/:id', roleGuard('ADMIN'), validate(ticketUpdateSchema), async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   const ticket = await prisma.supportTicket.update({
     where: { id },
@@ -154,12 +158,10 @@ support.patch('/admin/tickets/:id', async (c) => {
 // ============================================
 // Admin: Reply to ticket
 // ============================================
-support.post('/admin/tickets/:id/messages', async (c) => {
+support.post('/admin/tickets/:id/messages', roleGuard('ADMIN'), validate(supportMessageSchema), async (c) => {
   const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
-
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
 
   const message = await prisma.supportMessage.create({
     data: {

@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { validate } from '../middleware/validate';
+import { roleGuard } from '../middleware/auth';
+import { merchantSchema, merchantStaffSchema, merchantCourseSchema, merchantAttendanceSchema, merchantExamSchema, merchantAnnouncementSchema, merchantFeeSchema, merchantRoutineSchema, merchantStudentSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const merchant = new Hono();
+type MerchantEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+const merchant = new Hono<MerchantEnv>();
 
 // ============================================
 // List Merchants (Public)
@@ -50,11 +60,11 @@ merchant.get('/:slug', async (c) => {
 // ============================================
 // Create Merchant
 // ============================================
-merchant.post('/', async (c) => {
+merchant.post('/', validate(merchantSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   // Check slug uniqueness
   const existing = await prisma.merchant.findUnique({ where: { slug: body.slug } });
@@ -86,12 +96,12 @@ merchant.post('/', async (c) => {
 // ============================================
 // Update Merchant
 // ============================================
-merchant.patch('/:id', async (c) => {
+merchant.patch('/:id', validate(merchantSchema.partial()), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
 
   const existing = await prisma.merchant.findUnique({ where: { id } });
   if (!existing || existing.ownerId !== user.id) {
@@ -124,12 +134,12 @@ merchant.get('/:id/staff', async (c) => {
   return c.json(staff);
 });
 
-merchant.post('/:id/staff', async (c) => {
+merchant.post('/:id/staff', validate(merchantStaffSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   const existing = await prisma.merchant.findUnique({ where: { id } });
   if (!existing || existing.ownerId !== user.id) {
@@ -171,12 +181,17 @@ merchant.get('/:id/students', async (c) => {
   return c.json(students);
 });
 
-merchant.post('/:id/students', async (c) => {
+merchant.post('/:id/students', validate(merchantStudentSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const student = await prisma.merchantStudent.create({
     data: { merchantId: id, ...body },
@@ -197,12 +212,17 @@ merchant.get('/:id/courses', async (c) => {
   return c.json(courses);
 });
 
-merchant.post('/:id/courses', async (c) => {
+merchant.post('/:id/courses', validate(merchantCourseSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const course = await prisma.merchantCourse.create({
     data: { merchantId: id, ...body },
@@ -214,12 +234,17 @@ merchant.post('/:id/courses', async (c) => {
 // ============================================
 // Attendance
 // ============================================
-merchant.post('/:id/attendance', async (c) => {
+merchant.post('/:id/attendance', validate(merchantAttendanceSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const attendance = await prisma.merchantAttendance.upsert({
     where: { merchantId_studentId_date: { merchantId: id, studentId: body.studentId, date: new Date(body.date) } },
@@ -250,12 +275,17 @@ merchant.get('/:id/attendance', async (c) => {
 // ============================================
 // Exams
 // ============================================
-merchant.post('/:id/exams', async (c) => {
+merchant.post('/:id/exams', validate(merchantExamSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const exam = await prisma.merchantExam.create({
     data: { merchantId: id, ...body, examDate: new Date(body.examDate) },
@@ -288,12 +318,17 @@ merchant.get('/:id/announcements', async (c) => {
   return c.json(announcements);
 });
 
-merchant.post('/:id/announcements', async (c) => {
+merchant.post('/:id/announcements', validate(merchantAnnouncementSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const announcement = await prisma.merchantAnnouncement.create({
     data: { merchantId: id, ...body },
@@ -305,12 +340,17 @@ merchant.post('/:id/announcements', async (c) => {
 // ============================================
 // Fees
 // ============================================
-merchant.post('/:id/fees', async (c) => {
+merchant.post('/:id/fees', validate(merchantFeeSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const fee = await prisma.merchantFee.create({
     data: { merchantId: id, ...body, dueDate: new Date(body.dueDate) },
@@ -349,12 +389,17 @@ merchant.get('/:id/routine', async (c) => {
   return c.json(routine);
 });
 
-merchant.post('/:id/routine', async (c) => {
+merchant.post('/:id/routine', validate(merchantRoutineSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  const id = c.req.param('id')!;
+  const body = c.get('validatedData');
+
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const routine = await prisma.merchantRoutine.create({
     data: { merchantId: id, ...body },

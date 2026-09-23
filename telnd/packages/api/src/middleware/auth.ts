@@ -1,24 +1,56 @@
 import { Context, Next } from 'hono';
+import { verify } from 'hono/jwt';
 import { prisma } from '@telnd/database';
 
-export async function authMiddleware(c: Context, next: Next) {
-  const authHeader = c.req.header('Authorization');
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET environment variable is required');
+  return secret;
+}
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+export async function authMiddleware(c: Context, next: Next) {
+  // Try cookie first, then Authorization header
+  const cookieHeader = c.req.header('Cookie') || '';
+  const tokenFromCookie = cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('telnd_admin_token='))
+    ?.split('=')
+    .slice(1)
+    .join('=');
+
+  const authHeader = c.req.header('Authorization');
+  const tokenFromHeader = authHeader?.startsWith('Bearer ')
+    ? authHeader.split(' ')[1]
+    : null;
+
+  const token = tokenFromCookie || tokenFromHeader;
+
+  if (!token) {
     return c.json({
       success: false,
       error: {
         code: 'UNAUTHORIZED',
-        message: 'Missing or invalid authorization header',
+        message: 'Missing authentication token',
       },
     }, 401);
   }
 
-  const token = authHeader.split(' ')[1];
-
   try {
-    // In production, verify JWT here
-    // For now, look up session
+    // Verify JWT signature and expiration
+    const payload = await verify(token, getJwtSecret(), 'HS256');
+
+    if (!payload || !payload.sub) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Invalid token payload',
+        },
+      }, 401);
+    }
+
+    // Verify session exists in database and is not expired
     const session = await prisma.session.findUnique({
       where: { token },
       include: { user: true },
@@ -29,9 +61,20 @@ export async function authMiddleware(c: Context, next: Next) {
         success: false,
         error: {
           code: 'UNAUTHORIZED',
-          message: 'Invalid or expired token',
+          message: 'Session expired or revoked',
         },
       }, 401);
+    }
+
+    // Check if user account is active
+    if (!session.user.isActive) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Account has been deactivated',
+        },
+      }, 403);
     }
 
     c.set('user', session.user);
@@ -43,7 +86,7 @@ export async function authMiddleware(c: Context, next: Next) {
       success: false,
       error: {
         code: 'UNAUTHORIZED',
-        message: 'Authentication failed',
+        message: 'Invalid or expired token',
       },
     }, 401);
   }

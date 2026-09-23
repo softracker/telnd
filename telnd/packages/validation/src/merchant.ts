@@ -75,6 +75,16 @@ export const merchantRoutineSchema = z.object({
   room: z.string().max(50).optional(),
 });
 
+export const merchantStudentSchema = z.object({
+  userId: z.string().min(1),
+  courseId: z.string().min(1).optional(),
+});
+
+export const couponValidateSchema = z.object({
+  code: z.string().min(3).max(50),
+  packageId: z.string().min(1).optional(),
+});
+
 export type MerchantInput = z.infer<typeof merchantSchema>;
 export type MerchantStaffInput = z.infer<typeof merchantStaffSchema>;
 export type MerchantCourseInput = z.infer<typeof merchantCourseSchema>;
@@ -83,3 +93,5 @@ export type MerchantExamInput = z.infer<typeof merchantExamSchema>;
 export type MerchantAnnouncementInput = z.infer<typeof merchantAnnouncementSchema>;
 export type MerchantFeeInput = z.infer<typeof merchantFeeSchema>;
 export type MerchantRoutineInput = z.infer<typeof merchantRoutineSchema>;
+export type MerchantStudentInput = z.infer<typeof merchantStudentSchema>;
+export type CouponValidateInput = z.infer<typeof couponValidateSchema>;

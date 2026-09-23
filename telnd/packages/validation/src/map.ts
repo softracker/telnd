@@ -44,7 +44,12 @@ export const mapBoundsSchema = z.object({
   west: z.number().min(-180).max(180),
 });
 
+export const mapBookmarkSchema = z.object({
+  pinId: z.string().min(1),
+});
+
 export type MapPinInput = z.infer<typeof mapPinSchema>;
 export type MapSearchInput = z.infer<typeof mapSearchSchema>;
 export type GeocodeInput = z.infer<typeof geocodeSchema>;
 export type ReverseGeocodeInput = z.infer<typeof reverseGeocodeSchema>;
+export type MapBookmarkInput = z.infer<typeof mapBookmarkSchema>;

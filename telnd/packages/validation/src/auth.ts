@@ -6,6 +6,7 @@ export const loginSchema = z.object({
   phone: phoneSchema.optional(),
   password: z.string().min(8).optional(),
   otp: z.string().length(6).optional(),
+  turnstileToken: z.string().optional(),
 }).refine(
   (data) => (data.email && data.password) || (data.phone && data.otp),
   {

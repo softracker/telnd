@@ -1,8 +1,17 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { validate } from '../middleware/validate';
+import { subscriptionSchema, couponApplySchema, couponValidateSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const packages = new Hono();
+type PackagesEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+const packages = new Hono<PackagesEnv>();
 
 // ============================================
 // Public Package Listing
@@ -30,41 +39,50 @@ packages.get('/:id', async (c) => {
 // ============================================
 // Subscriptions
 // ============================================
-packages.post('/subscribe', async (c) => {
+packages.post('/subscribe', validate(subscriptionSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { packageId, autoRenew = true } = await c.req.json();
+  const { packageId, autoRenew = true } = c.get('validatedData');
 
   const pkg = await prisma.package.findUnique({ where: { id: packageId } });
   if (!pkg) return c.json({ error: 'Package not found' }, 404);
-
-  // Check existing subscription
-  const existing = await prisma.userSubscription.findFirst({
-    where: { userId: user.id, status: { in: ['ACTIVE', 'TRIAL'] } },
-  });
-
-  if (existing) {
-    return c.json({ error: 'Already subscribed to a package' }, 400);
-  }
 
   const now = new Date();
   const trialEndsAt = pkg.trialDays ? new Date(now.getTime() + pkg.trialDays * 24 * 60 * 60 * 1000) : null;
   const endDate = pkg.billingCycle === 'MONTHLY' ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) :
                   pkg.billingCycle === 'YEARLY' ? new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000) : null;
 
-  const subscription = await prisma.userSubscription.create({
-    data: {
-      userId: user.id,
-      packageId,
-      status: pkg.price === 0 ? 'ACTIVE' : trialEndsAt ? 'TRIAL' : 'ACTIVE',
-      startDate: now,
-      endDate,
-      trialEndsAt,
-      autoRenew,
-    },
-    include: { package: true },
+  // Use transaction to prevent race condition (duplicate subscriptions)
+  const subscription = await prisma.$transaction(async (tx) => {
+    const existing = await tx.userSubscription.findFirst({
+      where: { userId: user.id, status: { in: ['ACTIVE', 'TRIAL'] } },
+    });
+
+    if (existing) {
+      throw new Error('ALREADY_SUBSCRIBED');
+    }
+
+    return tx.userSubscription.create({
+      data: {
+        userId: user.id,
+        packageId,
+        status: pkg.price.equals(0) ? 'ACTIVE' : trialEndsAt ? 'TRIAL' : 'ACTIVE',
+        startDate: now,
+        endDate,
+        trialEndsAt,
+        autoRenew,
+      },
+      include: { package: true },
+    });
+  }).catch((e: any) => {
+    if (e?.message === 'ALREADY_SUBSCRIBED') return null;
+    throw e;
   });
+
+  if (!subscription) {
+    return c.json({ error: 'Already subscribed to a package' }, 400);
+  }
 
   return c.json(subscription, 201);
 });
@@ -124,10 +142,12 @@ packages.get('/wallet', async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  let wallet = await prisma.wallet.findUnique({ where: { userId: user.id } });
-  if (!wallet) {
-    wallet = await prisma.wallet.create({ data: { userId: user.id } });
-  }
+  // Use upsert to prevent race condition (duplicate wallet creation)
+  const wallet = await prisma.wallet.upsert({
+    where: { userId: user.id },
+    update: {},
+    create: { userId: user.id },
+  });
 
   return c.json(wallet);
 });
@@ -151,11 +171,11 @@ packages.get('/wallet/transactions', async (c) => {
 // ============================================
 // Coupons
 // ============================================
-packages.post('/coupons/validate', async (c) => {
+packages.post('/coupons/validate', validate(couponValidateSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { code, packageId } = await c.req.json();
+  const { code, packageId } = c.get('validatedData');
 
   const coupon = await prisma.coupon.findUnique({ where: { code } });
   if (!coupon || !coupon.isActive) {
@@ -187,27 +207,49 @@ packages.post('/coupons/validate', async (c) => {
   });
 });
 
-packages.post('/coupons/apply', async (c) => {
+packages.post('/coupons/apply', validate(couponApplySchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { code, packageId, amount } = await c.req.json();
+  const { code, packageId, amount } = c.get('validatedData');
 
   const coupon = await prisma.coupon.findUnique({ where: { code } });
   if (!coupon || !coupon.isActive) {
     return c.json({ error: 'Invalid coupon code' }, 400);
   }
 
-  // Record usage
-  await prisma.couponUsage.create({
-    data: { couponId: coupon.id, userId: user.id, amount },
-  });
+  // Use transaction to prevent race condition (coupon usage limit bypass)
+  try {
+    await prisma.$transaction(async (tx) => {
+      const freshCoupon = await tx.coupon.findUnique({ where: { id: coupon.id } });
+      if (!freshCoupon || !freshCoupon.isActive) {
+        throw new Error('INVALID_COUPON');
+      }
 
-  // Increment usage count
-  await prisma.coupon.update({
-    where: { id: coupon.id },
-    data: { usageCount: { increment: 1 } },
-  });
+      if (freshCoupon.usageLimit && freshCoupon.usageCount >= freshCoupon.usageLimit) {
+        throw new Error('USAGE_LIMIT');
+      }
+
+      // Record usage
+      await tx.couponUsage.create({
+        data: { couponId: coupon.id, userId: user.id, amount },
+      });
+
+      // Increment usage count atomically
+      await tx.coupon.update({
+        where: { id: coupon.id },
+        data: { usageCount: { increment: 1 } },
+      });
+    });
+  } catch (e: any) {
+    if (e?.message === 'INVALID_COUPON') {
+      return c.json({ error: 'Invalid coupon code' }, 400);
+    }
+    if (e?.message === 'USAGE_LIMIT') {
+      return c.json({ error: 'Coupon usage limit reached' }, 400);
+    }
+    throw e;
+  }
 
   return c.json({ success: true, discount: coupon.value });
 });

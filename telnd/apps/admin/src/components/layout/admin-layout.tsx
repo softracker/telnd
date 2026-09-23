@@ -63,7 +63,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!isAuthenticated && isLoginPage) {
+  // Login page always renders just the children (no sidebar/header)
+  // The useEffect above handles redirect to / when authenticated
+  if (isLoginPage) {
     return <>{children}</>;
   }
 

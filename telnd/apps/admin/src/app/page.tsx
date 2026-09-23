@@ -14,18 +14,17 @@ interface DashboardStats {
 }
 
 export default function AdminDashboard() {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     async function fetchStats() {
       try {
         const response = await api.get<{ success: boolean; data: DashboardStats }>(
           '/api/admin/dashboard/stats',
-          token!,
         );
         if (response.success) {
           setStats(response.data);
@@ -38,7 +37,7 @@ export default function AdminDashboard() {
     }
 
     fetchStats();
-  }, [token]);
+  }, [isAuthenticated]);
 
   const statCards = [
     {

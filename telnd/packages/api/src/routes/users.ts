@@ -2,10 +2,17 @@ import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
 import { authMiddleware } from '../middleware/auth';
 
-export const userRoutes = new Hono();
+type UsersEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+  };
+};
+
+export const userRoutes = new Hono<UsersEnv>();
 
 userRoutes.get('/me', authMiddleware, async (c) => {
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -28,7 +35,7 @@ userRoutes.get('/me', authMiddleware, async (c) => {
 });
 
 userRoutes.get('/me/applications', authMiddleware, async (c) => {
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string;
 
   const profile = await prisma.candidateProfile.findUnique({
     where: { userId },
@@ -42,6 +49,6 @@ userRoutes.get('/me/applications', authMiddleware, async (c) => {
 
   return c.json({
     success: true,
-    data: profile?.applications || [],
+    data: (profile as any)?.applications || [],
   });
 });

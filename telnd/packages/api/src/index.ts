@@ -12,17 +12,30 @@ import adminRoutes from './routes/admin';
 import mapRoutes from './routes/map';
 import packagesRoutes from './routes/packages';
 import supportRoutes from './routes/support';
+import settingsRoutes from './routes/settings';
+import { authMiddleware, roleGuard } from './middleware/auth';
+import { prisma } from '@telnd/database';
 
 const app = new Hono().basePath('/api');
 
 // Middleware
 app.use('*', logger());
 app.use('*', cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+  origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000', 'http://localhost:3002'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
+  maxAge: 86400,
 }));
+
+// Public routes — no auth required
+const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config'];
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  const isPublic = publicPaths.some((p) => path.startsWith(p));
+  if (isPublic) return next();
+  return authMiddleware(c, next);
+});
 
 // Health check
 app.get('/health', (c) => {
@@ -41,6 +54,19 @@ app.route('/admin', adminRoutes);
 app.route('/map', mapRoutes);
 app.route('/packages', packagesRoutes);
 app.route('/support', supportRoutes);
+app.route('/settings', settingsRoutes);
+
+// Public: only exposes CAPTCHA site key (safe for unauthenticated users)
+app.get('/captcha-config', async (c) => {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'captcha' } });
+    if (!row) return c.json({ success: true, data: { enabled: false } });
+    const val = row.value as any;
+    return c.json({ success: true, data: { enabled: val?.enabled === true, siteKey: val?.siteKey || '' } });
+  } catch {
+    return c.json({ success: true, data: { enabled: false } });
+  }
+});
 
 // 404 handler
 app.notFound((c) => {

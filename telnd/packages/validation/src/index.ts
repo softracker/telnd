@@ -11,3 +11,4 @@ export * from './support';
 export * from './map';
 export * from './merchant';
 export * from './lms';
+export * from './settings';

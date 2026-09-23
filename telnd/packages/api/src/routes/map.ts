@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { validate } from '../middleware/validate';
+import { roleGuard } from '../middleware/auth';
+import { mapPinSchema, mapBookmarkSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const map = new Hono();
+type MapEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+const map = new Hono<MapEnv>();
 
 // ============================================
 // Map Pins
@@ -57,8 +67,8 @@ map.get('/pins/:id', async (c) => {
   return c.json(pin);
 });
 
-map.post('/pins', async (c) => {
-  const body = await c.req.json();
+map.post('/pins', roleGuard('ADMIN'), validate(mapPinSchema), async (c) => {
+  const body = c.get('validatedData');
   
   const pin = await prisma.mapPin.upsert({
     where: { targetType_targetId: { targetType: body.targetType, targetId: body.targetId } },
@@ -69,7 +79,7 @@ map.post('/pins', async (c) => {
   return c.json(pin, 201);
 });
 
-map.delete('/pins/:id', async (c) => {
+map.delete('/pins/:id', roleGuard('ADMIN'), async (c) => {
   const id = c.req.param('id');
   await prisma.mapPin.delete({ where: { id } });
   return c.json({ success: true });
@@ -91,11 +101,11 @@ map.get('/bookmarks', async (c) => {
   return c.json(bookmarks);
 });
 
-map.post('/bookmarks', async (c) => {
+map.post('/bookmarks', validate(mapBookmarkSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { pinId } = await c.req.json();
+  const { pinId } = c.get('validatedData');
   const bookmark = await prisma.mapPinBookmark.create({
     data: { pinId, userId: user.id },
   });

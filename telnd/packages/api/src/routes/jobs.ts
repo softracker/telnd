@@ -4,7 +4,15 @@ import { createJobSchema, jobSearchSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { authMiddleware } from '../middleware/auth';
 
-export const jobRoutes = new Hono();
+type JobsEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+export const jobRoutes = new Hono<JobsEnv>();
 
 jobRoutes.get('/', async (c) => {
   const query = Object.fromEntries(new URL(c.req.url).searchParams);
@@ -14,8 +22,8 @@ jobRoutes.get('/', async (c) => {
     limit: query.limit ? parseInt(query.limit) : 20,
   });
 
-  const filters = parsed.success ? parsed.data : {};
-  const { page = 1, limit = 20, ...searchFilters } = filters;
+  const filters = parsed.success ? parsed.data : { page: 1, limit: 20 };
+  const { page = 1, limit = 20, ...searchFilters } = filters as { page?: number; limit?: number; query?: string; employmentType?: string[]; workplaceType?: string[] };
 
   const where: Record<string, unknown> = {
     status: 'PUBLISHED',
@@ -82,7 +90,7 @@ jobRoutes.get('/:id', async (c) => {
 });
 
 jobRoutes.post('/', authMiddleware, validate(createJobSchema), async (c) => {
-  const data = c.get('validatedData');
+  const data = c.get('validatedData') as any;
   const userId = c.get('userId');
 
   // Verify user owns a company

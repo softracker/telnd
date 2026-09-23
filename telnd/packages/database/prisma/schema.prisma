@@ -22,11 +22,13 @@ model User {
   firstName         String
   lastName          String
   avatar            String?
+  isActive          Boolean   @default(true)
   isEmailVerified   Boolean   @default(false)
-  isPhoneVerified    Boolean   @default(false)
+  isPhoneVerified    Boolean  @default(false)
   isIdentityVerified Boolean  @default(false)
   preferredLanguage String    @default("en")
   countryId         String?
+  lastActiveAt      DateTime?
   lastLoginAt       DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -2227,6 +2229,17 @@ model AgeRestriction {
   updatedAt   DateTime @updatedAt
 
   @@index([feature])
+}
+
+// ============================================
+// 78. Settings (key-value store)
+// ============================================
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============================================

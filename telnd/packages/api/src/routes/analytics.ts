@@ -1,15 +1,20 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { roleGuard } from '../middleware/auth';
 
-const prisma = new PrismaClient();
-const analytics = new Hono();
+type AnalyticsEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+  };
+};
+
+const analytics = new Hono<AnalyticsEnv>();
 
 // ============================================
 // Admin Analytics
 // ============================================
-analytics.get('/admin/overview', async (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+analytics.get('/admin/overview', roleGuard('ADMIN'), async (c) => {
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -18,8 +23,8 @@ analytics.get('/admin/overview', async (c) => {
     prisma.user.count(),
     prisma.user.count({ where: { lastActiveAt: { gte: thirtyDaysAgo } } }),
     prisma.user.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
-    prisma.jobPosting.count(),
-    prisma.jobPosting.count({ where: { status: 'ACTIVE' } }),
+    prisma.job.count(),
+    prisma.job.count({ where: { status: 'PUBLISHED' } }),
     prisma.merchant.count(),
     prisma.lMSCourse.count(),
   ]);
@@ -35,9 +40,7 @@ analytics.get('/admin/overview', async (c) => {
   });
 });
 
-analytics.get('/admin/users', async (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+analytics.get('/admin/users', roleGuard('ADMIN'), async (c) => {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -51,16 +54,14 @@ analytics.get('/admin/users', async (c) => {
   return c.json({ total, active, newThisWeek, newThisMonth });
 });
 
-analytics.get('/admin/jobs', async (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+analytics.get('/admin/jobs', roleGuard('ADMIN'), async (c) => {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const [total, active, newThisWeek, applications] = await Promise.all([
-    prisma.jobPosting.count(),
-    prisma.jobPosting.count({ where: { status: 'ACTIVE' } }),
-    prisma.jobPosting.count({ where: { createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } }),
+    prisma.job.count(),
+    prisma.job.count({ where: { status: 'PUBLISHED' } }),
+    prisma.job.count({ where: { createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } }),
     prisma.application.count(),
   ]);
 
@@ -75,8 +76,8 @@ analytics.get('/user/profile', async (c) => {
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
   const [applications, interviews, courses] = await Promise.all([
-    prisma.application.count({ where: { applicantId: user.id } }),
-    prisma.videoInterview.count({ where: { candidateId: user.id } }),
+    prisma.application.count({ where: { candidate: { userId: user.id } } }),
+    prisma.videoInterview.count({ where: { application: { candidate: { userId: user.id } } } }),
     prisma.lMSEnrollment.count({ where: { userId: user.id } }),
   ]);
 
@@ -91,7 +92,7 @@ analytics.get('/employer/jobs', async (c) => {
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
   const [totalPostings, totalApplications] = await Promise.all([
-    prisma.jobPosting.count({ where: { companyId: user.id } }),
+    prisma.job.count({ where: { companyId: user.id } }),
     prisma.application.count({ where: { job: { companyId: user.id } } }),
   ]);
 

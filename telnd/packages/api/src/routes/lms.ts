@@ -1,8 +1,17 @@
 import { Hono } from 'hono';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@telnd/database';
+import { validate } from '../middleware/validate';
+import { lmsCourseSchema, lmsModuleSchema, lmsLessonSchema, lmsQuizSchema, lmsAssignmentSchema, lmsDiscussionSchema, lmsEnrollSchema, lmsProgressSchema } from '@telnd/validation';
 
-const prisma = new PrismaClient();
-const lms = new Hono();
+type LmsEnv = {
+  Variables: {
+    user: any;
+    userId: string;
+    validatedData: any;
+  };
+};
+
+const lms = new Hono<LmsEnv>();
 
 // ============================================
 // List Courses (Public)
@@ -55,11 +64,11 @@ lms.get('/courses/:slug', async (c) => {
 // ============================================
 // Create Course
 // ============================================
-lms.post('/courses', async (c) => {
+lms.post('/courses', validate(lmsCourseSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   const existing = await prisma.lMSCourse.findUnique({ where: { slug: body.slug } });
   if (existing) return c.json({ error: 'Slug already taken' }, 400);
@@ -74,12 +83,12 @@ lms.post('/courses', async (c) => {
 // ============================================
 // Update Course
 // ============================================
-lms.patch('/courses/:id', async (c) => {
+lms.patch('/courses/:id', validate(lmsCourseSchema.partial()), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
   const id = c.req.param('id');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   const existing = await prisma.lMSCourse.findUnique({ where: { id } });
   if (!existing || existing.instructorId !== user.id) {
@@ -104,12 +113,17 @@ lms.get('/courses/:courseId/modules', async (c) => {
   return c.json(modules);
 });
 
-lms.post('/courses/:courseId/modules', async (c) => {
+lms.post('/courses/:courseId/modules', validate(lmsModuleSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const courseId = c.req.param('courseId');
-  const body = await c.req.json();
+  const courseId = c.req.param('courseId')!;
+  const body = c.get('validatedData');
+
+  const course = await prisma.lMSCourse.findUnique({ where: { id: courseId } });
+  if (!course || course.instructorId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const module_ = await prisma.lMSModule.create({
     data: { courseId, ...body },
@@ -121,15 +135,27 @@ lms.post('/courses/:courseId/modules', async (c) => {
 // ============================================
 // Lessons
 // ============================================
-lms.post('/modules/:moduleId/lessons', async (c) => {
+lms.post('/modules/:moduleId/lessons', validate(lmsLessonSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const moduleId = c.req.param('moduleId');
-  const body = await c.req.json();
+  const moduleId = c.req.param('moduleId')!;
+  const body = c.get('validatedData');
+
+  // Verify module exists and derive courseId from the module (prevent courseId spoofing)
+  const module_ = await prisma.lMSModule.findUnique({ where: { id: moduleId }, select: { courseId: true } });
+  if (!module_) {
+    return c.json({ error: 'Module not found' }, 404);
+  }
+
+  // Verify the user owns the course this module belongs to
+  const course = await prisma.lMSCourse.findUnique({ where: { id: module_.courseId }, select: { instructorId: true } });
+  if (!course || course.instructorId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const lesson = await prisma.lMSLesson.create({
-    data: { moduleId, courseId: body.courseId || '', ...body },
+    data: { moduleId, courseId: module_.courseId, ...body },
   });
 
   return c.json(lesson, 201);
@@ -138,27 +164,38 @@ lms.post('/modules/:moduleId/lessons', async (c) => {
 // ============================================
 // Enrollment
 // ============================================
-lms.post('/enroll', async (c) => {
+lms.post('/enroll', validate(lmsEnrollSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { courseId } = await c.req.json();
+  const { courseId } = c.get('validatedData');
 
-  const existing = await prisma.lMSEnrollment.findUnique({
-    where: { courseId_userId: { courseId, userId: user.id } },
-  });
-  if (existing) return c.json({ error: 'Already enrolled' }, 400);
+  // Use transaction to prevent race condition (duplicate enrollment + counter desync)
+  const enrollment = await prisma.$transaction(async (tx) => {
+    const existing = await tx.lMSEnrollment.findUnique({
+      where: { courseId_userId: { courseId, userId: user.id } },
+    });
+    if (existing) throw new Error('ALREADY_ENROLLED');
 
-  const enrollment = await prisma.lMSEnrollment.create({
-    data: { courseId, userId: user.id },
-    include: { course: true },
+    const enrollment = await tx.lMSEnrollment.create({
+      data: { courseId, userId: user.id },
+      include: { course: true },
+    });
+
+    await tx.lMSCourse.update({
+      where: { id: courseId },
+      data: { totalStudents: { increment: 1 } },
+    });
+
+    return enrollment;
+  }).catch((e: any) => {
+    if (e?.message === 'ALREADY_ENROLLED') return null;
+    throw e;
   });
 
-  // Increment course student count
-  await prisma.lMSCourse.update({
-    where: { id: courseId },
-    data: { totalStudents: { increment: 1 } },
-  });
+  if (!enrollment) {
+    return c.json({ error: 'Already enrolled' }, 400);
+  }
 
   return c.json(enrollment, 201);
 });
@@ -179,11 +216,17 @@ lms.get('/enrollments', async (c) => {
 // ============================================
 // Progress
 // ============================================
-lms.post('/progress', async (c) => {
+lms.post('/progress', validate(lmsProgressSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = await c.req.json();
+  const body = c.get('validatedData');
+
+  // Verify the enrollment belongs to this user
+  const enrollment = await prisma.lMSEnrollment.findUnique({ where: { id: body.enrollmentId }, select: { userId: true } });
+  if (!enrollment || enrollment.userId !== user.id) {
+    return c.json({ error: 'Enrollment not found or unauthorized' }, 404);
+  }
 
   const progress = await prisma.lMSProgress.upsert({
     where: { enrollmentId_lessonId: { enrollmentId: body.enrollmentId, lessonId: body.lessonId } },
@@ -197,12 +240,17 @@ lms.post('/progress', async (c) => {
 // ============================================
 // Quizzes
 // ============================================
-lms.post('/courses/:courseId/quizzes', async (c) => {
+lms.post('/courses/:courseId/quizzes', validate(lmsQuizSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const courseId = c.req.param('courseId');
-  const body = await c.req.json();
+  const courseId = c.req.param('courseId')!;
+  const body = c.get('validatedData');
+
+  const course = await prisma.lMSCourse.findUnique({ where: { id: courseId } });
+  if (!course || course.instructorId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const quiz = await prisma.lMSQuiz.create({
     data: { courseId, ...body },
@@ -224,12 +272,17 @@ lms.get('/courses/:courseId/quizzes', async (c) => {
 // ============================================
 // Assignments
 // ============================================
-lms.post('/courses/:courseId/assignments', async (c) => {
+lms.post('/courses/:courseId/assignments', validate(lmsAssignmentSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const courseId = c.req.param('courseId');
-  const body = await c.req.json();
+  const courseId = c.req.param('courseId')!;
+  const body = c.get('validatedData');
+
+  const course = await prisma.lMSCourse.findUnique({ where: { id: courseId } });
+  if (!course || course.instructorId !== user.id) {
+    return c.json({ error: 'Not found or unauthorized' }, 404);
+  }
 
   const assignment = await prisma.lMSAssignment.create({
     data: { courseId, ...body, dueDate: body.dueDate ? new Date(body.dueDate) : undefined },
@@ -241,12 +294,12 @@ lms.post('/courses/:courseId/assignments', async (c) => {
 // ============================================
 // Discussions
 // ============================================
-lms.post('/courses/:courseId/discussions', async (c) => {
+lms.post('/courses/:courseId/discussions', validate(lmsDiscussionSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
   const courseId = c.req.param('courseId');
-  const body = await c.req.json();
+  const body = c.get('validatedData');
 
   const discussion = await prisma.lMSDiscussion.create({
     data: { courseId, userId: user.id, ...body },
