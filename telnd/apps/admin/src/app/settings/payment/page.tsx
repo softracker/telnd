@@ -1,10 +1,13 @@
 'use client';
 
+import { useLanguage } from '@/components/language-provider';
+
 export default function PaymentSettingsPage() {
+  const { t } = useLanguage();
   return (
     <div>
-      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem' }}>Payment</h1>
-      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Billing, invoices, and payment gateway settings.</p>
+      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem' }}>{t('payment.title')}</h1>
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{t('payment.description')}</p>
     </div>
   );
 }

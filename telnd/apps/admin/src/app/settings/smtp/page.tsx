@@ -2,6 +2,7 @@
 
 import { useState, useEffect, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
+import { useLanguage } from '@/components/language-provider';
 
 interface SmtpSettings {
   host: string;
@@ -20,6 +21,7 @@ export default function SmtpSettingsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const { t } = useLanguage();
 
   useEffect(() => {
     async function load() {
@@ -56,12 +58,12 @@ export default function SmtpSettingsPage() {
 
     try {
       await api.put('/api/settings', { smtp: settings });
-      setMessage('SMTP settings saved successfully.');
+      setMessage(t('smtp.saved'));
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError('Failed to save settings.');
+        setError(t('common.failed'));
       }
     } finally {
       setSaving(false);
@@ -75,12 +77,12 @@ export default function SmtpSettingsPage() {
 
     try {
       await api.post('/api/settings/smtp/test', settings);
-      setTestResult({ ok: true, msg: 'Connection successful! SMTP server is reachable.' });
+      setTestResult({ ok: true, msg: t('smtp.testingSuccess') });
     } catch (err) {
       if (err instanceof ApiError) {
         setTestResult({ ok: false, msg: err.message });
       } else {
-        setTestResult({ ok: false, msg: 'Connection failed. Please check your settings.' });
+        setTestResult({ ok: false, msg: t('smtp.testingFailed') });
       }
     } finally {
       setTesting(false);
@@ -88,7 +90,7 @@ export default function SmtpSettingsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>Loading settings...</div>;
+    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>{t('smtp.loading')}</div>;
   }
 
   const inputStyle: React.CSSProperties = {
@@ -106,11 +108,11 @@ export default function SmtpSettingsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem' }}>
-        SMTP / Email Settings
+      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>
+        {t('smtp.title')}
       </h1>
-      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-        Configure your SMTP server for sending emails. This is used for account notifications, password resets, and other system emails.
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
+        {t('smtp.description')}
       </p>
 
       {message && (
@@ -141,7 +143,7 @@ export default function SmtpSettingsPage() {
         {/* Host */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            SMTP Host
+            {t('smtp.host')}
           </label>
           <input
             type="text"
@@ -157,7 +159,7 @@ export default function SmtpSettingsPage() {
         <div style={{ display: 'flex', gap: '1rem' }}>
           <div style={{ flex: 1 }}>
             <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-              Port
+              {t('smtp.port')}
             </label>
             <input
               type="number"
@@ -201,7 +203,7 @@ export default function SmtpSettingsPage() {
                 }} />
               </button>
               <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
-                SSL/TLS
+                {t('smtp.ssl')}
               </span>
             </div>
           </div>
@@ -210,7 +212,7 @@ export default function SmtpSettingsPage() {
         {/* Username */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            Username <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>(optional)</span>
+            {t('smtp.username')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
           </label>
           <input
             type="text"
@@ -224,7 +226,7 @@ export default function SmtpSettingsPage() {
         {/* Password */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            Password <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>(optional)</span>
+            {t('smtp.password')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
           </label>
           <input
             type="password"
@@ -238,7 +240,7 @@ export default function SmtpSettingsPage() {
         {/* From Email */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            From Email
+            {t('smtp.fromEmail')}
           </label>
           <input
             type="email"
@@ -249,7 +251,7 @@ export default function SmtpSettingsPage() {
             style={inputStyle}
           />
           <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
-            The address emails will be sent from.
+            {t('smtp.fromHelp')}
           </p>
         </div>
 
@@ -273,7 +275,7 @@ export default function SmtpSettingsPage() {
               transition: 'background-color 0.15s',
             }}
           >
-            {testing ? 'Testing...' : 'Test Connection'}
+            {testing ? t('smtp.testing') : t('smtp.testConnection')}
           </button>
           <button
             type="submit"
@@ -291,7 +293,7 @@ export default function SmtpSettingsPage() {
               transition: 'background-color 0.15s',
             }}
           >
-            {saving ? 'Saving...' : 'Save Settings'}
+            {saving ? t('smtp.saving') : t('smtp.saveSettings')}
           </button>
         </div>
       </form>

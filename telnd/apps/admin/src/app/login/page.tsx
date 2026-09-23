@@ -3,9 +3,11 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { ApiError } from '@/lib/api';
+import { useLanguage } from '@/components/language-provider';
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -87,13 +89,13 @@ export default function LoginPage() {
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 429) {
-          setError('Too many failed attempts. Please wait and try again.');
+          setError(t('login.error.tooMany'));
           setFailedAttempts(3);
         } else if (err.status === 400 && (err as any)?.data?.error?.code === 'CAPTCHA_REQUIRED') {
-          setError('Please complete the CAPTCHA verification.');
+          setError(t('login.error.captchaRequired'));
           setFailedAttempts(3);
         } else if (err.status === 400 && (err as any)?.data?.error?.code === 'CAPTCHA_FAILED') {
-          setError('CAPTCHA verification failed. Please try again.');
+          setError(t('login.error.captchaFailed'));
           // Reset turnstile widget
           if ((window as any).turnstile && turnstileWidgetId.current) {
             (window as any).turnstile.reset(turnstileWidgetId.current);
@@ -103,7 +105,7 @@ export default function LoginPage() {
           setError(err.message);
         }
       } else {
-        setError('Something went wrong. Please try again.');
+        setError(t('login.error.general'));
       }
       setFailedAttempts(prev => prev + 1);
     } finally {
@@ -158,7 +160,7 @@ export default function LoginPage() {
             lineHeight: 1.2,
             marginBottom: '0.75rem',
           }}>
-            Welcome to<br />TELND Admin
+            {t('login.welcome')}
           </h1>
           <p style={{
             fontSize: '1.05rem',
@@ -167,7 +169,7 @@ export default function LoginPage() {
             maxWidth: '320px',
             margin: '0 auto',
           }}>
-            Manage platform, users, and operations — all in one place.
+            {t('login.tagline')}
           </p>
         </div>
 
@@ -193,7 +195,7 @@ export default function LoginPage() {
           opacity: 0.5,
           zIndex: 1,
         }}>
-          &copy; {new Date().getFullYear()} TELND. All rights reserved.
+          &copy; {new Date().getFullYear()} {t('login.copyright')}
         </div>
       </div>
 
@@ -229,13 +231,13 @@ export default function LoginPage() {
               color: '#034548',
               marginBottom: '0.25rem',
             }}>
-              Sign in
+              {t('login.signIn')}
             </h2>
             <p style={{
               fontSize: '0.875rem',
               color: '#6b7280',
             }}>
-              Enter your credentials to access the admin panel.
+              {t('login.signInDesc')}
             </p>
           </div>
 
@@ -261,7 +263,7 @@ export default function LoginPage() {
                 color: '#374151',
                 marginBottom: '0.375rem',
               }}>
-                Email address
+                {t('login.email')}
               </label>
               <input
                 id="email"
@@ -300,7 +302,7 @@ export default function LoginPage() {
                 color: '#374151',
                 marginBottom: '0.375rem',
               }}>
-                Password
+                {t('login.password')}
               </label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -371,7 +373,7 @@ export default function LoginPage() {
             {showCaptcha && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <label style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
-                  Verify you are human
+                  {t('login.captcha')}
                 </label>
                 <div ref={turnstileRef} id="turnstile-widget" />
               </div>
@@ -405,10 +407,10 @@ export default function LoginPage() {
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25" />
                     <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
                   </svg>
-                  Signing in...
+                  {t('login.signingIn')}
                 </>
               ) : (
-                'Sign in'
+                t('login.signIn')
               )}
             </button>
           </form>
@@ -419,7 +421,7 @@ export default function LoginPage() {
             color: '#9ca3af',
             marginTop: '2rem',
           }}>
-            TELND Platform Administration
+            {t('login.footer')}
           </p>
         </div>
       </div>

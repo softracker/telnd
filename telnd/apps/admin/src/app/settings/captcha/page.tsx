@@ -3,6 +3,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { api, ApiError } from '@/lib/api';
+import { useLanguage } from '@/components/language-provider';
 
 interface CaptchaSettings {
   enabled: boolean;
@@ -17,6 +18,7 @@ export default function CaptchaSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const { t } = useLanguage();
 
   useEffect(() => {
     async function load() {
@@ -45,12 +47,12 @@ export default function CaptchaSettingsPage() {
 
     try {
       await api.put('/api/settings', { captcha: settings });
-      setMessage('CAPTCHA settings saved successfully.');
+      setMessage(t('captcha.saved'));
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError('Failed to save settings.');
+        setError(t('common.failed'));
       }
     } finally {
       setSaving(false);
@@ -58,7 +60,7 @@ export default function CaptchaSettingsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>Loading settings...</div>;
+    return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>{t('smtp.loading')}</div>;
   }
 
   const inputStyle = {
@@ -76,11 +78,11 @@ export default function CaptchaSettingsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', marginBottom: '0.5rem' }}>
-        CAPTCHA Settings
+      <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>
+        {t('captcha.title')}
       </h1>
-      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-        Configure Cloudflare Turnstile CAPTCHA for the login page. When enabled, users who fail 3+ login attempts will be required to solve a CAPTCHA.
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
+        {t('captcha.description')}
       </p>
 
       {message && (
@@ -127,14 +129,14 @@ export default function CaptchaSettingsPage() {
             }} />
           </button>
           <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
-            {settings.enabled ? 'Enabled' : 'Disabled'}
+            {settings.enabled ? t('captcha.enabled') : t('captcha.disabled')}
           </span>
         </div>
 
         {/* Site Key */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            Site Key
+            {t('captcha.siteKey')}
           </label>
           <input
             type="text"
@@ -144,14 +146,14 @@ export default function CaptchaSettingsPage() {
             style={inputStyle}
           />
           <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
-            Found in the Cloudflare Turnstile dashboard.
+            {t('captcha.siteKeyHelp')}
           </p>
         </div>
 
         {/* Secret Key */}
         <div>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            Secret Key
+            {t('captcha.secretKey')}
           </label>
           <input
             type="password"
@@ -161,7 +163,7 @@ export default function CaptchaSettingsPage() {
             style={inputStyle}
           />
           <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
-            This is stored server-side and used for verification. Never share this key.
+            {t('captcha.secretKeyHelp')}
           </p>
         </div>
 
@@ -181,7 +183,7 @@ export default function CaptchaSettingsPage() {
             transition: 'background-color 0.15s',
           }}
         >
-          {saving ? 'Saving...' : 'Save Settings'}
+          {saving ? t('smtp.saving') : t('common.save')}
         </button>
       </form>
     </div>
