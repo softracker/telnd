@@ -44,7 +44,7 @@
   --text-muted: #a1a1aa;
   --text-light: #71717a;
   --bg-main: #12141a;
-  --bg-secondary: #1f2937;
+  --bg-secondary: #16161e;
   --bg-hover: #1e293b;
   --border-color: rgba(255,255,255,0.08);
   --input-bg: #1f2937;
@@ -310,12 +310,12 @@ html, body {
   color: var(--text-main);
 }
 .sidebar-item.active {
-  background: rgba(3,69,72,0.08);
-  color: var(--sidebar-active);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 .sidebar-item.active.open-sub {
-  background: rgba(3,69,72,0.12);
-  color: var(--sidebar-active);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 .sidebar-item.active.open-sub .sidebar-arrow {
   color: var(--sidebar-active);
