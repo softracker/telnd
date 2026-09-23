@@ -41,6 +41,12 @@
   --card-bg: #1f2937;
 }
 
+/* Override Tailwind's base layer (outside @layer = higher priority) */
+html, body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+}
+
 .admin-body { overflow: hidden; height: 100vh; background: var(--bg-main); }
 
 /* ── Header ── */

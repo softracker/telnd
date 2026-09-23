@@ -11,13 +11,29 @@ export const metadata: Metadata = {
   description: 'TELND Administration Dashboard',
 };
 
+const themeScript = `
+  (function() {
+    try {
+      var t = localStorage.getItem('telnd_admin_theme') || 'system';
+      var r = t === 'system'
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : t;
+      document.documentElement.setAttribute('data-theme', r);
+      document.documentElement.style.backgroundColor = r === 'dark' ? '#111827' : '#ffffff';
+    } catch(e) {}
+  })();
+`;
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="antialiased">
         <AuthProvider>
           <ThemeProvider>
