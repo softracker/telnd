@@ -6,10 +6,41 @@ import AdminLayout from '@/components/layout/admin-layout';
 import './globals.css';
 import '@/styles/admin.css';
 
-export const metadata: Metadata = {
-  title: 'TELND Admin',
-  description: 'TELND Administration Dashboard',
-};
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+interface GeneralSettings {
+  favicon?: string;
+  primaryLogoLight?: string;
+  primaryLogoDark?: string;
+}
+
+/**
+ * General settings (public endpoint). Used for the tab favicon and the header
+ * logos; any failure (API down, nothing configured) falls back to defaults.
+ * Identical calls in generateMetadata and the layout body are request-memoized.
+ */
+async function getGeneral(): Promise<GeneralSettings> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/settings/general`, {
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return {};
+    const json = (await res.json()) as { data?: GeneralSettings };
+    return json.data ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { favicon } = await getGeneral();
+  return {
+    title: 'TELND Admin',
+    description: 'TELND Administration Dashboard',
+    ...(favicon ? { icons: { icon: favicon } } : {}),
+  };
+}
 
 const themeScript = `
   (function() {
@@ -24,11 +55,12 @@ const themeScript = `
   })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { primaryLogoLight, primaryLogoDark } = await getGeneral();
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -38,7 +70,12 @@ export default function RootLayout({
         <AuthProvider>
           <ThemeProvider>
             <LanguageProvider>
-              <AdminLayout>{children}</AdminLayout>
+              <AdminLayout
+                primaryLogoLight={primaryLogoLight}
+                primaryLogoDark={primaryLogoDark}
+              >
+                {children}
+              </AdminLayout>
             </LanguageProvider>
           </ThemeProvider>
         </AuthProvider>

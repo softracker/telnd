@@ -6,7 +6,17 @@ import { useEffect, useState, useCallback } from 'react';
 import Sidebar from './sidebar';
 import Header from './header';
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+interface AdminLayoutProps {
+  children: React.ReactNode;
+  primaryLogoLight?: string;
+  primaryLogoDark?: string;
+}
+
+export default function AdminLayout({
+  children,
+  primaryLogoLight,
+  primaryLogoDark,
+}: AdminLayoutProps) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -77,6 +87,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         onToggleSidebar={handleToggleSidebar}
         collapsed={collapsed}
         onToggleMobile={handleToggleMobile}
+        primaryLogoLight={primaryLogoLight}
+        primaryLogoDark={primaryLogoDark}
       />
       <div className="admin-layout">
         <Sidebar

@@ -116,6 +116,30 @@ html, body {
   text-decoration: none;
   letter-spacing: -0.3px;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+/* Header logo images. The light/dark swap is driven purely by the pre-paint
+   data-theme attribute on <html> (set by the FOUC script before first paint
+   and by ThemeProvider on every change), so the correct logo shows with no
+   flash and no React state involved. A logo marked ".only" is the sole
+   configured one and serves as the fallback in every theme. */
+.admin-logo-img {
+  display: block;
+  height: 26px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+}
+.admin-logo-img.logo-dark { display: none; }
+html[data-theme='dark'] .admin-logo-img.logo-dark,
+html[data-theme='light'] .admin-logo-img.logo-dark.only,
+html:not([data-theme]) .admin-logo-img.logo-dark.only {
+  display: block;
+}
+html[data-theme='dark'] .admin-logo-img.logo-light:not(.only) {
+  display: none;
 }
 
 .admin-header-right {

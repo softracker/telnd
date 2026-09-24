@@ -9,9 +9,17 @@ interface HeaderProps {
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleMobile: () => void;
+  primaryLogoLight?: string;
+  primaryLogoDark?: string;
 }
 
-export default function Header({ onToggleSidebar, collapsed, onToggleMobile }: HeaderProps) {
+export default function Header({
+  onToggleSidebar,
+  collapsed,
+  onToggleMobile,
+  primaryLogoLight,
+  primaryLogoDark,
+}: HeaderProps) {
   const { user, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -40,7 +48,30 @@ export default function Header({ onToggleSidebar, collapsed, onToggleMobile }: H
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="15 10 12 12 15 14"/></svg>
           )}
         </button>
-        <Link href="/" className="admin-logo">{t('app.name')}</Link>
+        <Link href="/" className="admin-logo">
+          {primaryLogoLight || primaryLogoDark ? (
+            <>
+              {primaryLogoLight && (
+                <img
+                  className={`admin-logo-img logo-light${primaryLogoDark ? '' : ' only'}`}
+                  src={primaryLogoLight}
+                  alt="TELND"
+                  height={26}
+                />
+              )}
+              {primaryLogoDark && (
+                <img
+                  className={`admin-logo-img logo-dark${primaryLogoLight ? '' : ' only'}`}
+                  src={primaryLogoDark}
+                  alt="TELND"
+                  height={26}
+                />
+              )}
+            </>
+          ) : (
+            t('app.name')
+          )}
+        </Link>
       </div>
       <div className="admin-header-right">
         <div ref={dropdownRef} style={{ position: 'relative' }}>
