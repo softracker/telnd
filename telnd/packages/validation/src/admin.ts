@@ -12,20 +12,35 @@ export const adminRoleSchema = z.object({
     .default([]),
 });
 
-export const createAdminSchema = z.object({
-  email: emailSchema,
-  firstName: z.string().min(1).max(50),
-  lastName: z.string().min(1).max(50),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  roleId: z.string().min(1),
-});
+// No password is ever accepted from the client: a temporary one is generated
+// server-side and emailed to the confirmed address (see POST /admin/admins).
+export const createAdminSchema = z
+  .object({
+    email: emailSchema,
+    // Guards against a typo'd address — the credentials only ever go to an
+    // address the creator confirmed twice.
+    confirmEmail: emailSchema,
+    firstName: z.string().min(1).max(50),
+    lastName: z.string().min(1).max(50),
+    roleId: z.string().min(1),
+  })
+  .refine((d) => d.confirmEmail === d.email, {
+    message: 'Email addresses do not match',
+    path: ['confirmEmail'],
+  });
 
-export const updateAdminSchema = z.object({
-  email: emailSchema.optional(),
-  firstName: z.string().min(1).max(50).optional(),
-  lastName: z.string().min(1).max(50).optional(),
-  roleId: z.string().min(1).optional(),
-});
+export const updateAdminSchema = z
+  .object({
+    email: emailSchema.optional(),
+    confirmEmail: emailSchema.optional(),
+    firstName: z.string().min(1).max(50).optional(),
+    lastName: z.string().min(1).max(50).optional(),
+    roleId: z.string().min(1).optional(),
+  })
+  .refine((d) => d.email === undefined || d.confirmEmail === d.email, {
+    message: 'Email addresses do not match',
+    path: ['confirmEmail'],
+  });
 
 export const updateAccountSchema = z.object({
   firstName: z.string().min(1).max(50).optional(),

@@ -4,6 +4,7 @@ import { prisma } from '@telnd/database';
 import { authMiddleware, roleGuard, requireAdmin, requirePermission, requireAnyPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
+import { sendAdminInviteEmail } from '../lib/email';
 
 type AdminEnv = {
   Variables: {
@@ -157,6 +158,16 @@ admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edi
 // Admin Accounts (the people who can log into this panel)
 // ============================================
 admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) => {
+  const search = String(c.req.query('search') ?? '').trim().toLowerCase();
+  const roleFilter = String(c.req.query('role') ?? '').trim();
+  // With any query param it switches to DataTables-style paging (server-side
+  // search + role filter + slice); bare GET keeps the legacy full-list shape.
+  const wantsPaging =
+    search.length > 0 ||
+    roleFilter.length > 0 ||
+    c.req.query('page') !== undefined ||
+    c.req.query('pageSize') !== undefined;
+
   const users = await prisma.user.findMany({
     where: { role: 'ADMIN' },
     orderBy: { createdAt: 'desc' },
@@ -164,22 +175,51 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
   });
   const selfId = c.get('user')?.id;
 
+  const all = users.map((u) => ({
+    id: u.id,
+    email: u.email,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    avatar: u.avatar,
+    isActive: u.isActive,
+    createdAt: u.createdAt,
+    lastLoginAt: u.lastLoginAt,
+    roleId: u.adminUser?.roleId ?? null,
+    roleName: u.adminUser?.role?.name ?? null,
+    permissions: (u.adminUser?.role?.permissions as unknown as string[] | null) ?? [],
+    isSelf: u.id === selfId,
+  }));
+
+  if (!wantsPaging) {
+    return c.json({ admins: all, total: all.length });
+  }
+
+  let filtered = roleFilter ? all.filter((u) => u.roleId === roleFilter) : all;
+  if (search) {
+    filtered = filtered.filter((u) =>
+      [
+        `${u.firstName} ${u.lastName}`.trim(),
+        u.email ?? '',
+        u.roleName ?? '',
+        u.isActive ? 'active' : 'suspended',
+      ].some((v) => v.toLowerCase().includes(search)),
+    );
+  }
+
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '5', 10) || 5));
+  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Clamp so an out-of-range page (e.g. after a delete) returns the last page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+
   return c.json({
-    admins: users.map((u) => ({
-      id: u.id,
-      email: u.email,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      avatar: u.avatar,
-      isActive: u.isActive,
-      createdAt: u.createdAt,
-      lastLoginAt: u.lastLoginAt,
-      roleId: u.adminUser?.roleId ?? null,
-      roleName: u.adminUser?.role?.name ?? null,
-      permissions: (u.adminUser?.role?.permissions as unknown as string[] | null) ?? [],
-      isSelf: u.id === selfId,
-    })),
-    total: users.length,
+    items: filtered.slice(start, start + pageSize),
+    page: safePage,
+    pageSize,
+    totalPages,
+    filteredTotal: filtered.length,
+    total: all.length,
   });
 });
 
@@ -196,8 +236,12 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Role not found' } }, 404);
   }
 
+  // Nobody types a password: generate a strong temporary one and deliver it
+  // only to the confirmed address, via the invite email below.
+  const { randomBytes } = await import('node:crypto');
   const bcrypt = await import('bcryptjs');
-  const passwordHash = await bcrypt.hash(body.password, 12);
+  const tempPassword = randomBytes(12).toString('base64url');
+  const passwordHash = await bcrypt.hash(tempPassword, 12);
 
   const user = await prisma.user.create({
     data: {
@@ -211,6 +255,35 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
     },
     include: { adminUser: { include: { role: true } } },
   });
+
+  const loginUrl = `${(process.env.ADMIN_URL || 'http://localhost:3002').replace(/\/+$/, '')}/login`;
+  const emailed = await sendAdminInviteEmail({
+    to: body.email,
+    firstName: body.firstName,
+    lastName: body.lastName,
+    tempPassword,
+    loginUrl,
+    roleName: role.name,
+  });
+
+  if (!emailed) {
+    // Roll back: an admin nobody can log in as is worse than no admin at all.
+    try {
+      await prisma.$transaction([
+        prisma.adminUser.deleteMany({ where: { userId: user.id } }),
+        prisma.user.delete({ where: { id: user.id } }),
+      ]);
+    } catch (rollbackErr) {
+      console.error('Rollback after failed invite email failed:', rollbackErr);
+    }
+    return c.json({
+      success: false,
+      error: {
+        code: 'EMAIL_FAILED',
+        message: 'The invitation email could not be sent, so the admin was not created. Check the SMTP settings and try again.',
+      },
+    }, 502);
+  }
 
   await logAction(adminUser.userId, 'CREATE_ADMIN', 'user', user.id, { email: body.email, roleId: body.roleId }, c);
   return c.json({
@@ -319,6 +392,68 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
 
   await logAction(adminUser.userId, 'DELETE_ADMIN', 'user', id, {}, c);
   return c.json({ success: true });
+});
+
+// Regenerate an admin's password: issues a fresh temporary password and
+// emails it to that admin's address (the UI has no password field — this
+// email is the only way credentials ever reach an account). Super admin
+// only, since it grants sign-in capability for any account. The email goes
+// out BEFORE the hash is swapped, so a failed send leaves the current
+// password untouched — an unknown secret is never stored.
+admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
+  const id = c.req.param('id');
+  const actor = c.get('admin');
+  const actorPerms: unknown[] = Array.isArray(actor?.role?.permissions) ? actor.role.permissions : [];
+  if (!actorPerms.includes('*')) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to regenerate passwords.' },
+    }, 403);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
+  if (!user || user.role !== 'ADMIN' || !user.adminUser) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+  if (!user.email) {
+    return c.json({
+      success: false,
+      error: { code: 'NO_EMAIL', message: 'This admin has no email address, so a new password cannot be delivered.' },
+    }, 400);
+  }
+
+  const { randomBytes } = await import('node:crypto');
+  const bcrypt = await import('bcryptjs');
+  const tempPassword = randomBytes(12).toString('base64url');
+  const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+  const loginUrl = `${(process.env.ADMIN_URL || 'http://localhost:3002').replace(/\/+$/, '')}/login`;
+  const emailed = await sendAdminInviteEmail({
+    to: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    tempPassword,
+    loginUrl,
+    roleName: user.adminUser.role?.name ?? '',
+    kind: 'reset',
+  });
+
+  if (!emailed) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'EMAIL_FAILED',
+        message: 'The new password could not be emailed, so the current password was left unchanged. Check the SMTP settings and try again.',
+      },
+    }, 502);
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+  await logAction(actor.userId, 'REGENERATE_ADMIN_PASSWORD', 'user', user.id, { email: user.email }, c);
+  return c.json({ success: true, data: { email: user.email } });
 });
 
 // ============================================

@@ -10,6 +10,7 @@ import Toast, { type ToastType } from '@/components/toast';
 import type { TranslationKey } from '@/lib/translations';
 import ImageUploader from '@/components/image-uploader';
 import { EditIcon, DeleteIcon, ConfirmIcon } from '@/components/action-icons';
+import { ListPager } from '@/components/list-pager';
 
 interface ContentPage {
   id: string;
@@ -85,78 +86,8 @@ function Spinner({ size = 14 }: { size?: number }) {
   );
 }
 
-// Shared DataTables-style pager for the two server-side lists (5 rows a page).
-function ListPager({
-  page,
-  totalPages,
-  filteredTotal,
-  loading,
-  onPageChange,
-}: {
-  page: number;
-  totalPages: number;
-  filteredTotal: number;
-  loading: boolean;
-  onPageChange: (page: number) => void;
-}) {
-  const { t } = useLanguage();
-  if (filteredTotal <= 0) return null;
-  const prevDisabled = page <= 1 || loading;
-  const nextDisabled = page >= totalPages || loading;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '0.75rem',
-        marginTop: '0.75rem',
-        paddingTop: '0.75rem',
-        borderTop: '1px solid var(--border-color)',
-        fontSize: '0.75rem',
-        color: 'var(--muted-text)',
-      }}
-    >
-      <span>
-        {t('account.showingRange', {
-          start: (page - 1) * PAGE_SIZE + 1,
-          end: Math.min(page * PAGE_SIZE, filteredTotal),
-          total: filteredTotal,
-        })}
-      </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <button
-          type="button"
-          onClick={() => onPageChange(page - 1)}
-          disabled={prevDisabled}
-          style={{
-            ...pagerBtnStyle,
-            opacity: prevDisabled ? 0.45 : 1,
-            cursor: prevDisabled ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {t('common.prev')}
-        </button>
-        <span style={{ whiteSpace: 'nowrap' }}>
-          {t('account.pageOf', { page, total: totalPages })}
-        </span>
-        <button
-          type="button"
-          onClick={() => onPageChange(page + 1)}
-          disabled={nextDisabled}
-          style={{
-            ...pagerBtnStyle,
-            opacity: nextDisabled ? 0.45 : 1,
-            cursor: nextDisabled ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {t('common.next')}
-        </button>
-      </div>
-    </div>
-  );
-}
+// Shared DataTables-style pager for the server-side lists — see
+// components/list-pager.tsx (exported so the Accounts page can reuse it).
 
 const moveBtnStyle: React.CSSProperties = {
   background: 'var(--secondary-btn-bg)',
@@ -170,16 +101,6 @@ const moveBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
   color: 'var(--text-main)',
   padding: 0,
-};
-
-const pagerBtnStyle: React.CSSProperties = {
-  padding: '0.25rem 0.625rem',
-  borderRadius: '6px',
-  border: '1px solid var(--border-color)',
-  backgroundColor: 'var(--secondary-btn-bg)',
-  color: 'var(--text-main)',
-  fontSize: '0.75rem',
-  fontWeight: 600,
 };
 
 export default function ContentSettingsPage() {
@@ -1053,12 +974,14 @@ export default function ContentSettingsPage() {
                     width: '100%',
                     maxWidth: '560px',
                     maxHeight: '90vh',
-                    overflowY: 'auto',
-                    padding: '1.25rem 1.5rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
                     boxShadow: '0 16px 48px rgba(0, 0, 0, 0.28)',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                  {/* Header — pinned with a divider below; only the body scrolls. */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.5rem', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
                     <h4 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
                       {memberForm.id ? t('common.edit') : t('account.addMember')}
                     </h4>
@@ -1087,7 +1010,10 @@ export default function ContentSettingsPage() {
 
                 <form
                   onSubmit={handleMemberSave}
+                  style={{ display: 'flex', flexDirection: 'column' }}
                 >
+                {/* Body — scrollable region between the header/footer dividers. */}
+                <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                   <Input
                     label={t('account.memberName')}
@@ -1156,8 +1082,9 @@ export default function ContentSettingsPage() {
                     onChange={() => setMemberForm((p) => (p ? { ...p, visible: !p.visible } : p))}
                   />
                 </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+                </div>
+                {/* Footer — pinned with a divider above it. */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '1rem 1.5rem', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
                   <button
                     type="button"
                     onClick={closeMemberForm}

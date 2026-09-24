@@ -6,7 +6,9 @@ import { useLanguage } from '@/components/language-provider';
 import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import RoleBadge from '@/components/role-badge';
-import { EditIcon, DeleteIcon, ConfirmIcon } from '@/components/action-icons';
+import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon } from '@/components/action-icons';
+import { ListPager } from '@/components/list-pager';
+import { Dropdown } from '@/components/dropdown';
 
 interface AdminAccount {
   id: string;
@@ -36,7 +38,7 @@ interface AdminFormState {
   firstName: string;
   lastName: string;
   email: string;
-  password: string;
+  confirmEmail: string;
   roleId: string;
 }
 
@@ -61,9 +63,32 @@ function Spinner({ size = 14 }: { size?: number }) {
   );
 }
 
+// Section-heading style shared by the Add/Edit admin modal groups.
+const groupLabelStyle = {
+  fontSize: '0.75rem',
+  fontWeight: 600,
+  color: 'var(--muted-text)',
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.05em',
+  margin: '0 0 0.625rem',
+};
+
+// Instruction callout above the create form — mirrors the settings
+// instruction boxes: where the credentials for a new admin come from.
+const inviteNoteStyle = {
+  backgroundColor: 'var(--accent-light)',
+  border: '1px solid var(--accent)',
+  borderRadius: '10px',
+  padding: '0.75rem 1rem',
+  marginBottom: '1.25rem',
+  fontSize: '0.8125rem',
+  color: 'var(--accent)',
+  lineHeight: 1.6,
+};
+
 export default function TeamAccountSettingsPage() {
   const { t } = useLanguage();
-  const { user, can, refreshUser } = useAuth();
+  const { user, can, refreshUser, isFullAccess } = useAuth();
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastIdRef = useRef(0);
@@ -100,31 +125,26 @@ export default function TeamAccountSettingsPage() {
   }
 
   // ── Admin accounts ──
-  const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
   const [adminForm, setAdminForm] = useState<AdminFormState | null>(null);
   const [savingAdmin, setSavingAdmin] = useState(false);
+  // Armed after a failed submit; the inline error then clears itself the
+  // moment the two addresses match.
+  const [emailErrorArmed, setEmailErrorArmed] = useState(false);
   const [pendingDeleteAdmin, setPendingDeleteAdmin] = useState<string | null>(null);
+  // Two-click confirm + in-flight spinner for the password-regenerate action.
+  const [pendingRegenAdmin, setPendingRegenAdmin] = useState<string | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
 
-  const loadAdmins = useCallback(async () => {
+  // Roles feed both the filter dropdown and the add/edit modal select —
+  // tolerate missing roles.view (the selects just come up empty).
+  const loadRoles = useCallback(async () => {
     try {
-      const [adminsRes, rolesRes] = await Promise.allSettled([
-        api.get<{ admins: AdminAccount[] }>('/api/admin/admins'),
-        api.get<AdminRole[]>('/api/admin/roles'),
-      ]);
-      if (adminsRes.status === 'fulfilled') {
-        setAdmins(adminsRes.value.admins || []);
-      } else {
-        throw adminsRes.reason;
-      }
-      // The role select is only needed for add/edit — tolerate missing roles.view.
-      if (rolesRes.status === 'fulfilled') {
-        setRoles(rolesRes.value || []);
-      } else {
-        setRoles([]);
-      }
+      const res = await api.get<AdminRole[]>('/api/admin/roles');
+      setRoles(res || []);
     } catch (err) {
+      setRoles([]);
       if (err instanceof ApiError && err.status !== 403) {
         showToast('error', err.message);
       }
@@ -134,49 +154,124 @@ export default function TeamAccountSettingsPage() {
   }, [showToast]);
 
   useEffect(() => {
-    if (can('admins.view')) {
-      void loadAdmins();
-    } else {
-      setLoadingAdmins(false);
+    if (can('admins.view')) void loadRoles();
+    else setLoadingAdmins(false);
+  }, [can, loadRoles]);
+
+  // Server-side search + role filter + pagination for the admin list
+  // (DataTables-style, 5 rows a page) — mirrors the Our Team card.
+  const [adminSearchInput, setAdminSearchInput] = useState('');
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminRoleFilter, setAdminRoleFilter] = useState('');
+  const [adminPage, setAdminPage] = useState(1);
+  const [adminRows, setAdminRows] = useState<AdminAccount[]>([]);
+  const [adminMeta, setAdminMeta] = useState({ page: 1, totalPages: 1, filteredTotal: 0, total: 0 });
+  const [adminRowsLoading, setAdminRowsLoading] = useState(true);
+
+  // Debounce the search box; a new query always restarts at page 1.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setAdminSearch(adminSearchInput.trim());
+      setAdminPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [adminSearchInput]);
+
+  const loadAdminRows = useCallback(async () => {
+    setAdminRowsLoading(true);
+    try {
+      const res = await api.get<{
+        items: AdminAccount[];
+        page: number;
+        totalPages: number;
+        filteredTotal: number;
+        total: number;
+      }>(
+        `/api/admin/admins?search=${encodeURIComponent(adminSearch)}&role=${encodeURIComponent(adminRoleFilter)}&page=${adminPage}&pageSize=5`,
+      );
+      setAdminRows(res.items || []);
+      setAdminMeta({ page: res.page, totalPages: res.totalPages, filteredTotal: res.filteredTotal, total: res.total });
+      // The server clamps out-of-range pages — follow it so the pager stays truthful.
+      if (res.page !== adminPage) setAdminPage(res.page);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 403) showToast('error', err.message);
+    } finally {
+      setAdminRowsLoading(false);
     }
-  }, [can, loadAdmins]);
+  }, [adminSearch, adminRoleFilter, adminPage, showToast]);
+
+  useEffect(() => {
+    if (can('admins.view')) void loadAdminRows();
+  }, [can, loadAdminRows]);
 
   function startAddAdmin() {
+    setEmailErrorArmed(false);
     setAdminForm({
       firstName: '',
       lastName: '',
       email: '',
-      password: '',
+      confirmEmail: '',
       roleId: roles[0]?.id ?? '',
     });
   }
 
   function startEditAdmin(a: AdminAccount) {
+    setEmailErrorArmed(false);
     setAdminForm({
       id: a.id,
       firstName: a.firstName,
       lastName: a.lastName,
       email: a.email ?? '',
-      password: '',
+      confirmEmail: a.email ?? '',
       roleId: a.roleId ?? '',
     });
   }
 
+  function closeAdminForm() {
+    setAdminForm(null);
+  }
+
+  // The admin form renders as a modal — lock body scroll and allow Escape to
+  // close it while it's open (same behavior as the Our Team member modal).
+  const adminFormOpen = adminForm !== null;
+  useEffect(() => {
+    if (!adminFormOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeAdminForm();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminFormOpen]);
+
   async function handleAdminSave(e: FormEvent) {
     e.preventDefault();
     if (!adminForm) return;
+    // Confirm-email guard (create AND edit): a mistyped address must never
+    // gain or replace access — the server enforces the same rule.
+    if (adminForm.email.trim() !== adminForm.confirmEmail.trim()) {
+      setEmailErrorArmed(true);
+      return;
+    }
+    setEmailErrorArmed(false);
     setSavingAdmin(true);
     try {
-      const { id, password, ...rest } = adminForm;
+      const { id, ...raw } = adminForm;
+      const rest = { ...raw, email: raw.email.trim(), confirmEmail: raw.confirmEmail.trim() };
       if (id) {
         await api.patch(`/api/admin/admins/${id}`, rest);
         showToast('success', t('account.adminUpdated'));
       } else {
-        await api.post('/api/admin/admins', { ...rest, password });
-        showToast('success', t('account.adminCreated'));
+        await api.post('/api/admin/admins', rest);
+        showToast('success', t('account.adminCreated', { email: rest.email }));
       }
       setAdminForm(null);
-      await loadAdmins();
+      await loadAdminRows();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
@@ -191,7 +286,7 @@ export default function TeamAccountSettingsPage() {
       } else {
         await api.patch(`/api/admin/users/${a.id}/activate`, {});
       }
-      await loadAdmins();
+      await loadAdminRows();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     }
@@ -206,9 +301,28 @@ export default function TeamAccountSettingsPage() {
     try {
       await api.delete(`/api/admin/admins/${a.id}`);
       showToast('success', t('account.adminDeleted'));
-      await loadAdmins();
+      await loadAdminRows();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    }
+  }
+
+  // Two-click confirm (mirrors delete): regenerate issues a fresh temporary
+  // password server-side and emails it to the admin's own address.
+  async function handleAdminRegenerate(a: AdminAccount) {
+    if (pendingRegenAdmin !== a.id) {
+      setPendingRegenAdmin(a.id);
+      return;
+    }
+    setPendingRegenAdmin(null);
+    setRegeneratingId(a.id);
+    try {
+      await api.post(`/api/admin/admins/${a.id}/regenerate-password`, {});
+      showToast('success', t('account.passwordRegenerated', { email: a.email ?? '' }));
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setRegeneratingId(null);
     }
   }
 
@@ -225,6 +339,9 @@ export default function TeamAccountSettingsPage() {
 
       {pageLoading && (
         <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-text)' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
+            <Spinner size={18} />
+          </div>
           {t('common.loading')}
         </div>
       )}
@@ -264,162 +381,368 @@ export default function TeamAccountSettingsPage() {
           {/* ── Admin Accounts ── */}
           {can('admins.view') && (
             <Section title={t('account.admins')} description={t('account.adminsDesc')}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-                <button
-                  type="button"
-                  onClick={() => (adminForm ? setAdminForm(null) : startAddAdmin())}
-                  disabled={!adminForm && !can('admins.create')}
+              {/* Toolbar: server-side search + role filter + Add Admin —
+                  same layout as the Our Team card. */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1 1 auto', minWidth: 0 }}>
+                  <div style={{ position: 'relative', flex: '1 1 auto', maxWidth: '260px' }}>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="var(--muted-text)"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <input
+                      type="text"
+                      value={adminSearchInput}
+                      onChange={(e) => setAdminSearchInput(e.target.value)}
+                      placeholder={t('account.searchAdmins')}
+                      aria-label={t('account.searchAdmins')}
+                      style={{
+                        width: '100%',
+                        height: '36px',
+                        padding: '0 0.75rem 0 2rem',
+                        borderRadius: '8px',
+                        border: '1px solid var(--input-border)',
+                        backgroundColor: 'var(--input-bg)',
+                        color: 'var(--text-main)',
+                        fontSize: '0.8125rem',
+                        outline: 'none',
+                      }}
+                    />
+                  </div>
+                  <Dropdown
+                    value={adminRoleFilter}
+                    onChange={(v) => {
+                      setAdminRoleFilter(v);
+                      setAdminPage(1);
+                    }}
+                    options={[{ value: '', label: t('account.allRoles') }, ...roles.map((r) => ({ value: r.id, label: r.name }))]}
+                    ariaLabel={t('account.role')}
+                    style={{ width: '180px' }}
+                    height={36}
+                  />
+                </div>
+                {can('admins.create') && (
+                  <button
+                    type="button"
+                    onClick={startAddAdmin}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.375rem',
+                      background: 'var(--accent)',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '0.5rem 0.875rem',
+                      borderRadius: '8px',
+                      fontSize: '0.8125rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    {t('account.addAdmin')}
+                  </button>
+                )}
+              </div>
+
+              {/* Row list — same view as the Our Team members (no table). */}
+              {adminRows.map((a, index) => (
+                <div
+                  key={a.id}
                   style={{
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
-                    gap: '0.375rem',
-                    padding: '0.5rem 0.875rem',
-                    borderRadius: '8px',
-                    border: '1px solid var(--input-border)',
-                    backgroundColor: 'var(--input-bg)',
-                    color: 'var(--text-main)',
-                    fontSize: '0.8125rem',
-                    fontWeight: 600,
-                    cursor: adminForm || can('admins.create') ? 'pointer' : 'not-allowed',
-                    opacity: adminForm || can('admins.create') ? 1 : 0.5,
+                    gap: '0.75rem',
+                    padding: '0.75rem 0',
+                    borderTop: index === 0 ? 'none' : '1px solid var(--border-color)',
+                    opacity: adminRowsLoading ? 0.6 : 1,
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    {adminForm ? <line x1="18" y1="6" x2="6" y2="18" /> : <><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>}
-                  </svg>
-                  {adminForm ? t('common.cancel') : t('account.addAdmin')}
-                </button>
-              </div>
+                  {a.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={a.avatar}
+                      alt={`${a.firstName} ${a.lastName}`}
+                      style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)' }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        background: 'var(--secondary-btn-bg)',
+                        border: '1px solid var(--border-color)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.875rem',
+                        fontWeight: 600,
+                        color: 'var(--text-main)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {(a.firstName || a.email || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
 
-              {adminForm && (
-                <form onSubmit={handleAdminSave} style={{ marginBottom: '1.25rem' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <Input
-                      label={t('account.firstName')}
-                      value={adminForm.firstName}
-                      onChange={(v) => setAdminForm((f) => f && { ...f, firstName: v })}
-                      required
-                    />
-                    <Input
-                      label={t('account.lastName')}
-                      value={adminForm.lastName}
-                      onChange={(v) => setAdminForm((f) => f && { ...f, lastName: v })}
-                      required
-                    />
-                    <Input
-                      label={t('account.email')}
-                      value={adminForm.email}
-                      onChange={(v) => setAdminForm((f) => f && { ...f, email: v })}
-                      type="email"
-                      required
-                    />
-                    {!adminForm.id && (
-                      <Input
-                        label={t('account.initialPassword')}
-                        value={adminForm.password}
-                        onChange={(v) => setAdminForm((f) => f && { ...f, password: v })}
-                        type="text"
-                        required
-                        helperText={t('account.passwordHint')}
-                      />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                        {a.firstName} {a.lastName}
+                      </span>
+                      {a.isSelf && (
+                        <span style={{ fontSize: '0.6875rem', color: 'var(--muted-text)' }}>({t('account.you')})</span>
+                      )}
+                      {a.roleName ? (
+                        <RoleBadge name={a.roleName} full={a.permissions.includes('*')} small />
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--muted-text)' }}>{t('account.noRole')}</span>
+                      )}
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          padding: '0.1875rem 0.5rem',
+                          borderRadius: '999px',
+                          background: a.isActive ? 'var(--success-bg)' : 'var(--error-bg)',
+                          color: a.isActive ? 'var(--success-text)' : 'var(--error-text)',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: a.isActive ? 'var(--success-text)' : 'var(--error-text)',
+                          }}
+                        />
+                        {a.isActive ? t('account.active') : t('account.suspended')}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--muted-text)' }}>{a.email}</span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                    {can('admins.edit') && !a.isSelf && (
+                      <RowAction ariaLabel={t('common.edit')} onClick={() => startEditAdmin(a)}>
+                        <EditIcon />
+                      </RowAction>
                     )}
-                    <Select
-                      label={t('account.role')}
-                      value={adminForm.roleId}
-                      onChange={(v) => setAdminForm((f) => f && { ...f, roleId: v })}
-                      options={roles.map((r) => ({ value: r.id, label: r.name }))}
-                      required
-                      disabled={adminForm.id === user?.id}
-                    />
+                    {isFullAccess && (
+                      <RowAction
+                        ariaLabel={pendingRegenAdmin === a.id ? t('account.confirmRegenerate') : t('account.regenerate')}
+                        onClick={() => handleAdminRegenerate(a)}
+                        disabled={regeneratingId === a.id}
+                        style={pendingRegenAdmin === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {regeneratingId === a.id ? (
+                          <Spinner size={13} />
+                        ) : pendingRegenAdmin === a.id ? (
+                          <ConfirmIcon />
+                        ) : (
+                          <RefreshIcon />
+                        )}
+                      </RowAction>
+                    )}
+                    {(can('users.edit') || can('admins.edit')) && !a.isSelf && (
+                      <RowAction ariaLabel={a.isActive ? t('account.suspend') : t('account.activate')} onClick={() => handleAdminStatus(a)}>
+                        {a.isActive ? t('account.suspend') : t('account.activate')}
+                      </RowAction>
+                    )}
+                    {can('admins.delete') && !a.isSelf && (
+                      <RowAction
+                        danger
+                        ariaLabel={pendingDeleteAdmin === a.id ? t('account.confirmDelete') : t('common.delete')}
+                        onClick={() => handleAdminDelete(a)}
+                        style={pendingDeleteAdmin === a.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
+                      >
+                        {pendingDeleteAdmin === a.id ? <ConfirmIcon /> : <DeleteIcon />}
+                      </RowAction>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <SaveButton saving={savingAdmin} label={adminForm.id ? t('common.save') : t('account.createAdmin')} />
-                  </div>
-                </form>
+                </div>
+              ))}
+
+              {adminRowsLoading && (
+                <div role="status" style={{ display: 'flex', justifyContent: 'center', padding: '0.625rem 0' }}>
+                  <Spinner size={16} />
+                </div>
               )}
 
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-                  <thead>
-                    <tr style={{ textAlign: 'left', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                      <th style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{t('account.name')}</th>
-                      <th style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{t('account.email')}</th>
-                      <th style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{t('account.role')}</th>
-                      <th style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{t('account.status')}</th>
-                      <th style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {admins.map((a) => (
-                      <tr key={a.id} style={{ borderTop: '1px solid var(--border-color)' }}>
-                        <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-main)', fontWeight: 500 }}>
-                          {a.firstName} {a.lastName}
-                          {a.isSelf && (
-                            <span style={{ marginLeft: '0.5rem', fontSize: '0.6875rem', color: 'var(--muted-text)' }}>
-                              ({t('account.you')})
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)' }}>{a.email}</td>
-                        <td style={{ padding: '0.625rem 0.75rem' }}>
-                          {a.roleName ? (
-                            <RoleBadge name={a.roleName} full={a.permissions.includes('*')} small />
-                          ) : (
-                            <span style={{ color: 'var(--muted-text)' }}>{t('account.noRole')}</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '0.625rem 0.75rem' }}>
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              padding: '0.1875rem 0.5rem',
-                              borderRadius: '999px',
-                              background: a.isActive ? 'var(--success-bg)' : 'var(--error-bg)',
-                              color: a.isActive ? 'var(--success-text)' : 'var(--error-text)',
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: '50%',
-                                background: a.isActive ? 'var(--success-text)' : 'var(--error-text)',
-                              }}
-                            />
-                            {a.isActive ? t('account.active') : t('account.suspended')}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.625rem 0.75rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          {can('admins.edit') && !a.isSelf && (
-                            <RowAction ariaLabel={t('common.edit')} onClick={() => startEditAdmin(a)}>
-                              <EditIcon />
-                            </RowAction>
-                          )}
-                          {(can('users.edit') || can('admins.edit')) && !a.isSelf && (
-                            <RowAction ariaLabel={a.isActive ? t('account.suspend') : t('account.activate')} onClick={() => handleAdminStatus(a)}>
-                              {a.isActive ? t('account.suspend') : t('account.activate')}
-                            </RowAction>
-                          )}
-                          {can('admins.delete') && !a.isSelf && (
-                            <RowAction
-                              danger
-                              ariaLabel={pendingDeleteAdmin === a.id ? t('account.confirmDelete') : t('common.delete')}
-                              onClick={() => handleAdminDelete(a)}
-                              style={pendingDeleteAdmin === a.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
-                            >
-                              {pendingDeleteAdmin === a.id ? <ConfirmIcon /> : <DeleteIcon />}
-                            </RowAction>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {adminRows.length === 0 && !adminRowsLoading && (
+                <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', padding: '0.75rem 0' }}>
+                  {adminSearch || adminRoleFilter ? t('common.noResults') : t('account.noAdmins')}
+                </p>
+              )}
+
+              <ListPager
+                page={adminMeta.page}
+                totalPages={adminMeta.totalPages}
+                filteredTotal={adminMeta.filteredTotal}
+                loading={adminRowsLoading}
+                onPageChange={setAdminPage}
+              />
+
+              {/* Add / edit modal — mirrors the Our Team member modal. */}
+              {adminForm && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0, 0, 0, 0.5)',
+                    zIndex: 1100,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '1.5rem',
+                  }}
+                >
+                  <div
+                    style={{
+                      backgroundColor: 'var(--card-bg)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '10px',
+                      width: '100%',
+                      maxWidth: '560px',
+                      maxHeight: '90vh',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      overflow: 'hidden',
+                      boxShadow: '0 16px 48px rgba(0, 0, 0, 0.28)',
+                    }}
+                  >
+                    {/* Header — pinned with a divider below; only the body scrolls. */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.5rem', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
+                      <h4 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
+                        {adminForm.id ? t('account.editAdmin') : t('account.addAdmin')}
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={closeAdminForm}
+                        aria-label={t('common.cancel')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: '0.25rem',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'var(--muted-text)',
+                          cursor: 'pointer',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAdminSave} style={{ display: 'flex', flexDirection: 'column' }}>
+                      {/* Body — the scrollable region between the dividers. */}
+                      <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
+                        {/* Create mode: explain where the credentials come from. */}
+                        {!adminForm.id && (
+                          <div style={inviteNoteStyle}>{t('account.inviteNote')}</div>
+                        )}
+
+                        {/* Section — Details */}
+                        <p style={groupLabelStyle}>{t('account.groupDetails')}</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                        <Input
+                          label={t('account.firstName')}
+                          value={adminForm.firstName}
+                          onChange={(v) => setAdminForm((f) => f && { ...f, firstName: v })}
+                          required
+                        />
+                        <Input
+                          label={t('account.lastName')}
+                          value={adminForm.lastName}
+                          onChange={(v) => setAdminForm((f) => f && { ...f, lastName: v })}
+                          required
+                        />
+                        <Input
+                          label={t('account.email')}
+                          value={adminForm.email}
+                          onChange={(v) => setAdminForm((f) => f && { ...f, email: v })}
+                          type="email"
+                          required
+                          helperText={adminForm.id ? undefined : t('account.emailHelp')}
+                        />
+                        <Input
+                          label={t('account.confirmEmail')}
+                          value={adminForm.confirmEmail}
+                          onChange={(v) => setAdminForm((f) => f && { ...f, confirmEmail: v })}
+                          type="email"
+                          required
+                          error={
+                            emailErrorArmed && adminForm.email.trim() !== adminForm.confirmEmail.trim()
+                              ? t('account.emailMismatch')
+                              : undefined
+                          }
+                        />
+                      </div>
+
+                      {/* Section — Access */}
+                      <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-color)' }}>
+                        <p style={groupLabelStyle}>{t('account.groupAccess')}</p>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                          {t('account.role')} <span style={{ color: 'var(--error-text, #ef4444)' }}>*</span>
+                        </label>
+                        <Dropdown
+                          value={adminForm.roleId}
+                          onChange={(v) => setAdminForm((f) => f && { ...f, roleId: v })}
+                          options={roles.map((r) => ({ value: r.id, label: r.name }))}
+                          placeholder="—"
+                          ariaLabel={t('account.role')}
+                          disabled={adminForm.id === user?.id}
+                          height={40}
+                        />
+                      </div>
+                      </div>
+                      {/* Footer — pinned with a divider above it. */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '1rem 1.5rem', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={closeAdminForm}
+                          style={{
+                            background: 'var(--secondary-btn-bg)',
+                            color: 'var(--text-main)',
+                            border: '1px solid var(--border-color)',
+                            padding: '0.5rem 0.875rem',
+                            borderRadius: '8px',
+                            fontSize: '0.8125rem',
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {t('common.cancel')}
+                        </button>
+                        <SaveButton saving={savingAdmin} label={adminForm.id ? t('common.save') : t('account.createAdmin')} />
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </Section>
           )}
         </>
@@ -542,6 +865,7 @@ function Input({
   required = false,
   helperText,
   disabled = false,
+  error,
 }: {
   label: string;
   value: string;
@@ -551,6 +875,7 @@ function Input({
   required?: boolean;
   helperText?: string;
   disabled?: boolean;
+  error?: string;
 }) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
@@ -568,7 +893,7 @@ function Input({
           width: '100%',
           height: '40px',
           borderRadius: '8px',
-          border: '1px solid var(--input-border)',
+          border: error ? '1px solid var(--error-text, #ef4444)' : '1px solid var(--input-border)',
           padding: '0 0.75rem',
           fontSize: '0.875rem',
           outline: 'none',
@@ -578,54 +903,15 @@ function Input({
           opacity: disabled ? 0.6 : 1,
         }}
         onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-        onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = error ? 'var(--error-text, #ef4444)' : 'var(--input-border)'; }}
       />
-      {helperText && (
+      {error ? (
+        <p style={{ fontSize: '0.75rem', color: 'var(--error-text, #ef4444)', marginTop: '0.25rem' }}>{error}</p>
+      ) : helperText ? (
         <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>{helperText}</p>
-      )}
+      ) : null}
     </div>
   );
 }
 
-function Select({ label, value, onChange, options, required, disabled }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-  required?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <div style={{ marginBottom: '0.75rem' }}>
-      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-        {label} {required && <span style={{ color: 'var(--error-text, #ef4444)' }}>*</span>}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required={required}
-        disabled={disabled}
-        style={{
-          width: '100%',
-          height: '40px',
-          borderRadius: '8px',
-          border: '1px solid var(--input-border)',
-          padding: '0 0.75rem',
-          fontSize: '0.875rem',
-          outline: 'none',
-          backgroundColor: 'var(--input-bg)',
-          color: 'var(--text-main)',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          opacity: disabled ? 0.6 : 1,
-        }}
-      >
-        {options.length === 0 && <option value="">—</option>}
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
+
