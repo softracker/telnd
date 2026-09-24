@@ -23,7 +23,10 @@ export async function apiRequest<T>(
   const { token, ...fetchOptions } = options;
 
   const headers = new Headers(fetchOptions.headers);
-  headers.set('Content-Type', 'application/json');
+
+  if (!(fetchOptions.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
@@ -74,4 +77,11 @@ export const api = {
 
   delete: <T>(endpoint: string, token?: string) =>
     apiRequest<T>(endpoint, { method: 'DELETE', token }),
+
+  upload: <T>(endpoint: string, formData: FormData, token?: string) =>
+    apiRequest<T>(endpoint, {
+      method: 'POST',
+      body: formData,
+      token,
+    }),
 };

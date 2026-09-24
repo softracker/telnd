@@ -14,6 +14,7 @@ import packagesRoutes from './routes/packages';
 import supportRoutes from './routes/support';
 import settingsRoutes from './routes/settings';
 import userPreferencesRoutes from './routes/user-preferences';
+import uploadRoutes from './routes/upload';
 import { authMiddleware, roleGuard } from './middleware/auth';
 import { prisma } from '@telnd/database';
 
@@ -30,7 +31,7 @@ app.use('*', cors({
 }));
 
 // Public routes — no auth required
-const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config'];
+const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
   const isPublic = publicPaths.some((p) => path.startsWith(p));
@@ -41,6 +42,32 @@ app.use('*', async (c, next) => {
 // Health check
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Public: only exposes CAPTCHA site key (safe for unauthenticated users)
+app.get('/captcha-config', async (c) => {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'captcha' } });
+    if (!row) return c.json({ success: true, data: { enabled: false } });
+    const val = row.value as any;
+    return c.json({ success: true, data: { enabled: val?.enabled === true, siteKey: val?.siteKey || '' } });
+  } catch {
+    return c.json({ success: true, data: { enabled: false } });
+  }
+});
+
+// Public: general settings (favicon, logo, meta tags — safe for unauthenticated users).
+// Registered BEFORE app.route('/settings', ...) on purpose: Hono runs matching handlers in
+// registration order, and the settings router has GET /:key behind roleGuard('ADMIN'), which
+// would otherwise shadow this route and return 403 to anonymous visitors.
+app.get('/settings/general', async (c) => {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'general' } });
+    if (!row) return c.json({ success: true, data: {} });
+    return c.json({ success: true, data: row.value });
+  } catch {
+    return c.json({ success: true, data: {} });
+  }
 });
 
 // Routes
@@ -57,18 +84,7 @@ app.route('/packages', packagesRoutes);
 app.route('/support', supportRoutes);
 app.route('/settings', settingsRoutes);
 app.route('/user-preferences', userPreferencesRoutes);
-
-// Public: only exposes CAPTCHA site key (safe for unauthenticated users)
-app.get('/captcha-config', async (c) => {
-  try {
-    const row = await prisma.setting.findUnique({ where: { key: 'captcha' } });
-    if (!row) return c.json({ success: true, data: { enabled: false } });
-    const val = row.value as any;
-    return c.json({ success: true, data: { enabled: val?.enabled === true, siteKey: val?.siteKey || '' } });
-  } catch {
-    return c.json({ success: true, data: { enabled: false } });
-  }
-});
+app.route('/upload', uploadRoutes);
 
 // 404 handler
 app.notFound((c) => {

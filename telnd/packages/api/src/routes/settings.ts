@@ -4,6 +4,7 @@ import { roleGuard } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { testSmtpSchema } from '@telnd/validation';
 import { testSmtpConnection } from '../lib/email';
+import { testR2Connection } from '../lib/r2';
 
 type SettingsEnv = {
   Variables: {
@@ -60,6 +61,24 @@ settings.post('/smtp/test', validate(testSmtpSchema), async (c) => {
     return c.json({ success: true, data: { message: 'SMTP connection successful' } });
   }
   return c.json({ success: false, error: { code: 'SMTP_TEST_FAILED', message: result.error || 'Connection failed' } }, 400);
+});
+
+settings.post('/r2/test', async (c) => {
+  const body = await c.req.json();
+  if (!body || typeof body !== 'object') {
+    return c.json({ success: false, error: { code: 'INVALID_BODY', message: 'Request body must be a JSON object' } }, 400);
+  }
+  const { endpoint, accessKeyId, secretAccessKey, bucket } = body as {
+    endpoint: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucket: string;
+  };
+  const result = await testR2Connection(endpoint, accessKeyId, secretAccessKey, bucket);
+  if (result.success) {
+    return c.json({ success: true, data: { message: 'Connection successful! R2 bucket is accessible.' } });
+  }
+  return c.json({ success: false, error: { code: 'R2_TEST_FAILED', message: result.error || 'Connection failed' } }, 400);
 });
 
 settings.get('/:key', async (c) => {
