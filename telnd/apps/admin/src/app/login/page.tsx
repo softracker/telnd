@@ -19,7 +19,7 @@ export default function LoginPage() {
   const turnstileRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
 
-  const showCaptcha = failedAttempts >= 3 && turnstileSiteKey;
+  const showCaptcha = failedAttempts >= 2 && turnstileSiteKey;
 
   // Load Turnstile site key from public captcha config
   useEffect(() => {

@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
+import Toast, { type ToastType } from '@/components/toast';
 
 interface SmtpSettings {
+  enabled: boolean;
   host: string;
   port: number;
   secure: boolean;
@@ -13,15 +15,39 @@ interface SmtpSettings {
   from: string;
 }
 
+interface ToastState {
+  id: number;
+  type: ToastType;
+  message: string;
+}
+
+function Spinner({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      style={{ animation: 'spin 0.7s linear infinite' }}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" opacity="0.3" />
+      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.8" />
+    </svg>
+  );
+}
+
 export default function SmtpSettingsPage() {
-  const [settings, setSettings] = useState<SmtpSettings>({ host: '', port: 587, secure: false, user: '', pass: '', from: '' });
+  const [settings, setSettings] = useState<SmtpSettings>({ enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const { t } = useLanguage();
+  const toastIdRef = useRef(0);
+
+  const showToast = useCallback((type: ToastType, message: string) => {
+    setToast({ id: ++toastIdRef.current, type, message });
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -30,6 +56,7 @@ export default function SmtpSettingsPage() {
         if (res.success && res.data.smtp) {
           const s = res.data.smtp as Partial<SmtpSettings>;
           setSettings({
+            enabled: s.enabled ?? false,
             host: s.host ?? '',
             port: s.port ?? 587,
             secure: s.secure ?? false,
@@ -40,31 +67,24 @@ export default function SmtpSettingsPage() {
         }
       } catch (err) {
         if (err instanceof ApiError && err.status !== 404) {
-          setError(err.message);
+          showToast('error', err.message);
         }
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, []);
+  }, [showToast]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMessage('');
-    setError('');
-    setTestResult(null);
 
     try {
       await api.put('/api/settings', { smtp: settings });
-      setMessage(t('smtp.saved'));
+      showToast('success', t('smtp.saved'));
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError(t('common.failed'));
-      }
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
       setSaving(false);
     }
@@ -72,18 +92,12 @@ export default function SmtpSettingsPage() {
 
   async function handleTestConnection() {
     setTesting(true);
-    setTestResult(null);
-    setError('');
 
     try {
       await api.post('/api/settings/smtp/test', settings);
-      setTestResult({ ok: true, msg: t('smtp.testingSuccess') });
+      showToast('success', t('smtp.testingSuccess'));
     } catch (err) {
-      if (err instanceof ApiError) {
-        setTestResult({ ok: false, msg: err.message });
-      } else {
-        setTestResult({ ok: false, msg: t('smtp.testingFailed') });
-      }
+      showToast('error', err instanceof ApiError ? err.message : t('smtp.testingFailed'));
     } finally {
       setTesting(false);
     }
@@ -111,178 +125,222 @@ export default function SmtpSettingsPage() {
       <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>
         {t('smtp.title')}
       </h1>
-      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
+      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
         {t('smtp.description')}
       </p>
 
-      {message && (
-        <div style={{ borderRadius: '8px', backgroundColor: 'var(--success-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--success-text)', marginBottom: '1rem' }}>
-          {message}
-        </div>
-      )}
-      {error && (
-        <div style={{ borderRadius: '8px', backgroundColor: 'var(--error-bg)', padding: '0.75rem 1rem', fontSize: '0.875rem', color: 'var(--error-text)', marginBottom: '1rem' }}>
-          {error}
-        </div>
-      )}
-
-      {testResult && (
-        <div style={{
-          borderRadius: '8px',
-          backgroundColor: testResult.ok ? 'var(--success-bg)' : 'var(--error-bg)',
-          padding: '0.75rem 1rem',
-          fontSize: '0.875rem',
-          color: testResult.ok ? 'var(--success-text)' : 'var(--error-text)',
-          marginBottom: '1rem',
-        }}>
-          {testResult.msg}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '500px' }}>
-        {/* Host */}
-        <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            {t('smtp.host')}
-          </label>
-          <input
-            type="text"
-            value={settings.host}
-            onChange={(e) => setSettings(s => ({ ...s, host: e.target.value }))}
-            placeholder="smtp.gmail.com"
-            required
-            style={inputStyle}
-          />
-        </div>
-
-        {/* Port + Secure toggle */}
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-              {t('smtp.port')}
-            </label>
-            <input
-              type="number"
-              value={settings.port}
-              onChange={(e) => setSettings(s => ({ ...s, port: Number(e.target.value) }))}
-              min={1}
-              max={65535}
-              required
-              style={inputStyle}
-            />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: '0.375rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={settings.secure}
-                onClick={() => setSettings(s => ({ ...s, secure: !s.secure }))}
-                style={{
-                  width: '44px',
-                  height: '24px',
-                  borderRadius: '12px',
-                  border: 'none',
-                  cursor: 'pointer',
-                  position: 'relative',
-                  backgroundColor: settings.secure ? 'var(--accent)' : 'var(--disabled-bg)',
-                  transition: 'background-color 0.2s',
-                  flexShrink: 0,
-                }}
-              >
-                <span style={{
-                  position: 'absolute',
-                  top: '2px',
-                  left: settings.secure ? '22px' : '2px',
-                  width: '20px',
-                  height: '20px',
-                  borderRadius: '50%',
-                  backgroundColor: 'var(--card-bg)',
-                  transition: 'left 0.2s',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                }} />
-              </button>
-              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
-                {t('smtp.ssl')}
-              </span>
+      <form onSubmit={handleSubmit}>
+        {/* Enable/Disable Toggle */}
+        <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1.25rem 1.5rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                Enable SMTP
+              </h3>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
+                When enabled, the system will send emails through this SMTP server
+              </p>
             </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.enabled}
+              aria-label="Enable SMTP"
+              onClick={() => setSettings(s => ({ ...s, enabled: !s.enabled }))}
+              style={{ width: '48px', height: '26px', borderRadius: '13px', border: 'none', backgroundColor: settings.enabled ? 'var(--accent)' : 'var(--input-border)', position: 'relative', cursor: 'pointer', transition: 'background-color 0.2s', flexShrink: 0, }}
+            >
+              <span style={{ position: 'absolute', top: '3px', left: settings.enabled ? '25px' : '3px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', }} />
+            </button>
           </div>
         </div>
 
-        {/* Username */}
-        <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            {t('smtp.username')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
-          </label>
-          <input
-            type="text"
-            value={settings.user}
-            onChange={(e) => setSettings(s => ({ ...s, user: e.target.value }))}
-            placeholder="your@email.com"
-            style={inputStyle}
-          />
-        </div>
+        {settings.enabled && (
+          <>
+          {/* ── Server ── */}
+          <Section title="Server">
+            {/* Host */}
+            <div style={{ marginBottom: '1rem', maxWidth: '640px' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                {t('smtp.host')}
+              </label>
+              <input
+                type="text"
+                value={settings.host}
+                onChange={(e) => setSettings(s => ({ ...s, host: e.target.value }))}
+                placeholder="smtp.gmail.com"
+                required
+                style={inputStyle}
+              />
+            </div>
 
-        {/* Password */}
-        <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            {t('smtp.password')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
-          </label>
-          <input
-            type="password"
-            value={settings.pass}
-            onChange={(e) => setSettings(s => ({ ...s, pass: e.target.value }))}
-            placeholder="Enter password or app password"
-            style={inputStyle}
-          />
-        </div>
+            {/* Port + Secure toggle */}
+            <div style={{ display: 'flex', gap: '1rem', maxWidth: '640px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                  {t('smtp.port')}
+                </label>
+                <input
+                  type="number"
+                  value={settings.port}
+                  onChange={(e) => setSettings(s => ({ ...s, port: Number(e.target.value) }))}
+                  min={1}
+                  max={65535}
+                  required
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: '0.375rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.secure}
+                    onClick={() => setSettings(s => ({ ...s, secure: !s.secure }))}
+                    style={{
+                      width: '44px',
+                      height: '24px',
+                      borderRadius: '12px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      position: 'relative',
+                      backgroundColor: settings.secure ? 'var(--accent)' : 'var(--disabled-bg)',
+                      transition: 'background-color 0.2s',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute',
+                      top: '2px',
+                      left: settings.secure ? '22px' : '2px',
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--card-bg)',
+                      transition: 'left 0.2s',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    }} />
+                  </button>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)' }}>
+                    {t('smtp.ssl')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </Section>
 
-        {/* From Email */}
-        <div>
-          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
-            {t('smtp.fromEmail')}
-          </label>
-          <input
-            type="email"
-            value={settings.from}
-            onChange={(e) => setSettings(s => ({ ...s, from: e.target.value }))}
-            placeholder="noreply@telnd.com"
-            required
-            style={inputStyle}
-          />
-          <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
-            {t('smtp.fromHelp')}
-          </p>
-        </div>
+          {/* ── Account ── */}
+          <Section title="Account">
+            {/* Username */}
+            <div style={{ marginBottom: '1rem', maxWidth: '640px' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                {t('smtp.username')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
+              </label>
+              <input
+                type="text"
+                value={settings.user}
+                onChange={(e) => setSettings(s => ({ ...s, user: e.target.value }))}
+                placeholder="your@email.com"
+                style={inputStyle}
+              />
+            </div>
 
-        {/* Buttons */}
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
-            type="button"
-            onClick={handleTestConnection}
-            disabled={testing || !settings.host || !settings.port}
-            style={{
-              flex: 1,
-              height: '40px',
-              borderRadius: '8px',
-              backgroundColor: 'var(--card-bg)',
-              color: 'var(--accent)',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              border: '1px solid var(--accent)',
-              cursor: testing ? 'not-allowed' : 'pointer',
-              opacity: testing || !settings.host || !settings.port ? 0.6 : 1,
-              transition: 'background-color 0.15s',
-            }}
-          >
-            {testing ? t('smtp.testing') : t('smtp.testConnection')}
-          </button>
+            {/* Password */}
+            <div style={{ marginBottom: '1rem', maxWidth: '640px' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                {t('smtp.password')} <span style={{ color: 'var(--muted-text)', fontWeight: 400 }}>{t('smtp.optional')}</span>
+              </label>
+              <input
+                type="password"
+                value={settings.pass}
+                onChange={(e) => setSettings(s => ({ ...s, pass: e.target.value }))}
+                placeholder="Enter password or app password"
+                style={inputStyle}
+              />
+            </div>
+
+            {/* From Email */}
+            <div style={{ maxWidth: '640px' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                {t('smtp.fromEmail')}
+              </label>
+              <input
+                type="email"
+                value={settings.from}
+                onChange={(e) => setSettings(s => ({ ...s, from: e.target.value }))}
+                placeholder="noreply@telnd.com"
+                required
+                style={inputStyle}
+              />
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem' }}>
+                {t('smtp.fromHelp')}
+              </p>
+            </div>
+          </Section>
+
+          {/* Info Box */}
+          <div style={{
+            backgroundColor: 'var(--accent-light)',
+            border: '1px solid var(--accent)',
+            borderRadius: '10px',
+            padding: '1rem 1.25rem',
+            marginBottom: '1rem',
+            fontSize: '0.8125rem',
+            color: 'var(--accent)',
+            lineHeight: 1.6,
+          }}>
+            <strong style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+              {t('smtp.howToConnect')}
+            </strong>
+            <ol style={{ margin: 0, paddingLeft: '1.25rem', display: 'grid', gap: '0.5rem' }}>
+              <li>{t('smtp.step2')}</li>
+              <li>{t('smtp.step3')}</li>
+              <li>{t('smtp.step4')}</li>
+              <li>{t('smtp.step5')}</li>
+            </ol>
+          </div>
+          </>
+        )}
+
+        {/* ── Buttons ── */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem', paddingBottom: '2rem' }}>
+          {settings.enabled && (
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testing || !settings.host || !settings.port}
+              aria-label={t('smtp.testConnection')}
+              style={{
+                minWidth: '160px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '40px',
+                padding: '0 1.25rem',
+                borderRadius: '8px',
+                backgroundColor: 'var(--card-bg)',
+                color: 'var(--accent)',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                border: '1px solid var(--accent)',
+                cursor: testing ? 'not-allowed' : 'pointer',
+                opacity: testing || !settings.host || !settings.port ? 0.6 : 1,
+                transition: 'background-color 0.15s',
+              }}
+            >
+              {testing ? <Spinner /> : t('smtp.testConnection')}
+            </button>
+          )}
           <button
             type="submit"
             disabled={saving}
+            aria-label={t('smtp.saveSettings')}
             style={{
-              flex: 1,
+              minWidth: '150px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               height: '40px',
+              padding: '0 1.25rem',
               borderRadius: '8px',
               backgroundColor: saving ? 'var(--accent-hover)' : 'var(--accent)',
               color: '#fff',
@@ -293,10 +351,37 @@ export default function SmtpSettingsPage() {
               transition: 'background-color 0.15s',
             }}
           >
-            {saving ? t('smtp.saving') : t('smtp.saveSettings')}
+            {saving ? <Spinner /> : t('smtp.saveSettings')}
           </button>
         </div>
       </form>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {toast && (
+        <Toast
+          key={toast.id}
+          type={toast.type}
+          message={toast.message}
+          onDismiss={() => setToast((prev) => (prev && prev.id === toast.id ? null : prev))}
+        />
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      backgroundColor: 'var(--card-bg)',
+      border: '1px solid var(--border-color)',
+      borderRadius: '10px',
+      padding: '1.25rem 1.5rem',
+      marginBottom: '1rem',
+    }}>
+      <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '1rem' }}>
+        {title}
+      </h3>
+      {children}
     </div>
   );
 }

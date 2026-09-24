@@ -123,9 +123,9 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
     }, 429);
   }
 
-  // Step 2: If 3+ failed attempts, require Turnstile CAPTCHA
+  // Step 2: If 2+ failed attempts, require Turnstile CAPTCHA
   const failedCount = getFailedCount(lockoutState);
-  if (failedCount >= 3) {
+  if (failedCount >= 2) {
     // Check if CAPTCHA is enabled in settings
     let captchaEnabled = false;
     try {

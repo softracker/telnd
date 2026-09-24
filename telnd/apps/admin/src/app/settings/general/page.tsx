@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import ImageUploader from '@/components/image-uploader';
+import Toast, { type ToastType } from '@/components/toast';
 
 interface GeneralSettings {
   favicon: string;
@@ -39,13 +40,38 @@ const defaultSettings: GeneralSettings = {
   copyrightText: '',
 };
 
+interface ToastState {
+  id: number;
+  type: ToastType;
+  message: string;
+}
+
+function Spinner({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      style={{ animation: 'spin 0.7s linear infinite' }}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" opacity="0.3" />
+      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.8" />
+    </svg>
+  );
+}
+
 export default function GeneralSettingsPage() {
   const { t } = useLanguage();
   const [settings, setSettings] = useState<GeneralSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastIdRef = useRef(0);
+
+  const showToast = useCallback((type: ToastType, message: string) => {
+    setToast({ id: ++toastIdRef.current, type, message });
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -57,26 +83,23 @@ export default function GeneralSettingsPage() {
         }
       } catch (err) {
         if (err instanceof ApiError && err.status !== 404) {
-          setError(err.message);
+          showToast('error', err.message);
         }
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, []);
+  }, [showToast]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMessage('');
-    setError('');
     try {
       await api.put('/api/settings', { general: settings });
-      setMessage(t('smtp.saved'));
+      showToast('success', t('general.saved'));
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError(t('common.failed'));
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
       setSaving(false);
     }
@@ -102,33 +125,6 @@ export default function GeneralSettingsPage() {
       <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
         {t('general.description')}
       </p>
-
-      {message && (
-        <div style={{
-          borderRadius: '8px',
-          backgroundColor: 'var(--success-bg, #ecfdf5)',
-          border: '1px solid var(--success-border, #a7f3d0)',
-          padding: '0.75rem 1rem',
-          fontSize: '0.875rem',
-          color: 'var(--success-text, #065f46)',
-          marginBottom: '1rem',
-        }}>
-          {message}
-        </div>
-      )}
-      {error && (
-        <div style={{
-          borderRadius: '8px',
-          backgroundColor: 'var(--error-bg, #fef2f2)',
-          border: '1px solid var(--error-border, #fecaca)',
-          padding: '0.75rem 1rem',
-          fontSize: '0.875rem',
-          color: 'var(--error-text, #b91c1c)',
-          marginBottom: '1rem',
-        }}>
-          {error}
-        </div>
-      )}
 
       <form onSubmit={handleSubmit}>
         {/* ── Branding Section ── */}
@@ -274,7 +270,12 @@ export default function GeneralSettingsPage() {
           <button
             type="submit"
             disabled={saving}
+            aria-label={t('common.save')}
             style={{
+              minWidth: '110px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               padding: '0.625rem 1.5rem',
               borderRadius: '8px',
               backgroundColor: saving ? 'var(--accent-hover)' : 'var(--accent)',
@@ -286,10 +287,20 @@ export default function GeneralSettingsPage() {
               transition: 'background-color 0.15s',
             }}
           >
-            {saving ? t('smtp.saving') : t('common.save')}
+            {saving ? <Spinner /> : t('common.save')}
           </button>
         </div>
       </form>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {toast && (
+        <Toast
+          key={toast.id}
+          type={toast.type}
+          message={toast.message}
+          onDismiss={() => setToast((prev) => (prev && prev.id === toast.id ? null : prev))}
+        />
+      )}
     </div>
   );
 }
