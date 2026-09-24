@@ -35,12 +35,14 @@ export default function ImageUploader({
 }: ImageUploaderProps) {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(value || null);
+  const [imageBroken, setImageBroken] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setPreview(value || null);
+    setImageBroken(false);
   }, [value]);
 
   const handleFile = useCallback(async (file: File) => {
@@ -64,6 +66,7 @@ export default function ImageUploader({
 
       if (res.success && res.data?.url) {
         setPreview(res.data.url);
+        setImageBroken(false);
         onUpload(res.data.url);
       }
     } catch (err) {
@@ -100,8 +103,11 @@ export default function ImageUploader({
     if (inputRef.current) inputRef.current.value = '';
   }, [handleFile]);
 
+  // Removal only clears the form — the object is deleted from R2 by the page
+  // (on Save if the change is persisted, on page exit if it was abandoned).
   const handleRemove = useCallback(() => {
     setPreview(null);
+    setImageBroken(false);
     if (onRemove) onRemove();
   }, [onRemove]);
 
@@ -120,76 +126,119 @@ export default function ImageUploader({
       </label>
 
       {preview ? (
-        <div style={{
-          position: 'relative',
-          display: 'inline-block',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          border: '1px solid var(--input-border)',
-          backgroundColor: 'var(--input-bg)',
-        }}>
-          <img
-            src={preview}
-            alt={label}
-            style={{
-              display: 'block',
-              maxWidth: '200px',
-              maxHeight: '120px',
-              objectFit: 'contain',
-              padding: '8px',
-            }}
-          />
-          {!disabled && (
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          style={{
+            position: 'relative',
+            display: 'flex',
+            flexDirection: 'column',
+            width: '200px',
+            height: '120px',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            border: `1px solid ${dragOver ? 'var(--accent)' : 'var(--input-border)'}`,
+            backgroundColor: dragOver ? 'var(--accent-light)' : 'var(--input-bg)',
+            // Checkerboard backdrop so transparent images (white/dark logos,
+            // SVGs) stay visible against any theme.
+            backgroundImage: dragOver
+              ? undefined
+              : 'repeating-conic-gradient(var(--input-border) 0% 25%, transparent 0% 50%)',
+            backgroundSize: '14px 14px',
+            transition: 'border-color 0.15s',
+          }}
+        >
+          {imageBroken ? (
+            <div style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.375rem',
+              padding: '0.5rem',
+              textAlign: 'center',
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--muted-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+                <line x1="2" y1="2" x2="22" y2="22" />
+              </svg>
+              <span style={{ fontSize: '0.6875rem', color: 'var(--muted-text)' }}>
+                Preview unavailable
+              </span>
+            </div>
+          ) : (
+            <img
+              src={preview}
+              alt={label}
+              onError={() => setImageBroken(true)}
+              style={{
+                flex: 1,
+                width: '100%',
+                minHeight: 0,
+                objectFit: 'contain',
+                padding: '8px',
+                boxSizing: 'border-box',
+              }}
+            />
+          )}
+
+          {uploading && (
             <div style={{
               position: 'absolute',
-              top: '4px',
-              right: '4px',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              backgroundColor: 'rgba(0,0,0,0.45)',
               display: 'flex',
-              gap: '4px',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <svg style={{ animation: 'spin 0.7s linear infinite' }} width="24" height="24" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="#ffffff" strokeWidth="3" fill="none" opacity="0.35" />
+                <path fill="#ffffff" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.9" />
+              </svg>
+            </div>
+          )}
+
+          {!disabled && (
+            <div style={{
+              display: 'flex',
+              flexShrink: 0,
+              borderTop: '1px solid var(--input-border)',
+              backgroundColor: 'var(--card-bg)',
             }}>
               <button
                 type="button"
+                className="imgup-btn"
                 onClick={() => inputRef.current?.click()}
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--input-border)',
-                  backgroundColor: 'var(--card-bg)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                }}
-                title="Change"
+                disabled={uploading}
+                title="Replace image"
+                style={{ borderRight: '1px solid var(--input-border)' }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                 </svg>
+                Change
               </button>
               <button
                 type="button"
+                className="imgup-btn imgup-btn-remove"
                 onClick={handleRemove}
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--input-border)',
-                  backgroundColor: 'var(--card-bg)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                }}
-                title="Remove"
+                disabled={uploading}
+                title="Remove image"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
+                Remove
               </button>
             </div>
           )}
@@ -254,7 +303,30 @@ export default function ImageUploader({
         </p>
       )}
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .imgup-btn {
+          flex: 1;
+          min-width: 0;
+          height: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+          padding: 0 0.25rem;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 0.6875rem;
+          font-weight: 500;
+          color: var(--text-muted);
+          transition: background-color 0.15s;
+        }
+        .imgup-btn:hover:not(:disabled) { background-color: var(--hover-bg, rgba(127,127,127,0.12)); }
+        .imgup-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+        .imgup-btn-remove { color: var(--error-text, #ef4444); }
+      `}</style>
     </div>
   );
 }

@@ -75,8 +75,12 @@ export const api = {
       token,
     }),
 
-  delete: <T>(endpoint: string, token?: string) =>
-    apiRequest<T>(endpoint, { method: 'DELETE', token }),
+  delete: <T>(endpoint: string, body?: unknown, token?: string) =>
+    apiRequest<T>(endpoint, {
+      method: 'DELETE',
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      token,
+    }),
 
   upload: <T>(endpoint: string, formData: FormData, token?: string) =>
     apiRequest<T>(endpoint, {
@@ -84,4 +88,20 @@ export const api = {
       body: formData,
       token,
     }),
+
+  /**
+   * DELETE that keeps running through page unload (tab close / refresh).
+   * Used to clean up images that were uploaded but never saved.
+   */
+  deleteKeepalive: (endpoint: string, body: unknown): Promise<void> =>
+    fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'include',
+      keepalive: true,
+    }).then(
+      () => undefined,
+      () => undefined,
+    ),
 };

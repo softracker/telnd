@@ -40,6 +40,23 @@ const defaultSettings: GeneralSettings = {
   copyrightText: '',
 };
 
+type ImageField =
+  | 'favicon'
+  | 'primaryLogoLight'
+  | 'primaryLogoDark'
+  | 'secondaryLogoLight'
+  | 'secondaryLogoDark'
+  | 'ogImage';
+
+const IMAGE_FIELDS: ImageField[] = [
+  'favicon',
+  'primaryLogoLight',
+  'primaryLogoDark',
+  'secondaryLogoLight',
+  'secondaryLogoDark',
+  'ogImage',
+];
+
 interface ToastState {
   id: number;
   type: ToastType;
@@ -69,9 +86,29 @@ export default function GeneralSettingsPage() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastIdRef = useRef(0);
 
+  // Last state that was actually persisted — the baseline for image cleanup.
+  const savedRef = useRef<GeneralSettings>({ ...defaultSettings });
+  // Every image URL uploaded during this visit. Anything here that is not in
+  // savedRef when the page is left was abandoned (uploaded, never saved) and
+  // gets deleted so it can't orphan in the bucket.
+  const sessionUploadsRef = useRef<Set<string>>(new Set());
+
   const showToast = useCallback((type: ToastType, message: string) => {
     setToast({ id: ++toastIdRef.current, type, message });
   }, []);
+
+  function deleteImage(url: string) {
+    api.delete('/api/upload/image', { url }).catch((err) => {
+      console.warn('Could not delete image from R2:', url, err);
+    });
+  }
+
+  function trackUpload(field: ImageField) {
+    return (url: string) => {
+      sessionUploadsRef.current.add(url);
+      update(field, url);
+    };
+  }
 
   useEffect(() => {
     async function load() {
@@ -79,7 +116,9 @@ export default function GeneralSettingsPage() {
         const res = await api.get<{ success: boolean; data: Record<string, unknown> }>('/api/settings');
         if (res.success && res.data.general) {
           const g = res.data.general as Partial<GeneralSettings>;
-          setSettings({ ...defaultSettings, ...g });
+          const merged = { ...defaultSettings, ...g };
+          setSettings(merged);
+          savedRef.current = merged;
         }
       } catch (err) {
         if (err instanceof ApiError && err.status !== 404) {
@@ -92,11 +131,44 @@ export default function GeneralSettingsPage() {
     load();
   }, [showToast]);
 
+  // Cleanup when the page is left: delete images uploaded during this visit
+  // that never got saved. The React unmount covers in-app navigation;
+  // beforeunload covers tab close / refresh (keepalive fetch survives it).
+  useEffect(() => {
+    function cleanupAbandoned() {
+      const savedUrls = new Set(
+        IMAGE_FIELDS.map((f) => savedRef.current[f]).filter(Boolean),
+      );
+      for (const url of sessionUploadsRef.current) {
+        if (!savedUrls.has(url)) {
+          api.deleteKeepalive('/api/upload/image', { url });
+        }
+      }
+      sessionUploadsRef.current.clear();
+    }
+
+    const handleUnload = () => cleanupAbandoned();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      cleanupAbandoned();
+    };
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
       await api.put('/api/settings', { general: settings });
+      // The newly saved state no longer references the previous images
+      // (replaced or removed) — delete them now that it's persisted.
+      for (const field of IMAGE_FIELDS) {
+        const before = savedRef.current[field];
+        if (before && before !== settings[field]) {
+          deleteImage(before);
+        }
+      }
+      savedRef.current = { ...settings };
       showToast('success', t('general.saved'));
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
@@ -134,7 +206,7 @@ export default function GeneralSettingsPage() {
               label={t('general.favicon')}
               value={settings.favicon}
               folder="settings/favicon"
-              onUpload={(url) => update('favicon', url)}
+              onUpload={trackUpload('favicon')}
               onRemove={() => update('favicon', '')}
               accept="image/x-icon,image/png,image/svg+xml"
               helperText="ICO, PNG, or SVG. Recommended: 32x32px"
@@ -145,7 +217,7 @@ export default function GeneralSettingsPage() {
               folder="settings/logo-primary-light"
               maxWidth={400}
               maxHeight={100}
-              onUpload={(url) => update('primaryLogoLight', url)}
+              onUpload={trackUpload('primaryLogoLight')}
               onRemove={() => update('primaryLogoLight', '')}
               helperText="PNG or SVG. Recommended: 200x50px"
             />
@@ -155,7 +227,7 @@ export default function GeneralSettingsPage() {
               folder="settings/logo-primary-dark"
               maxWidth={400}
               maxHeight={100}
-              onUpload={(url) => update('primaryLogoDark', url)}
+              onUpload={trackUpload('primaryLogoDark')}
               onRemove={() => update('primaryLogoDark', '')}
               helperText="PNG or SVG. Recommended: 200x50px"
             />
@@ -165,7 +237,7 @@ export default function GeneralSettingsPage() {
               folder="settings/logo-secondary-light"
               maxWidth={200}
               maxHeight={200}
-              onUpload={(url) => update('secondaryLogoLight', url)}
+              onUpload={trackUpload('secondaryLogoLight')}
               onRemove={() => update('secondaryLogoLight', '')}
               helperText="PNG or SVG. Square format recommended"
             />
@@ -175,7 +247,7 @@ export default function GeneralSettingsPage() {
               folder="settings/logo-secondary-dark"
               maxWidth={200}
               maxHeight={200}
-              onUpload={(url) => update('secondaryLogoDark', url)}
+              onUpload={trackUpload('secondaryLogoDark')}
               onRemove={() => update('secondaryLogoDark', '')}
               helperText="PNG or SVG. Square format recommended"
             />
@@ -185,7 +257,7 @@ export default function GeneralSettingsPage() {
               folder="settings/og-image"
               maxWidth={1200}
               maxHeight={630}
-              onUpload={(url) => update('ogImage', url)}
+              onUpload={trackUpload('ogImage')}
               onRemove={() => update('ogImage', '')}
               helperText="Social sharing image. Recommended: 1200x630px"
             />

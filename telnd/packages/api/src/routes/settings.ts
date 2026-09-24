@@ -4,7 +4,7 @@ import { roleGuard } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { testSmtpSchema } from '@telnd/validation';
 import { testSmtpConnection } from '../lib/email';
-import { testR2Connection } from '../lib/r2';
+import { testR2Connection, resetR2Client } from '../lib/r2';
 
 type SettingsEnv = {
   Variables: {
@@ -48,6 +48,12 @@ settings.put('/', async (c) => {
       create: { key, value: value as any },
     });
     updated[row.key] = row.value;
+  }
+
+  // The upload routes cache the R2 client in memory — invalidate it whenever
+  // the r2 settings change so new credentials/public URL apply immediately.
+  if (entries.some(([key]) => key === 'r2')) {
+    resetR2Client();
   }
 
   return c.json({ success: true, data: updated });

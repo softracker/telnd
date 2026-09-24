@@ -1,6 +1,6 @@
 # TELND — Done So Far
 
-> Last updated: 2026-09-22
+> Last updated: 2026-09-24
 
 ---
 
@@ -350,14 +350,82 @@ Redesigned 60/40 split layout:
 
 ---
 
-## 11. Known Issues
+## 11. Settings Suite, Object Storage & UX (2026-09-24)
+
+Full day of admin settings work — 9 commits (`0f18408e` → `51849a4e`), 70 files changed, +5,607/−439, all pushed to `main`.
+
+### 11.1 Settings foundation & auth hardening (00:17–04:27)
+- **Key-value settings store** — `packages/api/src/routes/settings.ts`: `GET /api/settings` (all rows), `GET /api/settings/:key`, `PUT /api/settings` (upserts arbitrary `{ key: value }` payloads), backed by the Prisma `Setting` model; `roleGuard('ADMIN')` on write/secret reads
+- **Email service** — `packages/api/src/lib/email.ts`: nodemailer wrapper with `testSmtpConnection()` used by `POST /api/settings/smtp/test`
+- **Auth hardening** — `lib/loginLockout.ts` (Redis-backed: 5-min window, lockout after 20 failed attempts, escalating 15→120 min, cross-IP attack detection at 3 IPs), `lib/getIp.ts`, upgraded rate limiter (stricter login window), stricter auth middleware; `.env.example` + nginx sample config added
+- **Settings area** — `settings/layout.tsx` nav with grouped sub-sections; `0f18408e` created the first **SMTP** and **CAPTCHA** pages; `8261e2f9` added General, Security, Account, Organization, Team, Offices, Payment, Gateway, Login Providers, About, Preferences pages + page headers
+- **User preferences** — `routes/user-preferences.ts` + Prisma `UserPreference` model, `theme-provider.tsx`, `language-provider.tsx`, Preferences settings page expanded (theme/language persisted server-side)
+- **FOUC prevention** (`b6b18b54`) — inline pre-paint theme script in the admin root layout
+- **Theming** (`278283a7`, `d0ad90ce`) — settings UI migrated to CSS variables; dark-mode variables + sidebar active states tuned
+- **i18n** (`3880fd37`) — translations expanded (~390 lines): sidebar, header, login and every settings page bilingual (en/bn); Bengali stored as `\uXXXX` escapes to keep `translations.ts` ASCII-only
+
+### 11.2 Cloudflare R2 object storage (`39dfd654`, 09:39)
+- New page `settings/object-storage/page.tsx` + sidebar entry, saved as the `r2` settings row
+- `packages/api/src/lib/r2.ts` (new):
+  - `initR2Client()` / test client use `forcePathStyle: true` — AWS SDK's default virtual-hosted hostname (`bucket.<account>.r2.cloudflarestorage.com`) 404s on R2; path-style (`<account>.r2.cloudflarestorage.com/<bucket>/`) works. Fixed Test Connection **and** uploads/deletes
+  - `testR2Connection()` maps SDK errors to actionable messages (endpoint/bucket validation; ENOTFOUND/EPROTO/Invalid URL; 401/403/404/other status branches) — replaces the SDK's literal `UnknownError` returned for empty-body HEAD responses
+  - `describeR2Error()` 404 self-diagnosis: calls ListBuckets and reports the account's actual bucket names, a casing mismatch, or "account has no buckets"
+- `POST /api/settings/r2/test` route (does **not** persist — Save must still be clicked)
+- `packages/api/src/routes/upload.ts` (new) — upload/delete against R2, sharp → WebP conversion, folder-scoped object keys (e.g. `settings/favicon/`); new deps `@aws-sdk/client-s3`, `sharp`
+- `ImageUploader` component + `api.upload()` FormData helper (skips the JSON `Content-Type` header); General page gained favicon/light+dark logos/secondary logos/OG image fields; `generalSettingsSchema` + `r2SettingsSchema` added to `packages/validation`
+
+### 11.3 Public route shadowing fix (`packages/api/src/index.ts`)
+- `GET /captcha-config` and `GET /settings/general` moved **above** `app.route('/settings', …)` — Hono matches in registration order, and the settings router's `GET /:key` + `roleGuard('ADMIN')` was answering anonymous requests with 403 (broke the captcha site-key fetch and public general settings)
+- `/api/settings/general` also added to `publicPaths`
+
+### 11.4 Toast component + spinner buttons (`39dfd654`, `51849a4e`)
+- New `apps/admin/src/components/toast.tsx` — compact popup pinned top-center just below the 56px header (`calc(var(--admin-header-height) + 12px)`), white bg + layered shadow, success/warning/error variants each with their own color + icon, 2s auto-dismiss with fade/slide-out, `role="status"` `aria-live="polite"`, `pointer-events: none`
+- Applied to Object Storage, General, CAPTCHA, SMTP: top-of-page banner divs removed; Test Connection / Save buttons swap their label for a loading spinner while pending (min-width keeps them from jumping; `aria-label`s added)
+
+### 11.5 Settings pages reworked to cards + toggles (`51849a4e`, 10:22)
+- **General** — `Section` cards (Branding / General Information / SEO & Meta / Contact & Legal), right-aligned Save with spinner
+- **SMTP** — object-storage-style "Enable SMTP" toggle card; Server (host/port/SSL) + Account (user/pass/from) cards; config cards + Test Connection hidden while disabled; right-aligned Test Connection + Save with spinners
+- **CAPTCHA** — "Enable CAPTCHA" toggle card (replaced the old Status card); API Keys card hidden while disabled; right-aligned Save
+- `enabled` persists through `PUT /api/settings` (route upserts any key); `testSmtpSchema` strips the unknown `enabled` key on the test endpoint
+
+### 11.6 Step-by-step setup guides
+- Numbered info boxes (accent-tinted card, `<ol>`, en + bn) — object storage 5 steps; SMTP and CAPTCHA 4 steps
+- Boxes live **inside** the `enabled` block (same as object storage); the redundant "turn on the toggle" first step was removed from SMTP/CAPTCHA since the box only renders once enabled
+- CAPTCHA guide notes that the backend verifies tokens via `TURNSTILE_SECRET_KEY` in the API `.env` while the site key is served from settings
+
+### 11.7 Login CAPTCHA threshold 3+ → 2+
+- `auth.ts`: `failedCount >= 3` → `>= 2`; admin login page: `showCaptcha = failedAttempts >= 2`; `captcha.description` updated (en + bn)
+- Lockout itself unchanged (20 failures / 5-min window)
+
+### 11.8 Notes & gotchas
+- **SMTP has no settings row in the DB** → the page loads `enabled: false`, so config cards and instructions stay hidden until "Enable SMTP" is toggled on and saved (CAPTCHA and R2 rows exist with `enabled: true`)
+- `smtp.enabled` is UI-only so far — nothing on the API consumes it yet
+- Real R2 credentials can't be verified from this dev environment; all R2 error branches were tested against local mock servers
+- Typecheck green: `apps/admin`, `packages/api`, `packages/validation`
+
+### 11.9 Commits (2026-09-24)
+| Hash | Time | Summary |
+|------|------|---------|
+| `0f18408e` | 00:17 | Settings key-value store, email service, harden auth |
+| `8261e2f9` | 01:24 | Expand settings with general, security, and admin sub-sections |
+| `79c3859c` | 01:50 | Add user preferences, theme/language providers, preferences UI |
+| `b6b18b54` | 01:59 | FOUC-prevention theme script |
+| `278283a7` | 02:32 | Settings UI → CSS variables, theme support |
+| `d0ad90ce` | 02:40 | Dark-mode CSS variables, sidebar active states |
+| `3880fd37` | 04:27 | Sidebar/header translations + i18n across settings pages |
+| `39dfd654` | 09:39 | R2 object storage, image uploads, toast notifications |
+| `51849a4e` | 10:22 | Toast/card pattern, guides, CAPTCHA threshold → 2+ |
+
+---
+
+## 12. Known Issues
 
 - Linux desktop Flutter build fails due to `flutter_secure_storage_linux` / clang 21 incompatibility
 - `flutter run -d chrome` crashes with "Dart compiler exited unexpectedly" (headless environment issue; `flutter build web` succeeds)
 
 ---
 
-## 12. Next Steps (Planned)
+## 13. Next Steps (Planned)
 
 ### Web
 - Build remaining component categories: Data Display, Feedback, Navigation, Layout
@@ -369,7 +437,7 @@ Redesigned 60/40 split layout:
 
 ### Admin
 - Build out management pages: Users, Companies, Jobs, Applications, Packages, Reports
-- Add Settings page, Activity Logs, Support pages
+- Add Activity Logs and Support pages (Settings suite is now largely built — see section 11)
 - Add data tables with search, filter, pagination
 - Add chart/graph widgets for dashboard
 

@@ -37,6 +37,17 @@ export function getR2Client(): S3Client | null {
   return r2Client;
 }
 
+/**
+ * Drop the cached client/config so the next upload/delete re-reads the R2
+ * settings row from the database. Called when the `r2` setting is saved —
+ * without this, changing the endpoint or public URL would only take effect
+ * after an API restart.
+ */
+export function resetR2Client(): void {
+  r2Client = null;
+  r2Config = null;
+}
+
 export async function convertToWebP(
   buffer: Buffer,
   options?: { width?: number; height?: number; quality?: number }

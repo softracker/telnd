@@ -99,22 +99,36 @@ upload.post('/image', roleGuard('ADMIN'), async (c) => {
 });
 
 upload.delete('/image', roleGuard('ADMIN'), async (c) => {
+  let config: R2Config;
   try {
-    await ensureR2();
+    config = await ensureR2();
   } catch (e: any) {
     return c.json({ success: false, error: { message: e.message || 'R2 not configured' } }, 400);
   }
 
   try {
     const body = await c.req.json();
-    const { key } = body;
+    const { key, url } = body as { key?: string; url?: string };
 
-    if (!key) {
-      return c.json({ success: false, error: { message: 'No key provided' } }, 400);
+    // The admin UI stores public URLs in settings, not object keys — derive the
+    // key back from the URL using the configured public base URL.
+    let objectKey = typeof key === 'string' && key ? key : '';
+    if (!objectKey && typeof url === 'string' && url) {
+      const base = config.publicUrl.replace(/\/+$/, '');
+      if (url.startsWith(base + '/')) {
+        objectKey = url.slice(base.length + 1);
+      }
     }
 
-    await deleteFromR2(key);
-    return c.json({ success: true, data: { deleted: true } });
+    if (!objectKey) {
+      const message = !key && !url
+        ? 'No key provided'
+        : 'Could not derive an object key from the given URL — it does not start with the configured R2 public URL.';
+      return c.json({ success: false, error: { message } }, 400);
+    }
+
+    await deleteFromR2(objectKey);
+    return c.json({ success: true, data: { deleted: true, key: objectKey } });
   } catch (err: any) {
     return c.json({ success: false, error: { message: err.message || 'Delete failed' } }, 500);
   }
