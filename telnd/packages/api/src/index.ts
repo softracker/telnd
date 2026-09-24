@@ -13,6 +13,7 @@ import mapRoutes from './routes/map';
 import packagesRoutes from './routes/packages';
 import supportRoutes from './routes/support';
 import settingsRoutes from './routes/settings';
+import pagesRoutes from './routes/pages';
 import userPreferencesRoutes from './routes/user-preferences';
 import uploadRoutes from './routes/upload';
 import { authMiddleware, roleGuard } from './middleware/auth';
@@ -31,11 +32,21 @@ app.use('*', cors({
 }));
 
 // Public routes — no auth required
-const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general'];
+const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  const isPublic = publicPaths.some((p) => path.startsWith(p));
-  if (isPublic) return next();
+  const isPublic = publicPaths.some((p) => path === p || path.startsWith(p + '/'));
+  if (isPublic) {
+    // Soft auth: populate `user` when a valid token exists so guarded
+    // sub-routes (e.g. /api/pages/admin) can still authorize, but never
+    // reject anonymous visitors on public paths.
+    try {
+      await authMiddleware(c, async () => {});
+    } catch {
+      // Ignore auth failures on public paths — route guards decide.
+    }
+    return next();
+  }
   return authMiddleware(c, next);
 });
 
@@ -70,6 +81,18 @@ app.get('/settings/general', async (c) => {
   }
 });
 
+// Public: website "Our Team" content (Team & Account in admin settings).
+// Same registration-order reason as /settings/general above.
+app.get('/settings/team', async (c) => {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'team' } });
+    if (!row) return c.json({ success: true, data: {} });
+    return c.json({ success: true, data: row.value });
+  } catch {
+    return c.json({ success: true, data: {} });
+  }
+});
+
 // Routes
 app.route('/auth', authRoutes);
 app.route('/jobs', jobRoutes);
@@ -83,6 +106,7 @@ app.route('/map', mapRoutes);
 app.route('/packages', packagesRoutes);
 app.route('/support', supportRoutes);
 app.route('/settings', settingsRoutes);
+app.route('/pages', pagesRoutes);
 app.route('/user-preferences', userPreferencesRoutes);
 app.route('/upload', uploadRoutes);
 

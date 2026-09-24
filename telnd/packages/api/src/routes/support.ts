@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
 import { validate } from '../middleware/validate';
-import { roleGuard } from '../middleware/auth';
+import { roleGuard, requireAdmin, requirePermission } from '../middleware/auth';
 import { supportTicketSchema, supportMessageSchema, ticketUpdateSchema } from '@telnd/validation';
 
 type SupportEnv = {
@@ -114,7 +114,7 @@ support.post('/tickets/:id/messages', validate(supportMessageSchema), async (c) 
 // ============================================
 // Admin: List all tickets
 // ============================================
-support.get('/admin/tickets', roleGuard('ADMIN'), async (c) => {
+support.get('/admin/tickets', roleGuard('ADMIN'), requireAdmin, requirePermission('support.view'), async (c) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '20');
   const status = c.req.query('status');
@@ -143,7 +143,7 @@ support.get('/admin/tickets', roleGuard('ADMIN'), async (c) => {
 // ============================================
 // Admin: Update ticket
 // ============================================
-support.patch('/admin/tickets/:id', roleGuard('ADMIN'), validate(ticketUpdateSchema), async (c) => {
+support.patch('/admin/tickets/:id', roleGuard('ADMIN'), requireAdmin, requirePermission('support.edit'), validate(ticketUpdateSchema), async (c) => {
   const id = c.req.param('id');
   const body = c.get('validatedData');
 
@@ -158,7 +158,7 @@ support.patch('/admin/tickets/:id', roleGuard('ADMIN'), validate(ticketUpdateSch
 // ============================================
 // Admin: Reply to ticket
 // ============================================
-support.post('/admin/tickets/:id/messages', roleGuard('ADMIN'), validate(supportMessageSchema), async (c) => {
+support.post('/admin/tickets/:id/messages', roleGuard('ADMIN'), requireAdmin, requirePermission('support.edit'), validate(supportMessageSchema), async (c) => {
   const user = c.get('user');
   const id = c.req.param('id')!;
   const body = c.get('validatedData');

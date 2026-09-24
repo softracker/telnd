@@ -3,6 +3,7 @@ import { prisma } from '@telnd/database';
 import { signupSchema, loginSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
+import { authMiddleware } from '../middleware/auth';
 import { sign, verify } from 'hono/jwt';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
@@ -10,6 +11,8 @@ import { getIp } from '../lib/getIp';
 type AuthEnv = {
   Variables: {
     validatedData: any;
+    user: any;
+    jwtPayload: unknown;
   };
 };
 
@@ -244,6 +247,13 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
     data: { lastLoginAt: new Date() },
   });
 
+  // Include the admin panel role + permissions so the admin UI can show the
+  // role badge and gate buttons without an extra request.
+  const adminUser = await prisma.adminUser.findUnique({
+    where: { userId: user.id },
+    include: { role: true },
+  });
+
   setAuthCookie(c, 'telnd_admin_token', token, 7 * 24 * 60 * 60);
   setAuthCookie(c, 'telnd_admin_refresh_token', refreshToken, 30 * 24 * 60 * 60);
 
@@ -257,6 +267,10 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
         lastName: user.lastName,
         role: user.role,
         avatar: user.avatar,
+        adminRole:
+          adminUser && adminUser.isActive
+            ? { name: adminUser.role.name, permissions: adminUser.role.permissions }
+            : null,
       },
     },
   });
@@ -405,5 +419,31 @@ authRoutes.post('/otp/verify', rateLimit({ windowMs: 60000, max: 5 }), async (c)
   return c.json({
     success: true,
     data: { message: 'OTP verified' },
+  });
+});
+
+// Current authenticated user, including admin role + permissions for the admin UI.
+authRoutes.get('/me', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (!user) {
+    return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } }, 401);
+  }
+
+  const adminUser = await prisma.adminUser.findUnique({
+    where: { userId: user.id },
+    include: { role: true },
+  });
+
+  const { passwordHash, ...safeUser } = user;
+
+  return c.json({
+    success: true,
+    data: {
+      ...safeUser,
+      adminRole:
+        adminUser && adminUser.isActive
+          ? { name: adminUser.role.name, permissions: adminUser.role.permissions }
+          : null,
+    },
   });
 });

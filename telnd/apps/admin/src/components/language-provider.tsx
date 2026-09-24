@@ -17,12 +17,17 @@ const STORAGE_KEY = 'telnd_admin_language';
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const { user, isAuthenticated } = useAuth();
-  const [language, setLanguageState] = useState<Language>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem(STORAGE_KEY) as Language) || 'en';
+  // Start from the server value so the first client render matches the server
+  // HTML; the stored preference is applied after hydration (reading
+  // localStorage during the first render is a classic hydration mismatch).
+  const [language, setLanguageState] = useState<Language>('en');
+
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY) as Language | null;
+    if (stored && ['en', 'bn'].includes(stored)) {
+      setLanguageState(stored);
     }
-    return 'en';
-  });
+  }, []);
 
   // Apply language to html element
   useEffect(() => {

@@ -15,6 +15,8 @@ interface ImageUploaderProps {
   error?: string;
   onUpload: (url: string) => void;
   onRemove?: () => void;
+  /** Reports upload start/end so a parent form can disable submit mid-upload. */
+  onUploadingChange?: (uploading: boolean) => void;
   disabled?: boolean;
   previewClassName?: string;
 }
@@ -31,6 +33,7 @@ export default function ImageUploader({
   error,
   onUpload,
   onRemove,
+  onUploadingChange,
   disabled = false,
 }: ImageUploaderProps) {
   const [uploading, setUploading] = useState(false);
@@ -50,6 +53,7 @@ export default function ImageUploader({
 
     setUploading(true);
     setUploadError('');
+    onUploadingChange?.(true);
 
     try {
       const formData = new FormData();
@@ -77,8 +81,9 @@ export default function ImageUploader({
       }
     } finally {
       setUploading(false);
+      onUploadingChange?.(false);
     }
-  }, [disabled, uploading, folder, maxWidth, maxHeight, quality, onUpload]);
+  }, [disabled, uploading, folder, maxWidth, maxHeight, quality, onUpload, onUploadingChange]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

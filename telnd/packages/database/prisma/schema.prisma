@@ -2273,3 +2273,18 @@ model UserPreference {
   @@unique([userId, key])
   @@index([userId])
 }
+
+// ============================================
+// 80. Website Content Pages
+// ============================================
+model ContentPage {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  content     String   @default("")
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isPublished])
+}

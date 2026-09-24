@@ -107,3 +107,81 @@ export function roleGuard(...roles: string[]) {
     await next();
   };
 }
+
+/**
+ * Loads the caller's AdminUser row (with its AdminRole) into `c.set('admin')`.
+ * Required by requirePermission and the admin/settings routers.
+ */
+export async function requireAdmin(c: Context, next: Next) {
+  const user = c.get('user');
+  if (!user) {
+    return c.json({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+    }, 401);
+  }
+
+  const adminUser = await prisma.adminUser.findUnique({
+    where: { userId: user.id },
+    include: { role: true },
+  });
+
+  if (!adminUser || !adminUser.isActive) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Forbidden: Admin access required' },
+    }, 403);
+  }
+
+  c.set('admin', adminUser);
+  await next();
+}
+
+/**
+ * Checks a "resource.action" grant on an AdminRole. The system permission
+ * "*" (super admin) passes every check.
+ */
+export function hasPermission(role: { permissions?: unknown } | null | undefined, permission: string): boolean {
+  const permissions = Array.isArray(role?.permissions) ? (role.permissions as unknown[]) : [];
+  return permissions.includes('*') || permissions.includes(permission);
+}
+
+/** requireAdmin + a single permission check. */
+export function requirePermission(permission: string) {
+  return async (c: Context, next: Next) => {
+    const admin = c.get('admin');
+    if (!admin) {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Forbidden: Admin access required' },
+      }, 403);
+    }
+    if (!hasPermission(admin.role, permission)) {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: `Missing permission: ${permission}` },
+      }, 403);
+    }
+    await next();
+  };
+}
+
+/** requireAdmin + passes when the caller has ANY of the given permissions. */
+export function requireAnyPermission(...permissions: string[]) {
+  return async (c: Context, next: Next) => {
+    const admin = c.get('admin');
+    if (!admin) {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Forbidden: Admin access required' },
+      }, 403);
+    }
+    if (!permissions.some((p) => hasPermission(admin.role, p))) {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: `Missing permission: ${permissions.join(' or ')}` },
+      }, 403);
+    }
+    await next();
+  };
+}

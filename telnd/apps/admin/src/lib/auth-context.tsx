@@ -1,8 +1,13 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from './api';
+
+interface AdminRole {
+  name: string;
+  permissions: unknown;
+}
 
 interface User {
   id: string;
@@ -11,6 +16,7 @@ interface User {
   lastName: string;
   role: string;
   avatar: string | null;
+  adminRole?: AdminRole | null;
 }
 
 interface AuthResponse {
@@ -26,6 +32,16 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (email: string, password: string, turnstileToken?: string) => Promise<void>;
   logout: () => void;
+  /** Flat "resource.action" grants of the current admin's role (["*"] for super admins). */
+  permissions: string[];
+  /** Current admin's panel role name, or null. */
+  roleName: string | null;
+  /** True when the role holds the "*" wildcard. */
+  isFullAccess: boolean;
+  /** Check a single "resource.action" grant (wildcard passes everything). */
+  can: (permission: string) => boolean;
+  /** Re-fetch the current user (name/email/role) from the API. */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,18 +55,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAuthenticated = !!user;
 
+  const permissions: string[] = useMemo(() => {
+    const raw = user?.adminRole?.permissions;
+    return Array.isArray(raw) ? (raw.filter((p): p is string => typeof p === 'string')) : [];
+  }, [user]);
+
+  const roleName = user?.adminRole?.name ?? null;
+  const isFullAccess = permissions.includes('*');
+
+  const can = useCallback(
+    (permission: string) => permissions.includes('*') || permissions.includes(permission),
+    [permissions],
+  );
+
+  const persistUser = useCallback((next: User) => {
+    setUser(next);
+    localStorage.setItem(USER_KEY, JSON.stringify(next));
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const response = await api.get<{ success: boolean; data: User }>('/api/auth/me');
+      if (response.success && response.data) {
+        persistUser(response.data);
+      }
+    } catch {
+      // Keep the cached user when offline / session expired — login flow handles that.
+    }
+  }, [persistUser]);
+
   useEffect(() => {
     const storedUser = localStorage.getItem(USER_KEY);
 
     if (storedUser) {
       try {
         setUser(JSON.parse(storedUser));
+        // Refresh in the background so name/email/role stay current.
+        void refreshUser();
       } catch {
         localStorage.removeItem(USER_KEY);
       }
     }
     setIsLoading(false);
-  }, []);
+  }, [refreshUser]);
 
   const login = useCallback(async (email: string, password: string, turnstileToken?: string) => {
     const response = await api.post<AuthResponse>('/api/auth/login', {
@@ -82,7 +129,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        isAuthenticated,
+        login,
+        logout,
+        permissions,
+        roleName,
+        isFullAccess,
+        can,
+        refreshUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

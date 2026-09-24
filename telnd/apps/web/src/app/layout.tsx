@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { Footer } from '@/components/Footer';
 import './globals.css';
 
 const API_BASE_URL = process.env.API_URL || 'http://localhost:3001';
@@ -49,6 +50,7 @@ export default function RootLayout({
       <body className="antialiased bg-glow">
         <ThemeProvider>
           {children}
+          <Footer />
         </ThemeProvider>
       </body>
     </html>

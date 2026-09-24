@@ -443,3 +443,75 @@ Full day of admin settings work — 9 commits (`0f18408e` → `51849a4e`), 70 fi
 
 ### Both
 - Delete `_showcase/` folders and `/components` page after all components are complete
+
+---
+
+## 14. Team & Account Merge, Website Content CMS & Role-Based Access Control (2026-09-24)
+
+Three-in-one feature set: merged settings page, public content mini-CMS, and a complete RBAC system. Not yet committed (awaiting confirmation).
+
+### 14.1 Database & seed
+- **`ContentPage` Prisma model** — `slug` (unique), `title`, `content` (HTML), `isPublished`; migration `20260924120000_add_content_pages` created manually (`migrate diff --from-url` → `migrate deploy` → `generate`; `migrate dev` refuses non-TTY shells)
+- **Seed** (`packages/database/src/seed.ts`, run): `AdminRole` "Super Admin" (`permissions: ['*']`, `isSystem: true`) linked to `admin@telnd.com` via new `AdminUser` row; 3 published content pages (`about-us`, `privacy-policy`, `terms-and-conditions`)
+
+### 14.2 Permission model & API middleware
+- Flat string grants on `AdminRole.permissions`: `"resource.action"` (e.g. `admins.delete`) or `"*"` wildcard (super admin bypass); validated by `/^(\*|[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+)$/`
+- `middleware/auth.ts` gained `requireAdmin`, `hasPermission`, `requirePermission(...)`, `requireAnyPermission(...)` (suspend/activate accepts `users.edit` **or** `admins.edit`)
+
+### 14.3 API routes
+- **`routes/admin.ts`** — every route permission-gated: `dashboard.view`, `users.view/edit`, `maintenance.view/edit`, `reports.view/edit`, `audit.view`, `support.*` (support.ts), `roles.*`. **New admins CRUD** `GET/POST/PATCH/DELETE /api/admin/admins` (`admins.view/create/edit/delete`): cannot change own role or delete own account; Prisma P2003 → 409 "Suspend it instead". Roles gained `PUT/DELETE /api/admin/roles/:id` (400 for `isSystem`, 409 if assigned), duplicate-name 409, and `_count.users` on list
+- **`routes/pages.ts` (new)** — public `GET /api/pages` (published slugs+titles) and `GET /api/pages/:slug` (published only, slug regex, 404 otherwise); admin CRUD under `/api/pages/admin` gated by `content.*`, registered before `/:slug`
+- **`routes/settings.ts`** — now behind `requireAdmin`; `GET` filters keys through a KEY→permission map (`general→general.*`, `r2→storage.*`, `smtp→email.*`, `captcha`, `security`, `loginProviders`, `offices`, `organization`, `payment`, `gateway`, `team→team.*`); `PUT` rejects each unauthorized key with 403 naming the missing edit-permission; **unknown keys are super-admin (`*`) only**; `/smtp/test` and `/r2/test` gated by their key's edit permission
+- **`index.ts`** — publicPaths += `/api/settings/team`, `/api/pages`; public `GET /api/settings/team` (mirrors `/settings/general`, registered before the settings mount); `/pages` route mounted. **Soft auth on public paths**: public paths now run auth in "populate but never reject" mode so logged-in admins get `user` context on `/api/pages/admin` while anonymous visitors still reach the public endpoints (hard bypass returned 401 to logged-in admins)
+- **`routes/auth.ts`** — login response and new `GET /api/auth/me` include `adminRole: { name, permissions }`; **`routes/users.ts`** — `PATCH /api/users/me` (firstName/lastName/email only, 409 on duplicate email)
+- **`routes/support.ts`** — admin ticket list → `support.view`; update/reply → `support.edit`
+
+### 14.4 Validation (`packages/validation`)
+- `adminRoleSchema.permissions` → `string[]` with grant regex; new `createAdminSchema`, `updateAdminSchema`, `updateAccountSchema`, `contentPageSchema`
+
+### 14.5 Admin UI
+- **`lib/permissions.ts`** — catalog of 20 resources × actions (`view/create/edit/delete`), wildcard-aware `can()`; `lib/auth-context.tsx` exposes `permissions`, `roleName`, `isFullAccess`, `can()`, `refreshUser()` (background `/auth/me` refresh on mount so name/email/role stay current)
+- **`components/role-badge.tsx`** — role pill (filled accent + star for `*` full access, light chip otherwise); shown in the header user dropdown and the Admins table
+- **Settings nav** — `team` entry removed; `account` relabeled "Team & Account"; new **Roles & Permissions** (`/settings/roles`, award icon) and **Website Content** (`/settings/content`, file icon) entries; old `/settings/team` redirects to `/settings/account` (dev serves `NEXT_REDIRECT;replace;…;307` digest — browser swaps on hydration)
+- **`/settings/account`** (merged page) — three cards: **My Account** (name/email → `PATCH /users/me` + `refreshUser`), **Admins** (table with role badge, active/suspended status pills, add/edit/suspend/activate/delete with 2-step confirm; own row protected and role select disabled for self; roles fetched tolerantly so `admins.view` without `roles.view` still lists), **Our Team** (public-website members stored under the `team` settings key: ImageUploader (`settings/team` folder, 400×400), reorder ↑/↓, 48×26 visibility pill, bio/LinkedIn/email fields; R2 orphan cleanup — superseded photos deleted on save, abandoned session uploads deleted on leave)
+- **`/settings/roles`** — role cards (member count, "System" tag, full-access badge vs "N permissions" chip) + editor with **permission matrix** (20 resources × 4 actions, row select-all, unsupported cells disabled); full-access roles show a banner and keep `['*']` on save; delete is 2-step confirm (400 system / 409 in-use surfaced from API)
+- **`/settings/content`** — pages table (published/draft pills, monospace slug, updated date), **Tiptap WYSIWYG** (v3 StarterKit with bundled link extension, `immediatelyRender: false`, toolbar: B/I/S, H1–H3, UL/OL, quote, code, HR, link prompt, undo/redo), title→auto-slug until touched, Published/Draft toggle, HTML stored verbatim. Deps: `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-link`, `pm`
+- **Translations** — 122 new en+bn keys inserted via an ASCII-escaping Python script; `translations.ts` verified pure ASCII (71,557 bytes)
+
+### 14.6 Web app (public site)
+- `src/app/[slug]/page.tsx` — server component, `revalidate: 300`, `notFound()` on 404/empty, `generateMetadata` with slug-derived fallback, HTML rendered in `.content-prose`
+- `src/app/team/page.tsx` — renders `visible` members from public `GET /api/settings/team`; `notFound()` while the member list is empty (**/team 404s until the first member is saved**)
+- `src/components/Footer.tsx` — border-top footer with About Us / Privacy Policy / Terms & Conditions / Team links, wired into root layout
+- `globals.css` gained `.content-prose` styles (headings, lists, quotes, tables, code, images; light + dark); `next.config.ts` added `**.r2.dev` remote pattern
+
+### 14.7 Verification
+- Typecheck green: `packages/api`, `packages/validation`, `apps/admin`; web shows only the 2 pre-existing errors (`buttons/page.tsx(273)`, `components/Input.tsx(3)`)
+- Admin pages `/settings/account|roles|content|team` all HTTP 200, zero error markers; web `/`, `/privacy-policy`, `/about-us`, `/terms-and-conditions` HTTP 200 with footer links present
+- **E2E RBAC suite (20+ assertions, all passing)** — super admin CRUD; limited role (`content.view` only): admins/roles/dashboard/support → 403, settings GET → filtered `{}`, settings PUT → 403, content list → 200, content create → 403, own-profile edit → 200; anonymous `/api/pages/admin` → 401; system-role delete → 400; role-in-use delete → 409; own-account delete → 400; content publish/unpublish controls public visibility; test fixtures fully cleaned up (DB left with only Super Admin + `admin@telnd.com` + 3 seed pages)
+
+### 14.8 Notes & gotchas
+- Pre-existing `ADMIN` users without an `AdminUser` row now fail `requireAdmin` on settings/admin routes — onboard them through the new Admins UI so they get a role
+- The permission catalog includes `team.*` grants for the Our Team card; the members themselves live in the `team` settings row (per-key filtering covers them)
+- `upload` routes stay role-guard only (any admin panel user may upload — images are needed by whichever section they're allowed to edit)
+
+### 14.9 Revisions (post-review pass)
+- **Bengali-under-English bug fixed** — the original translation-update script replaced the *first* occurrence of each updated key twice, writing Bengali values into the EN block for `settingsNav.account`, `settingsNav.accountDesc`, `account.title`, `account.description`. Now replaced by block-region classification (EN vs BN); `translations.ts` re-verified pure ASCII (71,529 bytes)
+- **Renames**: "Team & Account" → **Accounts** (nav label, page title, description); `roles.fullAccess` → **Full access**; content pages list heading → **Custom Pages**; content nav description now mentions the website team
+- **Our Team moved** from `/settings/account` → `/settings/content` (still gated by `team.view`/`team.edit`, full member CRUD + reorder + visibility + R2 orphan cleanup carried over). `/settings/content` renders for admins with `content.view` **or** `team.view`, each card gated individually; `/settings/account` is now My Account + Admins only
+- **Website Content restructure**: separate **Static Pages card** — About Us, Privacy Policy, Terms & Conditions (edit-only: no add, no delete, no add button; `STATIC_SLUGS` splits the lists) + **Custom Pages card** keeping the full add/edit/delete system + Our Team card
+- New keys: `content.staticPages`, `content.staticPagesDesc`, `content.customPagesDesc` (en+bn, ASCII-escaped)
+- Re-verified: `tsc` green for `apps/admin`; `/settings/account|content|roles|team` all HTTP 200
+
+### 14.10 Round-2 UI fixes
+- **Static Pages card** — now Title / Updated / "Edit Content" only (slug + status columns removed); description trimmed to "Core pages shown on the website."
+- **Edit Content label** — new key `content.editContent`; static rows' action button and the editor heading for static slugs show "Edit Content" (custom pages keep "Edit page"/"New page")
+- **Editor above Our Team** — the Tiptap editor block now renders before the team card, so editing no longer opens underneath it
+- **"No pages yet."** moved below the custom-pages table, centered
+- **Team card: no more Save button** — every action persists immediately (`persistTeam`: member add/edit → toast, reorder/visibility/delete → silent, errors toast + local revert). Superseded-photo R2 cleanup runs on each successful persist; `SaveButton`/`savingTeam`/outer `<form>` removed (the member form was a nested `<form>` — invalid HTML surfaced when opening Add member)
+- **Hydration fixes (app shell)** — `language-provider`, `theme-provider`, and settings-sidebar collapse no longer read `localStorage`/`matchMedia` during the first render; they initialize from server-consistent defaults and apply stored values in an effect (the classic "Hydration failed" source; `translations.ts` still pure ASCII, 71,394 bytes)
+- Re-verified: `tsc` green; `/settings/content|account|roles` HTTP 200
+
+### 14.11 General-page images incident (root cause + recovery)
+- **Cause**: the RBAC E2E suite's `PUT /settings '{"general":{"applicationName":"TELND"}}'` (super-edit-ok test) hit a handler that **fully replaced** each key's stored JSON — the partial write wiped `favicon`/`primaryLogoLight`/`primaryLogoDark` from the `general` row (2026-09-24T17:25:21Z). R2 objects themselves were never touched (9 objects still in bucket; no settings audit trail exists to consult)
+- **Recovery**: `general` row restored with the last-saved object per slot (all verified HTTP 200): favicon `favicon-mufnztz6k0xac.webp`, light logo `logo-primary-light/web-logo-dark-mufpj5rhbjr5h.webp`, dark logo `logo-primary-dark/web-logo-light-mufpj9fsxwbok.webp`
+- **Hardening**: `PUT /api/settings` now **shallow-merges** plain-object values with the stored row (arrays/primitives replace; explicit `""` still clears) — replaying the exact partial payload no longer clobbers siblings; api tsc green, public `/api/settings/general` returns all three URLs

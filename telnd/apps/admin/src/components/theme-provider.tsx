@@ -27,13 +27,20 @@ function applyTheme(resolved: 'light' | 'dark') {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { user, isAuthenticated } = useAuth();
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem(STORAGE_KEY) as Theme) || 'system';
+  // Start from server-rendered defaults so the first client render matches the
+  // server HTML; the stored/system values are applied after hydration
+  // (localStorage/matchMedia during the first render breaks hydration).
+  const [theme, setThemeState] = useState<Theme>('system');
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+    if (stored && ['light', 'dark', 'system'].includes(stored)) {
+      setThemeState(stored);
+    } else {
+      setResolvedTheme(getSystemTheme());
     }
-    return 'system';
-  });
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => getSystemTheme());
+  }, []);
 
   // Apply theme on mount and when theme changes
   useEffect(() => {

@@ -107,4 +107,95 @@
   .border-default {
     @apply border-gray-200 dark:border-gray-800;
   }
+
+  /* Rich HTML content rendered from CMS pages */
+  .content-prose {
+    @apply max-w-3xl text-base leading-7 text-brand-dark dark:text-gray-300;
+  }
+
+  .content-prose > *:first-child {
+    @apply mt-0;
+  }
+
+  .content-prose h1 {
+    @apply mt-8 mb-4 text-3xl font-bold tracking-tight text-gray-900 dark:text-white;
+  }
+
+  .content-prose h2 {
+    @apply mt-8 mb-4 text-2xl font-bold tracking-tight text-gray-900 dark:text-white;
+  }
+
+  .content-prose h3 {
+    @apply mt-6 mb-3 text-xl font-semibold text-gray-900 dark:text-white;
+  }
+
+  .content-prose h4 {
+    @apply mt-6 mb-3 text-lg font-semibold text-gray-900 dark:text-white;
+  }
+
+  .content-prose p {
+    @apply my-4;
+  }
+
+  .content-prose a {
+    @apply text-primary-700 dark:text-accent-400 underline underline-offset-2 hover:text-primary-600 dark:hover:text-accent-300 transition-colors;
+  }
+
+  .content-prose strong {
+    @apply font-semibold text-gray-900 dark:text-white;
+  }
+
+  .content-prose ul {
+    @apply my-4 list-disc space-y-2 pl-6;
+  }
+
+  .content-prose ol {
+    @apply my-4 list-decimal space-y-2 pl-6;
+  }
+
+  .content-prose li {
+    @apply pl-1;
+  }
+
+  .content-prose li > ul,
+  .content-prose li > ol {
+    @apply my-2;
+  }
+
+  .content-prose blockquote {
+    @apply my-6 border-l-4 border-accent-400/60 dark:border-accent-500/60 bg-gray-50 dark:bg-gray-900/60 px-4 py-3 text-gray-600 dark:text-gray-400 italic;
+  }
+
+  .content-prose hr {
+    @apply my-8 border-gray-200 dark:border-gray-800;
+  }
+
+  .content-prose code {
+    @apply rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-sm text-gray-800 dark:text-gray-200;
+  }
+
+  .content-prose pre {
+    @apply my-6 overflow-x-auto rounded-lg bg-gray-900 dark:bg-black p-4 text-sm text-gray-100;
+  }
+
+  .content-prose pre code {
+    @apply bg-transparent p-0 text-sm text-inherit;
+  }
+
+  .content-prose table {
+    @apply my-6 w-full border-collapse text-sm;
+  }
+
+  .content-prose th,
+  .content-prose td {
+    @apply border border-gray-200 dark:border-gray-800 px-3 py-2 text-left align-top;
+  }
+
+  .content-prose th {
+    @apply bg-gray-50 dark:bg-gray-900 font-semibold text-gray-900 dark:text-white;
+  }
+
+  .content-prose img {
+    @apply my-6 h-auto max-w-full rounded-lg;
+  }
 }
