@@ -6,6 +6,7 @@ import { useLanguage } from '@/components/language-provider';
 import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import RoleBadge from '@/components/role-badge';
+import { EditIcon, DeleteIcon, ConfirmIcon } from '@/components/action-icons';
 
 interface AdminAccount {
   id: string;
@@ -394,20 +395,23 @@ export default function TeamAccountSettingsPage() {
                         </td>
                         <td style={{ padding: '0.625rem 0.75rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {can('admins.edit') && !a.isSelf && (
-                            <RowAction onClick={() => startEditAdmin(a)}>{t('common.edit')}</RowAction>
+                            <RowAction ariaLabel={t('common.edit')} onClick={() => startEditAdmin(a)}>
+                              <EditIcon />
+                            </RowAction>
                           )}
                           {(can('users.edit') || can('admins.edit')) && !a.isSelf && (
-                            <RowAction onClick={() => handleAdminStatus(a)}>
+                            <RowAction ariaLabel={a.isActive ? t('account.suspend') : t('account.activate')} onClick={() => handleAdminStatus(a)}>
                               {a.isActive ? t('account.suspend') : t('account.activate')}
                             </RowAction>
                           )}
                           {can('admins.delete') && !a.isSelf && (
                             <RowAction
                               danger
+                              ariaLabel={pendingDeleteAdmin === a.id ? t('account.confirmDelete') : t('common.delete')}
                               onClick={() => handleAdminDelete(a)}
-                              style={{ fontWeight: pendingDeleteAdmin === a.id ? 700 : 500 }}
+                              style={pendingDeleteAdmin === a.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
                             >
-                              {pendingDeleteAdmin === a.id ? t('account.confirmDelete') : t('common.delete')}
+                              {pendingDeleteAdmin === a.id ? <ConfirmIcon /> : <DeleteIcon />}
                             </RowAction>
                           )}
                         </td>
@@ -421,7 +425,7 @@ export default function TeamAccountSettingsPage() {
         </>
       )}
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n.row-icon-btn:hover { background: var(--accent-light); }`}</style>
       {toast && (
         <Toast
           key={toast.id}
@@ -505,8 +509,10 @@ function RowAction({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
+      title={ariaLabel}
+      className="row-icon-btn"
       style={{
-        background: 'none',
+        background: 'var(--bg-hover)',
         border: 'none',
         padding: '0.25rem 0.5rem',
         fontSize: '0.75rem',
@@ -515,6 +521,10 @@ function RowAction({
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.35 : 1,
         borderRadius: '6px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 26,
         ...style,
       }}
     >

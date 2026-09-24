@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import type { TranslationKey } from '@/lib/translations';
 import ImageUploader from '@/components/image-uploader';
+import { EditIcon, DeleteIcon, ConfirmIcon } from '@/components/action-icons';
 
 interface ContentPage {
   id: string;
@@ -51,6 +52,9 @@ const emptyMember: Omit<TeamMember, 'id'> = {
 // Core pages that get their own card — edit-only, no add/delete.
 const STATIC_SLUGS = ['about-us', 'privacy-policy', 'terms-and-conditions'];
 
+// Rows per page for both server-side lists (Our Team + Custom Pages).
+const PAGE_SIZE = 5;
+
 interface ToastState {
   id: number;
   type: ToastType;
@@ -81,6 +85,79 @@ function Spinner({ size = 14 }: { size?: number }) {
   );
 }
 
+// Shared DataTables-style pager for the two server-side lists (5 rows a page).
+function ListPager({
+  page,
+  totalPages,
+  filteredTotal,
+  loading,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  filteredTotal: number;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const { t } = useLanguage();
+  if (filteredTotal <= 0) return null;
+  const prevDisabled = page <= 1 || loading;
+  const nextDisabled = page >= totalPages || loading;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '0.75rem',
+        marginTop: '0.75rem',
+        paddingTop: '0.75rem',
+        borderTop: '1px solid var(--border-color)',
+        fontSize: '0.75rem',
+        color: 'var(--muted-text)',
+      }}
+    >
+      <span>
+        {t('account.showingRange', {
+          start: (page - 1) * PAGE_SIZE + 1,
+          end: Math.min(page * PAGE_SIZE, filteredTotal),
+          total: filteredTotal,
+        })}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <button
+          type="button"
+          onClick={() => onPageChange(page - 1)}
+          disabled={prevDisabled}
+          style={{
+            ...pagerBtnStyle,
+            opacity: prevDisabled ? 0.45 : 1,
+            cursor: prevDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {t('common.prev')}
+        </button>
+        <span style={{ whiteSpace: 'nowrap' }}>
+          {t('account.pageOf', { page, total: totalPages })}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={nextDisabled}
+          style={{
+            ...pagerBtnStyle,
+            opacity: nextDisabled ? 0.45 : 1,
+            cursor: nextDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {t('common.next')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const moveBtnStyle: React.CSSProperties = {
   background: 'var(--secondary-btn-bg)',
   border: '1px solid var(--border-color)',
@@ -93,6 +170,16 @@ const moveBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
   color: 'var(--text-main)',
   padding: 0,
+};
+
+const pagerBtnStyle: React.CSSProperties = {
+  padding: '0.25rem 0.625rem',
+  borderRadius: '6px',
+  border: '1px solid var(--border-color)',
+  backgroundColor: 'var(--secondary-btn-bg)',
+  color: 'var(--text-main)',
+  fontSize: '0.75rem',
+  fontWeight: 600,
 };
 
 export default function ContentSettingsPage() {
@@ -161,6 +248,42 @@ export default function ContentSettingsPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberFormOpen]);
+
+  // Server-side search + pagination for the member list (DataTables-style,
+  // 5 rows per page). The full list still lives in `members` — it's the
+  // baseline every mutation (reorder/toggle/delete/save) writes back.
+  const [searchInput, setSearchInput] = useState('');
+  const [teamSearch, setTeamSearch] = useState('');
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamRows, setTeamRows] = useState<TeamMember[]>([]);
+  const [teamMeta, setTeamMeta] = useState({ page: 1, totalPages: 1, filteredTotal: 0, total: 0 });
+  const [teamRowsLoading, setTeamRowsLoading] = useState(true);
+
+  // Debounce the search box; a new query always restarts at page 1.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setTeamSearch(searchInput.trim());
+      setTeamPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  // Same server-side search + pagination state for the Custom Pages table.
+  const [pagesSearchInput, setPagesSearchInput] = useState('');
+  const [pagesSearch, setPagesSearch] = useState('');
+  const [pagesPage, setPagesPage] = useState(1);
+  const [pageRows, setPageRows] = useState<ContentPage[]>([]);
+  const [pageMeta, setPageMeta] = useState({ page: 1, totalPages: 1, filteredTotal: 0, total: 0 });
+  const [pageRowsLoading, setPageRowsLoading] = useState(true);
+
+  // Debounce the pages search box; a new query always restarts at page 1.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setPagesSearch(pagesSearchInput.trim());
+      setPagesPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [pagesSearchInput]);
 
   // Baseline of the last persisted team state — used to clean up superseded photos.
   const savedPhotosRef = useRef<Set<string>>(new Set());
@@ -232,6 +355,9 @@ export default function ContentSettingsPage() {
       }
       savedPhotosRef.current = nextPhotos;
       for (const url of nextPhotos) sessionUploadsRef.current.delete(url);
+      // Re-run the server-side list query so the displayed page/search reflects
+      // the mutation (and get clamped if the last page just shrank).
+      void loadTeamRows();
       if (opts?.toast) showToast('success', t('account.teamSaved'));
       return true;
     } catch (err) {
@@ -241,6 +367,7 @@ export default function ContentSettingsPage() {
   }
 
   function moveMember(index: number, delta: number) {
+    if (index < 0) return;
     const target = index + delta;
     if (target < 0 || target >= members.length) return;
     const next = [...members];
@@ -365,6 +492,7 @@ export default function ContentSettingsPage() {
       }
       closeForm();
       await loadPages();
+      void loadPageRows();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
@@ -382,6 +510,7 @@ export default function ContentSettingsPage() {
       await api.delete(`/api/pages/admin/${page.id}`);
       showToast('success', t('content.pageDeleted'));
       await loadPages();
+      void loadPageRows();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     }
@@ -390,15 +519,72 @@ export default function ContentSettingsPage() {
   const contentView = can('content.view');
   const teamView = can('team.view');
   // Split the three seeded core pages out of the user-created custom pages.
+  // (Custom rows come from the server-side query below — pageRows — not from
+  // this full array; only the static card reads straight from `pages`.)
   const staticPages = STATIC_SLUGS.map((slug) => pages.find((p) => p.slug === slug)).filter((p): p is ContentPage => !!p);
-  const customPages = pages.filter((p) => !STATIC_SLUGS.includes(p.slug));
   // Static pages open the editor with an "Edit Content" heading.
   const editingStatic = !!form?.id && STATIC_SLUGS.includes(pages.find((p) => p.id === form.id)?.slug ?? '');
+
+  // Server-side query backing the member list: debounced search + page of 5.
+  const loadTeamRows = useCallback(async () => {
+    setTeamRowsLoading(true);
+    try {
+      const res = await api.get<{
+        success: boolean;
+        data: { items: TeamMember[]; page: number; totalPages: number; filteredTotal: number; total: number };
+      }>(
+        `/api/settings/team/members?search=${encodeURIComponent(teamSearch)}&page=${teamPage}&pageSize=5`,
+      );
+      const d = res.data;
+      setTeamRows(d.items || []);
+      setTeamMeta({ page: d.page, totalPages: d.totalPages, filteredTotal: d.filteredTotal, total: d.total });
+      // The server clamps out-of-range pages — follow it so the pager stays truthful.
+      if (d.page !== teamPage) setTeamPage(d.page);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 403) showToast('error', err.message);
+    } finally {
+      setTeamRowsLoading(false);
+    }
+  }, [teamSearch, teamPage, showToast]);
+
+  useEffect(() => {
+    if (teamView) void loadTeamRows();
+  }, [teamView, loadTeamRows]);
+
+  // Server-side query backing the Custom Pages table (same DataTables shape).
+  const loadPageRows = useCallback(async () => {
+    setPageRowsLoading(true);
+    try {
+      const res = await api.get<{
+        success: boolean;
+        data: { items: ContentPage[]; page: number; totalPages: number; filteredTotal: number; total: number };
+      }>(
+        `/api/pages/admin?search=${encodeURIComponent(pagesSearch)}&page=${pagesPage}&pageSize=${PAGE_SIZE}&exclude=${STATIC_SLUGS.join(',')}`,
+      );
+      const d = res.data;
+      setPageRows(d.items || []);
+      setPageMeta({ page: d.page, totalPages: d.totalPages, filteredTotal: d.filteredTotal, total: d.total });
+      // The server clamps out-of-range pages — follow it so the pager stays truthful.
+      if (d.page !== pagesPage) setPagesPage(d.page);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 403) showToast('error', err.message);
+    } finally {
+      setPageRowsLoading(false);
+    }
+  }, [pagesSearch, pagesPage, showToast]);
+
+  useEffect(() => {
+    if (contentView) void loadPageRows();
+  }, [contentView, loadPageRows]);
 
   if (loading || loadingTeam) {
     return (
       <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-text)' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
+          <Spinner size={18} />
+        </div>
         {t('common.loading')}
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n.row-icon-btn:hover { background: var(--accent-light); }`}</style>
       </div>
     );
   }
@@ -458,7 +644,9 @@ export default function ContentSettingsPage() {
                     </td>
                     <td style={{ padding: '0.625rem 0.75rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {can('content.edit') && (
-                        <RowAction onClick={() => startEdit(page)}>{t('content.editContent')}</RowAction>
+                        <RowAction ariaLabel={t('content.editContent')} onClick={() => startEdit(page)}>
+                          <EditIcon />
+                        </RowAction>
                       )}
                     </td>
                   </tr>
@@ -480,8 +668,46 @@ export default function ContentSettingsPage() {
             marginBottom: '1rem',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)' }}>{t('content.pagesList')}</h3>
+          {/* Header matches the Static Pages / Our Team cards exactly
+              (title mb 0.25rem, description mb 0.75rem) — the search box and
+              Add Page button live in their own row below, like Our Team. */}
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>{t('content.pagesList')}</h3>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>{t('content.customPagesDesc')}</p>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div style={{ position: 'relative', flex: '1 1 auto', maxWidth: '260px' }}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-text)', pointerEvents: 'none' }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={pagesSearchInput}
+                onChange={(e) => setPagesSearchInput(e.target.value)}
+                placeholder={t('content.searchPages')}
+                aria-label={t('content.searchPages')}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem 0.75rem 0.5rem 2rem',
+                  borderRadius: '8px',
+                  border: '1px solid var(--input-border)',
+                  backgroundColor: 'var(--input-bg)',
+                  color: 'var(--text-main)',
+                  fontSize: '0.8125rem',
+                  outline: 'none',
+                }}
+              />
+            </div>
             {can('content.create') && (
               <button
                 type="button"
@@ -498,6 +724,7 @@ export default function ContentSettingsPage() {
                   fontSize: '0.8125rem',
                   fontWeight: 600,
                   cursor: 'pointer',
+                  flexShrink: 0,
                 }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -508,8 +735,6 @@ export default function ContentSettingsPage() {
               </button>
             )}
           </div>
-
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>{t('content.customPagesDesc')}</p>
 
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
@@ -523,8 +748,8 @@ export default function ContentSettingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {customPages.map((page) => (
-                  <tr key={page.id} style={{ borderTop: '1px solid var(--border-color)' }}>
+                {pageRows.map((page) => (
+                  <tr key={page.id} style={{ borderTop: '1px solid var(--border-color)', opacity: pageRowsLoading ? 0.6 : 1 }}>
                     <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-main)', fontWeight: 500 }}>{page.title}</td>
                     <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: '0.75rem' }}>
                       /{page.slug}
@@ -559,11 +784,18 @@ export default function ContentSettingsPage() {
                     </td>
                     <td style={{ padding: '0.625rem 0.75rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {can('content.edit') && (
-                        <RowAction onClick={() => startEdit(page)}>{t('common.edit')}</RowAction>
+                        <RowAction ariaLabel={t('common.edit')} onClick={() => startEdit(page)}>
+                          <EditIcon />
+                        </RowAction>
                       )}
                       {can('content.delete') && (
-                        <RowAction danger onClick={() => handleDelete(page)}>
-                          {pendingDelete === page.id ? t('account.confirmDelete') : t('common.delete')}
+                        <RowAction
+                          danger
+                          ariaLabel={pendingDelete === page.id ? t('account.confirmDelete') : t('common.delete')}
+                          onClick={() => handleDelete(page)}
+                          style={pendingDelete === page.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
+                        >
+                          {pendingDelete === page.id ? <ConfirmIcon /> : <DeleteIcon />}
                         </RowAction>
                       )}
                     </td>
@@ -573,9 +805,25 @@ export default function ContentSettingsPage() {
             </table>
           </div>
 
-          {customPages.length === 0 && (
-            <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', textAlign: 'center', padding: '0.75rem 0' }}>{t('content.noPages')}</p>
+          {pageRowsLoading && (
+            <div role="status" style={{ display: 'flex', justifyContent: 'center', padding: '0.625rem 0' }}>
+              <Spinner size={16} />
+            </div>
           )}
+
+          {pageRows.length === 0 && !pageRowsLoading && (
+            <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', textAlign: 'center', padding: '0.75rem 0' }}>
+              {pagesSearch ? t('common.noResults') : t('content.noPages')}
+            </p>
+          )}
+
+          <ListPager
+            page={pageMeta.page}
+            totalPages={pageMeta.totalPages}
+            filteredTotal={pageMeta.filteredTotal}
+            loading={pageRowsLoading}
+            onPageChange={setPagesPage}
+          />
         </div>
       )}
 
@@ -731,35 +979,58 @@ export default function ContentSettingsPage() {
       {/* ── Our Team (shown on the public website) ── */}
       {teamView && (
         <Section title={t('account.ourTeam')} description={t('account.ourTeamDesc')}>
-            {!memberForm && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-                {can('team.edit') && (
-                  <button
-                    type="button"
-                    onClick={() => setMemberForm({ ...emptyMember })}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.375rem',
-                      background: 'var(--accent)',
-                      color: '#ffffff',
-                      border: 'none',
-                      padding: '0.5rem 0.875rem',
-                      borderRadius: '8px',
-                      fontSize: '0.8125rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    {t('account.addMember')}
-                  </button>
-                )}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ position: 'relative', flex: '1 1 auto', maxWidth: '260px' }}>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--muted-text)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ position: 'absolute', left: '0.625rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder={t('account.searchMembers')}
+                  aria-label={t('account.searchMembers')}
+                  style={{ ...inputStyle, height: '36px', paddingLeft: '2rem' }}
+                />
               </div>
-            )}
+              {can('team.edit') && (
+                <button
+                  type="button"
+                  onClick={() => setMemberForm({ ...emptyMember })}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.375rem',
+                    background: 'var(--accent)',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '0.5rem 0.875rem',
+                    borderRadius: '8px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  {t('account.addMember')}
+                </button>
+              )}
+            </div>
 
             {memberForm && (
               <div
@@ -932,11 +1203,17 @@ export default function ContentSettingsPage() {
               </div>
             )}
 
-            {members.length === 0 && !memberForm && (
-              <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', padding: '0.75rem 0' }}>{t('account.noMembers')}</p>
+            {teamRows.length === 0 && !teamRowsLoading && (
+              <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', padding: '0.75rem 0' }}>
+                {teamSearch ? t('account.noSearchResults') : t('account.noMembers')}
+              </p>
             )}
 
-            {members.map((member, index) => (
+            {teamRows.map((member, index) => {
+              // Where this member sits in the full list — search/pagination only
+              // change which rows are displayed; mutations use the full list.
+              const gi = members.findIndex((m) => m.id === member.id);
+              return (
               <div
                 key={member.id}
                 style={{
@@ -944,16 +1221,17 @@ export default function ContentSettingsPage() {
                   alignItems: 'center',
                   gap: '0.75rem',
                   padding: '0.75rem 0',
-                  borderTop: index === 0 && !memberForm ? 'none' : '1px solid var(--border-color)',
+                  borderTop: index === 0 ? 'none' : '1px solid var(--border-color)',
+                  opacity: teamRowsLoading ? 0.6 : 1,
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                   <button
                     type="button"
                     aria-label={t('account.moveUp')}
-                    onClick={() => moveMember(index, -1)}
-                    disabled={!can('team.edit') || index === 0}
-                    style={{ ...moveBtnStyle, opacity: !can('team.edit') || index === 0 ? 0.35 : 1 }}
+                    onClick={() => moveMember(gi, -1)}
+                    disabled={!can('team.edit') || gi <= 0}
+                    style={{ ...moveBtnStyle, opacity: !can('team.edit') || gi <= 0 ? 0.35 : 1 }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="18 15 12 9 6 15" />
@@ -962,9 +1240,9 @@ export default function ContentSettingsPage() {
                   <button
                     type="button"
                     aria-label={t('account.moveDown')}
-                    onClick={() => moveMember(index, 1)}
-                    disabled={!can('team.edit') || index === members.length - 1}
-                    style={{ ...moveBtnStyle, opacity: !can('team.edit') || index === members.length - 1 ? 0.35 : 1 }}
+                    onClick={() => moveMember(gi, 1)}
+                    disabled={!can('team.edit') || gi < 0 || gi >= members.length - 1}
+                    style={{ ...moveBtnStyle, opacity: !can('team.edit') || gi < 0 || gi >= members.length - 1 ? 0.35 : 1 }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="6 9 12 15 18 9" />
@@ -1033,21 +1311,44 @@ export default function ContentSettingsPage() {
                 {can('team.edit') && (
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <RowAction ariaLabel={t('common.edit')} onClick={() => setMemberForm({ ...member })}>
-                      {t('common.edit')}
+                      <EditIcon />
                     </RowAction>
-                    <RowAction ariaLabel={t('common.delete')} danger onClick={() => removeMember(member)}>
-                      {pendingMemberDelete === member.id ? t('account.confirmDelete') : t('common.delete')}
+                    <RowAction
+                      danger
+                      ariaLabel={pendingMemberDelete === member.id ? t('account.confirmDelete') : t('common.delete')}
+                      onClick={() => removeMember(member)}
+                      style={pendingMemberDelete === member.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
+                    >
+                      {pendingMemberDelete === member.id ? <ConfirmIcon /> : <DeleteIcon />}
                     </RowAction>
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
+
+            {/* Spinner for the server-side search/pagination query — rows stay
+                visible (dimmed) while it runs; this is the only thing shown
+                when the current page is empty mid-query. */}
+            {teamRowsLoading && (
+              <div role="status" style={{ display: 'flex', justifyContent: 'center', padding: '0.625rem 0' }}>
+                <Spinner size={16} />
+              </div>
+            )}
+
+            <ListPager
+              page={teamMeta.page}
+              totalPages={teamMeta.totalPages}
+              filteredTotal={teamMeta.filteredTotal}
+              loading={teamRowsLoading}
+              onPageChange={setTeamPage}
+            />
           </Section>
       )}
 
 
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n.row-icon-btn:hover { background: var(--accent-light); }`}</style>
       {toast && (
         <Toast
           key={toast.id}
@@ -1386,11 +1687,12 @@ function VisibilityToggle({ visible, onChange, disabled }: { visible: boolean; o
   );
 }
 
-function RowAction({ children, onClick, danger, ariaLabel, disabled, style }: {
+function RowAction({ children, onClick, danger, ariaLabel, title, disabled, style }: {
   children?: React.ReactNode;
   onClick: () => void;
   danger?: boolean;
   ariaLabel?: string;
+  title?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
 }) {
@@ -1400,8 +1702,10 @@ function RowAction({ children, onClick, danger, ariaLabel, disabled, style }: {
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
+      title={title ?? ariaLabel}
+      className="row-icon-btn"
       style={{
-        background: 'none',
+        background: 'var(--bg-hover)',
         border: 'none',
         padding: '0.25rem 0.5rem',
         fontSize: '0.75rem',
@@ -1410,6 +1714,10 @@ function RowAction({ children, onClick, danger, ariaLabel, disabled, style }: {
         cursor: disabled ? 'not-allowed' : 'pointer',
         borderRadius: '6px',
         opacity: disabled ? 0.4 : 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 26,
         ...style,
       }}
     >

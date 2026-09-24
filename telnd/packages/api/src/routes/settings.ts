@@ -59,6 +59,55 @@ function requireKeyEdit(key: string) {
   };
 }
 
+function requireKeyView(key: string) {
+  return async (c: any, next: any) => {
+    if (!canViewKey(c.get('admin'), key)) {
+      const perm = KEY_PERMISSIONS[key];
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: `Missing permission: ${perm ? perm.view : '*'}` },
+      }, 403);
+    }
+    await next();
+  };
+}
+
+// Server-side search + pagination for the Our Team list (DataTables-style).
+// Members live in one settings JSON row, so filtering/slicing happens here
+// and the client only ever renders one page of results.
+settings.get('/team/members', requireKeyView('team'), async (c) => {
+  const search = String(c.req.query('search') ?? '').trim().toLowerCase();
+  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '5', 10) || 5));
+
+  const row = await prisma.setting.findUnique({ where: { key: 'team' } });
+  const value = (row?.value ?? {}) as { members?: unknown };
+  const members = Array.isArray(value.members) ? (value.members as any[]) : [];
+
+  const filtered = search
+    ? members.filter((m) =>
+        [m?.name, m?.position, m?.email].some((v) => String(v ?? '').toLowerCase().includes(search)),
+      )
+    : members;
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Clamp so an out-of-range page (e.g. after a delete) returns the last page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+
+  return c.json({
+    success: true,
+    data: {
+      items: filtered.slice(start, start + pageSize),
+      page: safePage,
+      pageSize,
+      totalPages,
+      filteredTotal: filtered.length,
+      total: members.length,
+    },
+  });
+});
+
 settings.get('/', async (c) => {
   const admin = c.get('admin');
   const rows = await prisma.setting.findMany();
@@ -164,6 +213,7 @@ settings.post('/r2/test', requireKeyEdit('r2'), async (c) => {
   return c.json({ success: false, error: { code: 'R2_TEST_FAILED', message: result.error || 'Connection failed' } }, 400);
 });
 
+// Registered before the single-segment '/:key' catch-all below.
 settings.get('/:key', async (c) => {
   const key = c.req.param('key');
   if (!canViewKey(c.get('admin'), key)) {

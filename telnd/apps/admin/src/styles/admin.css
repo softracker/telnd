@@ -15,6 +15,7 @@
   --bg-main: #f4f5f6;
   --bg-secondary: #f9fafb;
   --bg-hover: #f0f0f0;
+  --secondary-btn-bg: #f0f0f0;
   --border-color: rgba(0,0,0,0.06);
   --input-bg: #ffffff;
   --input-border: #d1d5db;
@@ -46,6 +47,7 @@
   --bg-main: #12141a;
   --bg-secondary: #16161e;
   --bg-hover: #1e293b;
+  --secondary-btn-bg: #1e293b;
   --border-color: rgba(255,255,255,0.08);
   --input-bg: #1f2937;
   --input-border: #374151;

@@ -8,7 +8,7 @@ import { translations, type TranslationKey, type Language } from '@/lib/translat
 interface LanguageContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
-  t: (key: TranslationKey) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
@@ -57,8 +57,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated]);
 
-  const t = useCallback((key: TranslationKey): string => {
-    return translations[language][key] || translations.en[key] || key;
+  const t = useCallback((key: TranslationKey, params?: Record<string, string | number>): string => {
+    const raw = translations[language][key] || translations.en[key] || key;
+    if (!params) return raw;
+    // Optional {placeholder} interpolation — t('account.pageOf', { page: 1, total: 3 })
+    return raw.replace(/\{(\w+)\}/g, (match, name) =>
+      Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match,
+    );
   }, [language]);
 
   return (

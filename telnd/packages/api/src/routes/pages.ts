@@ -27,10 +27,59 @@ pages.get('/', async (c) => {
 });
 
 // Admin: list all pages including drafts.
+// With ?search/&page/&pageSize it switches to DataTables-style paging (all
+// filtering + slicing server-side); without params it returns the full array
+// for clients that need every row (e.g. the static-pages card).
 // NOTE: registered before '/:slug' so 'admin' is never treated as a slug.
 pages.get('/admin', requireAdmin, requirePermission('content.view'), async (c) => {
+  const search = String(c.req.query('search') ?? '').trim().toLowerCase();
+  const wantsPaging =
+    search.length > 0 ||
+    c.req.query('page') !== undefined ||
+    c.req.query('pageSize') !== undefined ||
+    c.req.query('exclude') !== undefined;
+
   const list = await prisma.contentPage.findMany({ orderBy: { updatedAt: 'desc' } });
-  return c.json({ success: true, data: list });
+
+  if (!wantsPaging) {
+    return c.json({ success: true, data: list });
+  }
+
+  // ?exclude=slug1,slug2 — lets the admin Custom Pages table skip the three
+  // core pages (they have their own edit-only card) before paging is applied.
+  const exclude = String(c.req.query('exclude') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const base = exclude.length ? list.filter((p) => !exclude.includes(p.slug)) : list;
+  let filtered = base;
+  if (search) {
+    filtered = filtered.filter((p) =>
+      [p.title, p.slug, p.isPublished ? 'published' : 'draft'].some((v) =>
+        String(v).toLowerCase().includes(search),
+      ),
+    );
+  }
+
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '5', 10) || 5));
+  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Clamp so an out-of-range page (e.g. after a delete) returns the last page.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+
+  return c.json({
+    success: true,
+    data: {
+      items: filtered.slice(start, start + pageSize),
+      page: safePage,
+      pageSize,
+      totalPages,
+      filteredTotal: filtered.length,
+      total: base.length,
+    },
+  });
 });
 
 pages.post('/admin', requireAdmin, requirePermission('content.create'), validate(contentPageSchema), async (c) => {

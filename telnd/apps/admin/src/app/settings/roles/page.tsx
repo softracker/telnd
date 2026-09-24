@@ -6,6 +6,7 @@ import { useLanguage } from '@/components/language-provider';
 import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import RoleBadge from '@/components/role-badge';
+import { EditIcon, DeleteIcon, ConfirmIcon } from '@/components/action-icons';
 import {
   PERMISSION_RESOURCES,
   ALL_ACTIONS,
@@ -291,11 +292,18 @@ export default function RolesSettingsPage() {
                   </span>
                   <span style={{ display: 'inline-flex', gap: '0.25rem' }}>
                     {can('roles.edit') && (
-                      <RowAction onClick={() => startEdit(role)}>{t('common.edit')}</RowAction>
+                      <RowAction ariaLabel={t('common.edit')} onClick={() => startEdit(role)}>
+                        <EditIcon />
+                      </RowAction>
                     )}
                     {can('roles.delete') && !role.isSystem && (
-                      <RowAction danger onClick={() => handleDelete(role)}>
-                        {pendingDelete === role.id ? t('account.confirmDelete') : t('common.delete')}
+                      <RowAction
+                        danger
+                        ariaLabel={pendingDelete === role.id ? t('account.confirmDelete') : t('common.delete')}
+                        onClick={() => handleDelete(role)}
+                        style={pendingDelete === role.id ? { background: 'rgba(239, 68, 68, 0.12)' } : undefined}
+                      >
+                        {pendingDelete === role.id ? <ConfirmIcon /> : <DeleteIcon />}
                       </RowAction>
                     )}
                   </span>
@@ -470,7 +478,7 @@ export default function RolesSettingsPage() {
         </form>
       )}
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n.row-icon-btn:hover { background: var(--accent-light); }`}</style>
       {toast && (
         <Toast
           key={toast.id}
@@ -506,13 +514,22 @@ function Field({ label, required, children }: { label: string; required?: boolea
   );
 }
 
-function RowAction({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+function RowAction({ children, onClick, danger, ariaLabel, style }: {
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  ariaLabel?: string;
+  style?: React.CSSProperties;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      className="row-icon-btn"
       style={{
-        background: 'none',
+        background: 'var(--bg-hover)',
         border: 'none',
         padding: '0.25rem 0.5rem',
         fontSize: '0.75rem',
@@ -520,6 +537,11 @@ function RowAction({ children, onClick, danger }: { children: React.ReactNode; o
         color: danger ? 'var(--error-text)' : 'var(--accent)',
         cursor: 'pointer',
         borderRadius: '6px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 26,
+        ...style,
       }}
     >
       {children}

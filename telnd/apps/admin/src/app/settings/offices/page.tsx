@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import Toast, { type ToastType } from '@/components/toast';
+import { EditIcon, DeleteIcon } from '@/components/action-icons';
 
 interface Office {
   id: string;
@@ -276,16 +277,24 @@ export default function OfficesSettingsPage() {
                     }} />
                   </button>
                 </div>
-                <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                  <button type="button" onClick={() => openEdit(office)} style={rowButtonStyle}>
-                    {t('common.edit')}
+                <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(office)}
+                    aria-label={t('common.edit')}
+                    title={t('common.edit')}
+                    style={{ ...rowButtonStyle, padding: '0.375rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <EditIcon />
                   </button>
                   <button
                     type="button"
                     onClick={() => removeOffice(office.id)}
-                    style={{ ...rowButtonStyle, color: 'var(--error-text, #ef4444)' }}
+                    aria-label={t('common.delete')}
+                    title={t('common.delete')}
+                    style={{ ...rowButtonStyle, padding: '0.375rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--error-text, #ef4444)' }}
                   >
-                    {t('common.delete')}
+                    <DeleteIcon />
                   </button>
                 </div>
               </div>
@@ -469,8 +478,8 @@ export default function OfficesSettingsPage() {
 const rowButtonStyle: React.CSSProperties = {
   padding: '0.375rem 0.75rem',
   borderRadius: '6px',
-  border: '1px solid var(--border-color)',
-  backgroundColor: 'var(--card-bg)',
+  border: 'none',
+  backgroundColor: 'var(--bg-hover)',
   color: 'var(--text-main)',
   fontSize: '0.75rem',
   fontWeight: 600,
