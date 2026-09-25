@@ -59,6 +59,9 @@ userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c)
   if (body.firstName !== undefined) data.firstName = body.firstName;
   if (body.lastName !== undefined) data.lastName = body.lastName;
   if (body.email !== undefined) data.email = body.email;
+  // Empty string is normalized to null so "remove photo" and "already empty"
+  // end up in the same stored state.
+  if (body.avatar !== undefined) data.avatar = body.avatar || null;
 
   const user = await prisma.user.update({ where: { id: userId }, data });
   const { passwordHash, ...safeUser } = user;

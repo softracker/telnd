@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from './api';
+import { api, ApiError } from './api';
 
 interface AdminRole {
   name: string;
@@ -79,8 +79,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.success && response.data) {
         persistUser(response.data);
       }
-    } catch {
-      // Keep the cached user when offline / session expired — login flow handles that.
+    } catch (err) {
+      // 401/403 means the session is gone server-side (account suspended —
+      // suspend revokes sessions and refresh tokens — signed out elsewhere,
+      // or deleted). Drop the cached identity on this page load so
+      // AdminLayout redirects to /login: the next refresh logs them out.
+      // Any other failure (API restarting, offline) keeps the cached user.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        localStorage.removeItem(USER_KEY);
+        setUser(null);
+      }
     }
   }, [persistUser]);
 

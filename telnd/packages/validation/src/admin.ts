@@ -46,6 +46,9 @@ export const updateAccountSchema = z.object({
   firstName: z.string().min(1).max(50).optional(),
   lastName: z.string().min(1).max(50).optional(),
   email: emailSchema.optional(),
+  // Profile photo: a public URL minted by POST /upload/image (the bytes live
+  // in R2), or null/"" to clear it. Raw file data is never accepted here.
+  avatar: z.string().max(1000).nullable().optional(),
 });
 
 export const contentPageSchema = z.object({

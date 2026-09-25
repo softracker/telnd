@@ -168,12 +168,17 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
     c.req.query('page') !== undefined ||
     c.req.query('pageSize') !== undefined;
 
+  // Your own account lives in the My Account card above this list — the
+  // Admins list deliberately never includes the viewer themselves, so the
+  // same row isn't shown twice. (Self password reset moves to a future
+  // Security tab; other admins' regenerate action is unaffected.)
+  const selfId = c.get('user')?.id;
+
   const users = await prisma.user.findMany({
-    where: { role: 'ADMIN' },
+    where: { role: 'ADMIN', ...(selfId ? { NOT: { id: selfId } } : {}) },
     orderBy: { createdAt: 'desc' },
     include: { adminUser: { include: { role: true } } },
   });
-  const selfId = c.get('user')?.id;
 
   const all = users.map((u) => ({
     id: u.id,

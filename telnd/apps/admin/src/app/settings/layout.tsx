@@ -1,6 +1,7 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
+import { SETTINGS_SECTION_BY_HREF, sectionPermitted } from '@/lib/permissions';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
@@ -110,7 +111,7 @@ const settingsNavKeys = [
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, can } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useLanguage();
@@ -159,11 +160,16 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
 
   if (isLoading || !isAuthenticated) return null;
 
-  const settingsNav = settingsNavKeys.map(item => ({
-    ...item,
-    label: t(`settingsNav.${item.key}` as any),
-    description: t(`settingsNav.${item.key}Desc` as any),
-  }));
+  // Sections the current role has no grant for are not options at all —
+  // they never render in the nav (desktop or mobile; middleware covers a
+  // typed URL with a 404).
+  const settingsNav = settingsNavKeys
+    .filter(item => sectionPermitted(SETTINGS_SECTION_BY_HREF[item.href], can))
+    .map(item => ({
+      ...item,
+      label: t(`settingsNav.${item.key}` as any),
+      description: t(`settingsNav.${item.key}Desc` as any),
+    }));
 
   const filtered = settingsNav.filter(
     (item) =>

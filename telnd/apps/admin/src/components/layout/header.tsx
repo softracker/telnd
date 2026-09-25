@@ -78,7 +78,16 @@ export default function Header({
         <div ref={dropdownRef} style={{ position: 'relative' }}>
           <div className="admin-user" onClick={() => setDropdownOpen(!dropdownOpen)}>
             <div className="admin-user-avatar">
-              {user?.firstName?.[0]?.toUpperCase() || 'A'}
+              {user?.avatar ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={user.avatar}
+                  alt={`${user.firstName} ${user.lastName}`}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                user?.firstName?.[0]?.toUpperCase() || 'A'
+              )}
             </div>
             <span className="admin-user-name">{user?.firstName} {user?.lastName}</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-light)', flexShrink: 0 }}><polyline points="6 9 12 15 18 9"/></svg>

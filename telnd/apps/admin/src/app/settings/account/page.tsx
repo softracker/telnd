@@ -5,6 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
+import ImageUploader from '@/components/image-uploader';
 import RoleBadge from '@/components/role-badge';
 import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon } from '@/components/action-icons';
 import { ListPager } from '@/components/list-pager';
@@ -88,7 +89,7 @@ const inviteNoteStyle = {
 
 export default function TeamAccountSettingsPage() {
   const { t } = useLanguage();
-  const { user, can, refreshUser, isFullAccess } = useAuth();
+  const { user, can, refreshUser, isFullAccess, roleName } = useAuth();
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastIdRef = useRef(0);
@@ -97,8 +98,24 @@ export default function TeamAccountSettingsPage() {
   }, []);
 
   // ── My account ──
-  const [profile, setProfile] = useState({ firstName: '', lastName: '', email: '' });
+  // Compact by default: picture, name, email, edit. The pencil expands this
+  // card into the full editor — photo upload, name, and email.
+  const [profile, setProfile] = useState<{
+    firstName: string;
+    lastName: string;
+    email: string;
+    avatar: string | null;
+  }>({ firstName: '', lastName: '', email: '', avatar: null });
+  const [profileEditing, setProfileEditing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  // True while the photo is in flight — Save and Enter stay inert until it
+  // lands, so the profile is never persisted mid-upload.
+  const [profileUploading, setProfileUploading] = useState(false);
+
+  // Last persisted photo. Tells a fresh upload (pending — must be swept if
+  // the edit is abandoned) apart from the saved one (survives until replaced).
+  const savedAvatarRef = useRef<string | null>(null);
+  const sessionUploadsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (user) {
@@ -106,17 +123,86 @@ export default function TeamAccountSettingsPage() {
         firstName: user.firstName || '',
         lastName: user.lastName || '',
         email: user.email || '',
+        avatar: user.avatar ?? null,
       });
+      savedAvatarRef.current = user.avatar ?? null;
     }
   }, [user]);
 
+  const deleteImage = useCallback((url: string) => {
+    // Best-effort: a rare storage leak beats blocking the UI on cleanup.
+    api.delete('/api/upload/image', { url }).catch(() => {});
+  }, []);
+
+  // Photos uploaded this visit that never got saved — sweep them when the
+  // page unmounts (same idea as the Our Team photo tracking).
+  useEffect(() => {
+    const pending = sessionUploadsRef.current;
+    return () => {
+      for (const url of pending) api.deleteKeepalive('/api/upload/image', { url });
+    };
+  }, []);
+
+  function handleAvatarUpload(url: string) {
+    const current = profile.avatar;
+    // Replacing an upload that was never saved — drop the orphan right away.
+    if (current && current !== url && sessionUploadsRef.current.has(current)) {
+      sessionUploadsRef.current.delete(current);
+      deleteImage(current);
+    }
+    sessionUploadsRef.current.add(url);
+    setProfile((p) => ({ ...p, avatar: url }));
+  }
+
+  function handleAvatarRemove() {
+    const current = profile.avatar;
+    // Only a never-saved upload is deleted immediately; the saved photo stays
+    // until the removal is actually persisted (Cancel restores it untouched).
+    if (current && sessionUploadsRef.current.has(current)) {
+      sessionUploadsRef.current.delete(current);
+      deleteImage(current);
+    }
+    setProfile((p) => ({ ...p, avatar: null }));
+  }
+
+  function cancelProfileEdit() {
+    const current = profile.avatar;
+    if (current && sessionUploadsRef.current.has(current)) {
+      sessionUploadsRef.current.delete(current);
+      deleteImage(current);
+    }
+    if (user) {
+      setProfile({
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || '',
+        avatar: user.avatar ?? null,
+      });
+    }
+    setProfileEditing(false);
+  }
+
   async function handleProfileSave(e: FormEvent) {
     e.preventDefault();
+    if (profileUploading) return;
     setSavingProfile(true);
     try {
-      await api.patch('/api/users/me', profile);
+      await api.patch('/api/users/me', {
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        email: profile.email,
+        avatar: profile.avatar,
+      });
+      // Photo lifecycle on success: the new upload graduates from pending; a
+      // replaced or cleared saved photo is now unreferenced — remove it.
+      const next = profile.avatar;
+      const previous = savedAvatarRef.current;
+      if (next) sessionUploadsRef.current.delete(next);
+      if (previous && previous !== next) deleteImage(previous);
+      savedAvatarRef.current = next ?? null;
       await refreshUser();
       showToast('success', t('account.profileSaved'));
+      setProfileEditing(false);
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
@@ -133,6 +219,9 @@ export default function TeamAccountSettingsPage() {
   // moment the two addresses match.
   const [emailErrorArmed, setEmailErrorArmed] = useState(false);
   const [pendingDeleteAdmin, setPendingDeleteAdmin] = useState<string | null>(null);
+  // Two-click confirm for suspend/activate — suspend revokes every session and
+  // logs the target out, so a stray click must not fire it.
+  const [pendingSuspendAdmin, setPendingSuspendAdmin] = useState<string | null>(null);
   // Two-click confirm + in-flight spinner for the password-regenerate action.
   const [pendingRegenAdmin, setPendingRegenAdmin] = useState<string | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
@@ -280,6 +369,13 @@ export default function TeamAccountSettingsPage() {
   }
 
   async function handleAdminStatus(a: AdminAccount) {
+    // Two-click confirm (mirrors delete/regenerate): the first click only
+    // arms the button; the second one actually changes the status.
+    if (pendingSuspendAdmin !== a.id) {
+      setPendingSuspendAdmin(a.id);
+      return;
+    }
+    setPendingSuspendAdmin(null);
     try {
       if (a.isActive) {
         await api.patch(`/api/admin/users/${a.id}/suspend`, {});
@@ -350,32 +446,112 @@ export default function TeamAccountSettingsPage() {
         <>
           {/* ── My Account ── */}
           <Section title={t('account.myAccount')} description={t('account.myAccountDesc')}>
-            <form onSubmit={handleProfileSave}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            {profileEditing ? (
+              <form onSubmit={handleProfileSave}>
+                <ImageUploader
+                  label={t('account.photo')}
+                  value={profile.avatar ?? undefined}
+                  folder="avatars"
+                  maxWidth={512}
+                  maxHeight={512}
+                  quality={85}
+                  onUpload={handleAvatarUpload}
+                  onRemove={handleAvatarRemove}
+                  onUploadingChange={setProfileUploading}
+                />
+                {/* Breathing room between the uploader and the name fields. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+                  <Input
+                    label={t('account.firstName')}
+                    value={profile.firstName}
+                    onChange={(v) => setProfile((p) => ({ ...p, firstName: v }))}
+                    required
+                  />
+                  <Input
+                    label={t('account.lastName')}
+                    value={profile.lastName}
+                    onChange={(v) => setProfile((p) => ({ ...p, lastName: v }))}
+                    required
+                  />
+                </div>
                 <Input
-                  label={t('account.firstName')}
-                  value={profile.firstName}
-                  onChange={(v) => setProfile((p) => ({ ...p, firstName: v }))}
+                  label={t('account.email')}
+                  value={profile.email}
+                  onChange={(v) => setProfile((p) => ({ ...p, email: v }))}
+                  type="email"
                   required
                 />
-                <Input
-                  label={t('account.lastName')}
-                  value={profile.lastName}
-                  onChange={(v) => setProfile((p) => ({ ...p, lastName: v }))}
-                  required
-                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button
+                    type="button"
+                    onClick={cancelProfileEdit}
+                    disabled={savingProfile}
+                    style={{
+                      background: 'var(--secondary-btn-bg)',
+                      color: 'var(--text-main)',
+                      border: '1px solid var(--border-color)',
+                      padding: '0.5rem 0.875rem',
+                      borderRadius: '8px',
+                      fontSize: '0.8125rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <SaveButton saving={savingProfile || profileUploading} label={t('account.saveProfile')} />
+                </div>
+              </form>
+            ) : (
+              /* Compact identity card — picture, name, email, edit pencil. */
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {profile.avatar ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={profile.avatar}
+                    alt={`${profile.firstName} ${profile.lastName}`}
+                    style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)', flexShrink: 0 }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: '50%',
+                      background: 'var(--secondary-btn-bg)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1rem',
+                      fontWeight: 600,
+                      color: 'var(--text-main)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {(profile.firstName || profile.email || '?').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                      {profile.firstName} {profile.lastName}
+                    </span>
+                    {roleName ? (
+                      <RoleBadge name={roleName} full={isFullAccess} small />
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--muted-text)' }}>{t('account.noRole')}</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {profile.email}
+                  </div>
+                </div>
+                <RowAction ariaLabel={t('common.edit')} onClick={() => setProfileEditing(true)}>
+                  <EditIcon />
+                </RowAction>
               </div>
-              <Input
-                label={t('account.email')}
-                value={profile.email}
-                onChange={(v) => setProfile((p) => ({ ...p, email: v }))}
-                type="email"
-                required
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <SaveButton saving={savingProfile} label={t('account.saveProfile')} />
-              </div>
-            </form>
+            )}
           </Section>
 
           {/* ── Admin Accounts ── */}
@@ -505,9 +681,6 @@ export default function TeamAccountSettingsPage() {
                       <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
                         {a.firstName} {a.lastName}
                       </span>
-                      {a.isSelf && (
-                        <span style={{ fontSize: '0.6875rem', color: 'var(--muted-text)' }}>({t('account.you')})</span>
-                      )}
                       {a.roleName ? (
                         <RoleBadge name={a.roleName} full={a.permissions.includes('*')} small />
                       ) : (
@@ -563,8 +736,22 @@ export default function TeamAccountSettingsPage() {
                       </RowAction>
                     )}
                     {(can('users.edit') || can('admins.edit')) && !a.isSelf && (
-                      <RowAction ariaLabel={a.isActive ? t('account.suspend') : t('account.activate')} onClick={() => handleAdminStatus(a)}>
-                        {a.isActive ? t('account.suspend') : t('account.activate')}
+                      <RowAction
+                        ariaLabel={
+                          pendingSuspendAdmin === a.id
+                            ? t('account.confirmStatus')
+                            : a.isActive
+                              ? t('account.suspend')
+                              : t('account.activate')
+                        }
+                        onClick={() => handleAdminStatus(a)}
+                        style={pendingSuspendAdmin === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {pendingSuspendAdmin === a.id
+                          ? t('account.confirmStatus')
+                          : a.isActive
+                            ? t('account.suspend')
+                            : t('account.activate')}
                       </RowAction>
                     )}
                     {can('admins.delete') && !a.isSelf && (

@@ -67,3 +67,48 @@ export function can(permissions: string[] | null | undefined, permission: string
 export function isFullAccess(permissions: string[] | null | undefined): boolean {
   return !!permissions && permissions.includes('*');
 }
+
+/**
+ * Settings sections in nav order: the grant required to open each one
+ * (null = open to every signed-in admin). Single source of truth for the
+ * settings nav filter, the /settings index redirect, and middleware's
+ * direct-URL guard — a section whose grant is missing is hidden AND
+ * answers a typed URL with a plain 404.
+ */
+export interface SettingsSection {
+  href: string;
+  /** "resource.action", any-of list, or null when the section is open. */
+  permission: string | string[] | null;
+}
+
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  { href: '/settings/general', permission: 'general.view' },
+  { href: '/settings/account', permission: 'admins.view' },
+  { href: '/settings/roles', permission: 'roles.view' },
+  { href: '/settings/security', permission: 'security.view' },
+  { href: '/settings/login-providers', permission: 'loginProviders.view' },
+  { href: '/settings/captcha', permission: 'captcha.view' },
+  { href: '/settings/smtp', permission: 'email.view' },
+  { href: '/settings/object-storage', permission: 'storage.view' },
+  { href: '/settings/offices', permission: 'offices.view' },
+  { href: '/settings/organization', permission: 'organization.view' },
+  // The content page hosts both the pages list and the team list.
+  { href: '/settings/content', permission: ['content.view', 'team.view'] },
+  { href: '/settings/preferences', permission: null },
+  { href: '/settings/payment', permission: 'payment.view' },
+  { href: '/settings/gateway', permission: 'gateway.view' },
+  { href: '/settings/about', permission: null },
+];
+
+/** href → grant for quick lookups (settings nav, middleware). */
+export const SETTINGS_SECTION_BY_HREF: Record<string, string | string[] | null> =
+  Object.fromEntries(SETTINGS_SECTIONS.map((s) => [s.href, s.permission]));
+
+/** Does a section's grant (any-of list) pass the given permission check? */
+export function sectionPermitted(
+  permission: string | string[] | null | undefined,
+  can: (permission: string) => boolean,
+): boolean {
+  if (!permission) return true;
+  return Array.isArray(permission) ? permission.some(can) : can(permission);
+}
