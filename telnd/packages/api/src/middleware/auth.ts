@@ -79,6 +79,9 @@ export async function authMiddleware(c: Context, next: Next) {
 
     c.set('user', session.user);
     c.set('userId', session.user.id);
+    // Raw session token — lets routes identify the caller's own session row
+    // (e.g. the trusted-devices list flagging "This device").
+    c.set('token', token);
 
     await next();
   } catch (error) {

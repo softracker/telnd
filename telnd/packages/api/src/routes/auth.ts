@@ -1,12 +1,13 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema } from '@telnd/validation';
+import { signupSchema, loginSchema, resetPasswordSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
 import { sign, verify } from 'hono/jwt';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
+import { findUsablePasswordToken } from '../lib/passwordTokens';
 
 type AuthEnv = {
   Variables: {
@@ -231,6 +232,11 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
       userId: user.id,
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      // Captured so the Security page can show Last login / Trusted devices.
+      // "unknown" (no forwarding headers, e.g. local dev) is stored as null
+      // and rendered as "Not recorded" instead of a fake address.
+      ipAddress: ip === 'unknown' ? null : ip,
+      userAgent: c.req.header('user-agent') || null,
     },
   });
 
@@ -274,6 +280,70 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
       },
     },
   });
+});
+
+// Consume a reset/invite link and set the new password. Single-use is
+// enforced inside one transaction: the token row is deleted alongside the
+// new hash, and every session is revoked — the next sign-in must use the
+// new password. The only way to receive such a link is a super admin's
+// regenerate action, an admin invite, or the Security page while signed in —
+// there is deliberately no unauthenticated "forgot password" entry point.
+authRoutes.post('/reset-password', rateLimit({ windowMs: 60000, max: 5 }), validate(resetPasswordSchema), async (c) => {
+  const body = c.get('validatedData');
+  const row = await findUsablePasswordToken(body.token, ['reset', 'invite']);
+  if (!row) {
+    return c.json({
+      success: false,
+      error: { code: 'TOKEN_INVALID', message: 'This link is invalid or has expired. Ask your administrator to send a new one.' },
+    }, 400);
+  }
+  const user = await prisma.user.findUnique({ where: { id: row.userId } });
+  if (!user || !user.isActive) {
+    await prisma.passwordToken.deleteMany({ where: { id: row.id } }).catch(() => {});
+    return c.json({
+      success: false,
+      error: { code: 'TOKEN_INVALID', message: 'This link is invalid or has expired. Ask your administrator to send a new one.' },
+    }, 400);
+  }
+
+  const bcrypt = await import('bcryptjs');
+  const passwordHash = await bcrypt.hash(body.password, 12);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Spending the token: a second use of the same link finds nothing.
+      const consumed = await tx.passwordToken.deleteMany({ where: { id: row.id, usedAt: null } });
+      if (consumed.count === 0) throw new Error('TOKEN_ALREADY_USED');
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      // Password changed out-of-band — every existing session is suspect.
+      await tx.session.deleteMany({ where: { userId: user.id } });
+    });
+  } catch {
+    return c.json({
+      success: false,
+      error: { code: 'TOKEN_INVALID', message: 'This link is invalid or has expired. Ask your administrator to send a new one.' },
+    }, 400);
+  }
+
+  if (user.role === 'ADMIN') {
+    try {
+      await prisma.adminAction.create({
+        data: {
+          adminId: user.id,
+          action: 'RESET_PASSWORD_VIA_LINK',
+          targetType: 'user',
+          targetId: user.id,
+          details: { kind: row.kind },
+          ipAddress: getIp(c),
+          userAgent: c.req.header('user-agent') || undefined,
+        },
+      });
+    } catch {
+      // Audit must never fail the request itself.
+    }
+  }
+
+  return c.json({ success: true, data: {} });
 });
 
 authRoutes.post('/refresh', rateLimit({ windowMs: 60000, max: 10 }), async (c) => {

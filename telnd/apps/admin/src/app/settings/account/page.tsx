@@ -218,6 +218,9 @@ export default function TeamAccountSettingsPage() {
   // Armed after a failed submit; the inline error then clears itself the
   // moment the two addresses match.
   const [emailErrorArmed, setEmailErrorArmed] = useState(false);
+  // Armed when Create is submitted without a role — nothing is pre-selected
+  // on the create form; the message clears itself once a role is picked.
+  const [roleErrorArmed, setRoleErrorArmed] = useState(false);
   const [pendingDeleteAdmin, setPendingDeleteAdmin] = useState<string | null>(null);
   // Two-click confirm for suspend/activate — suspend revokes every session and
   // logs the target out, so a stray click must not fire it.
@@ -295,17 +298,21 @@ export default function TeamAccountSettingsPage() {
 
   function startAddAdmin() {
     setEmailErrorArmed(false);
+    setRoleErrorArmed(false);
     setAdminForm({
       firstName: '',
       lastName: '',
       email: '',
       confirmEmail: '',
-      roleId: roles[0]?.id ?? '',
+      // No default role — the picker starts on "Select" and the submit guard
+      // demands an explicit choice.
+      roleId: '',
     });
   }
 
   function startEditAdmin(a: AdminAccount) {
     setEmailErrorArmed(false);
+    setRoleErrorArmed(false);
     setAdminForm({
       id: a.id,
       firstName: a.firstName,
@@ -348,6 +355,12 @@ export default function TeamAccountSettingsPage() {
       return;
     }
     setEmailErrorArmed(false);
+    // Create requires an explicit role pick — the form starts unselected.
+    if (!adminForm.id && !adminForm.roleId) {
+      setRoleErrorArmed(true);
+      return;
+    }
+    setRoleErrorArmed(false);
     setSavingAdmin(true);
     try {
       const { id, ...raw } = adminForm;
@@ -403,8 +416,9 @@ export default function TeamAccountSettingsPage() {
     }
   }
 
-  // Two-click confirm (mirrors delete): regenerate issues a fresh temporary
-  // password server-side and emails it to the admin's own address.
+  // Two-click confirm (mirrors delete): regenerate emails the admin a
+  // single-use reset link for their own address — no password is generated
+  // or stored until the link is used.
   async function handleAdminRegenerate(a: AdminAccount) {
     if (pendingRegenAdmin !== a.id) {
       setPendingRegenAdmin(a.id);
@@ -899,11 +913,16 @@ export default function TeamAccountSettingsPage() {
                           value={adminForm.roleId}
                           onChange={(v) => setAdminForm((f) => f && { ...f, roleId: v })}
                           options={roles.map((r) => ({ value: r.id, label: r.name }))}
-                          placeholder="—"
+                          placeholder={t('common.select')}
                           ariaLabel={t('account.role')}
                           disabled={adminForm.id === user?.id}
                           height={40}
                         />
+                        {roleErrorArmed && !adminForm.roleId && (
+                          <p style={{ fontSize: '0.75rem', color: 'var(--error-text)', margin: '0.375rem 0 0' }}>
+                            {t('account.roleRequired')}
+                          </p>
+                        )}
                       </div>
                       </div>
                       {/* Footer — pinned with a divider above it. */}

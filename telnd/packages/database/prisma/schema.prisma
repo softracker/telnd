@@ -39,6 +39,7 @@ model User {
   companyOwner      Company?
   refreshTokens     RefreshToken[]
   sessions          Session[]
+  passwordTokens    PasswordToken[]
   country           Country?   @relation(fields: [countryId], references: [id])
   
   // New relations
@@ -104,6 +105,29 @@ model Session {
 
   @@index([userId])
   @@index([token])
+}
+
+// ============================================
+// Password reset / invite links (token-based credential delivery)
+// Only the SHA-256 hash of each token is stored — the raw value exists
+// solely in the emailed link, is single-use, and expires ('reset' is
+// short-lived for self-service recovery, 'invite' allows an invited
+// admin days to accept). Issuing a new token of the same kind deletes
+// any previous one, so at most one live link per user+kind exists.
+// ============================================
+model PasswordToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  kind      String // 'reset' | 'invite'
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model RefreshToken {

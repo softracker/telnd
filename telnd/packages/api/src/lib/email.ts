@@ -120,12 +120,16 @@ interface AdminInviteParams {
   to: string;
   firstName: string;
   lastName: string;
-  tempPassword: string;
+  /** Single-use link where the recipient chooses their own password —
+   *  no credential ever appears in the email itself. */
+  setPasswordUrl: string;
   loginUrl: string;
   roleName: string;
   /** 'invite' (default): a new account was created. 'reset': an existing
-   *  account's password was regenerated — subject/greeting adapt. */
+   *  account asked for a new password link — subject/greeting adapt. */
   kind?: 'invite' | 'reset';
+  /** Human-readable link lifetime shown in the email ('72 hours', '60 minutes'). */
+  expiresLabel: string;
 }
 
 function escapeHtml(value: string): string {
@@ -137,22 +141,24 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * Invitation email for a newly created admin: login URL, the generated
- * temporary password, and a *recommendation* (never a requirement) to change
- * it after the first sign-in.
+ * Invitation / regeneration email for an admin: login URL, role, and a
+ * single-use link where the recipient picks their own password. The link
+ * is the only secret delivered — it expires after `expiresLabel`.
  */
 export async function sendAdminInviteEmail(params: AdminInviteParams): Promise<boolean> {
-  const { to, firstName, lastName, tempPassword, loginUrl, roleName, kind } = params;
+  const { to, firstName, lastName, setPasswordUrl, loginUrl, roleName, kind, expiresLabel } = params;
   const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
   const safeLoginUrl = escapeHtml(loginUrl);
+  const safeSetUrl = escapeHtml(setPasswordUrl);
   const appName = (await getApplicationName()) || 'TELND';
   const isReset = kind === 'reset';
   const subject = isReset
-    ? `Your ${appName} Admin password has been reset`
+    ? `Set a new ${appName} Admin password`
     : `Your ${appName} Admin account has been created`;
   const intro = isReset
-    ? `Hi ${displayName}, a new temporary password has been generated for your account &mdash; your previous password no longer works.`
-    : `Hi ${displayName}, an admin account has been created for you.`;
+    ? `Hi ${displayName}, a request was made to set a new password for your account. Use the link below to choose one &mdash; your current password keeps working until the link is used.`
+    : `Hi ${displayName}, an admin account has been created for you. Use the link below to choose your password &mdash; the account cannot be signed into until you do.`;
+  const cta = isReset ? 'Set a new password' : 'Choose your password';
   const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -168,15 +174,65 @@ export async function sendAdminInviteEmail(params: AdminInviteParams): Promise<b
             <tr><td style="padding:14px 16px;font-size:14px;color:#374151;line-height:1.8;">
               <div><strong>Login page:</strong> <a href="${safeLoginUrl}" style="color:#2563eb;">${safeLoginUrl}</a></div>
               <div><strong>Email:</strong> ${escapeHtml(to)}</div>
-              <div><strong>Password:</strong> <span style="font-family:monospace;font-size:13px;background-color:#eef2ff;color:#1e1b4b;padding:2px 6px;border-radius:4px;">${escapeHtml(tempPassword)}</span></div>
               <div><strong>Role:</strong> ${escapeHtml(roleName)}</div>
             </td></tr>
           </table>
           <p style="margin:0 0 16px;">
-            <a href="${safeLoginUrl}" style="display:inline-block;background-color:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;">Sign in to ${escapeHtml(appName)} Admin</a>
+            <a href="${safeSetUrl}" style="display:inline-block;background-color:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;">${cta}</a>
           </p>
-          <p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#374151;"><strong>Recommended:</strong> after your first sign-in, change your password. This is optional &mdash; nothing will require you to change it.</p>
-          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you were not expecting this account, please ignore this email or contact your administrator.</p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link expires in <strong>${escapeHtml(expiresLabel)}</strong> and can only be used once. Requesting another one invalidates it.</p>
+          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you were not expecting this email, please ignore it or contact your administrator.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
+interface PasswordResetParams {
+  to: string;
+  firstName: string;
+  lastName: string;
+  /** Single-use, short-lived link to the panel's set-password page. */
+  resetUrl: string;
+  /** Human-readable link lifetime ('60 minutes'). */
+  expiresLabel: string;
+}
+
+/**
+ * Self-service recovery email (forgot password / "email me a reset link").
+ * Carries only the expiring link — the password itself never transits email,
+ * and nothing about the account changes until the link is used.
+ */
+export async function sendPasswordResetEmail(params: PasswordResetParams): Promise<boolean> {
+  const { to, firstName, lastName, resetUrl, expiresLabel } = params;
+  const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
+  const safeResetUrl = escapeHtml(resetUrl);
+  const appName = (await getApplicationName()) || 'TELND';
+  const subject = `Set a new ${appName} password`;
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Password reset</h1>
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#374151;">Hi ${displayName}, a request was made to set a new password for your ${escapeHtml(appName)} account. Use the link below to choose one &mdash; nothing changes until you do.</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 8px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:14px 16px;font-size:14px;color:#374151;line-height:1.8;">
+              <div><strong>Account:</strong> ${escapeHtml(to)}</div>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 16px;">
+            <a href="${safeResetUrl}" style="display:inline-block;background-color:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;">Set a new password</a>
+          </p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link expires in <strong>${escapeHtml(expiresLabel)}</strong> and can only be used once. When it is used, all existing sign-ins are ended and the new password is required.</p>
+          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you did not request this, you can safely ignore this email &mdash; your password will not change.</p>
         </td></tr>
       </table>
     </td></tr>

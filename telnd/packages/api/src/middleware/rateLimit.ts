@@ -4,9 +4,8 @@ import { getIp } from '../lib/getIp';
 const MAX_MAP_SIZE = 10000;
 const counters = new Map<string, { count: number; expiresAt: number }>();
 
-function inMemoryRateLimit(ip: string, options: { windowMs: number; max: number }): boolean {
+function inMemoryRateLimit(key: string, options: { windowMs: number; max: number }): boolean {
   const now = Date.now();
-  const key = `ratelimit:${ip}`;
   const entry = counters.get(key);
 
   if (!entry || entry.expiresAt < now) {
@@ -39,10 +38,12 @@ setInterval(() => {
 export function rateLimit(options: { windowMs: number; max: number }) {
   return async (c: Context, next: Next) => {
     const ip = getIp(c);
+    // Keyed per request path: sharing one bucket per IP meant a burst on any
+    // rate-limited route (e.g. reset-password) starved the others (login).
+    const key = `ratelimit:${new URL(c.req.url).pathname}:${ip}`;
 
     try {
       const { redis } = await import('@telnd/database');
-      const key = `ratelimit:${ip}`;
 
       const current = await redis.incr(key);
       if (current === 1) {
@@ -62,7 +63,7 @@ export function rateLimit(options: { windowMs: number; max: number }) {
       c.header('X-RateLimit-Limit', String(options.max));
       c.header('X-RateLimit-Remaining', String(Math.max(0, options.max - current)));
     } catch {
-      if (inMemoryRateLimit(ip, options)) {
+      if (inMemoryRateLimit(key, options)) {
         return c.json({
           success: false,
           error: {

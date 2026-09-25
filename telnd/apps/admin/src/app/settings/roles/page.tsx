@@ -74,7 +74,15 @@ export default function RolesSettingsPage() {
   const loadRoles = useCallback(async () => {
     try {
       const res = await api.get<AdminRole[]>('/api/admin/roles');
-      setRoles(res || []);
+      // Super admin (the "*" wildcard role) leads this page; every other role
+      // keeps the server's alphabetical order — Array.sort is stable.
+      setRoles(
+        (res || []).sort(
+          (a, b) =>
+            Number(toGrantList(b.permissions).includes('*')) -
+            Number(toGrantList(a.permissions).includes('*')),
+        ),
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status !== 403) {
         showToast('error', err.message);

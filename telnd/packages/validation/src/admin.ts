@@ -51,6 +51,13 @@ export const updateAccountSchema = z.object({
   avatar: z.string().max(1000).nullable().optional(),
 });
 
+// Self-service password change: the current password proves possession of the
+// credentials; the new one is hashed server-side (raw values never round-trip).
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters').max(200),
+});
+
 export const contentPageSchema = z.object({
   title: z.string().min(1).max(200),
   slug: z.string().min(1).max(100).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Lowercase letters, numbers and dashes only'),
@@ -103,6 +110,7 @@ export type AdminRoleInput = z.infer<typeof adminRoleSchema>;
 export type CreateAdminInput = z.infer<typeof createAdminSchema>;
 export type UpdateAdminInput = z.infer<typeof updateAdminSchema>;
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type ContentPageInput = z.infer<typeof contentPageSchema>;
 export type AdminActionInput = z.infer<typeof adminActionSchema>;
 export type FeatureFlagInput = z.infer<typeof featureFlagSchema>;

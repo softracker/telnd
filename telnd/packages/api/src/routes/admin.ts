@@ -5,6 +5,7 @@ import { authMiddleware, roleGuard, requireAdmin, requirePermission, requireAnyP
 import { validate } from '../middleware/validate';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
 import { sendAdminInviteEmail } from '../lib/email';
+import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 
 type AdminEnv = {
   Variables: {
@@ -241,19 +242,16 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Role not found' } }, 404);
   }
 
-  // Nobody types a password: generate a strong temporary one and deliver it
-  // only to the confirmed address, via the invite email below.
-  const { randomBytes } = await import('node:crypto');
-  const bcrypt = await import('bcryptjs');
-  const tempPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await bcrypt.hash(tempPassword, 12);
-
+  // Nobody types a password: the account is created WITHOUT one and a
+  // single-use invite link (72-hour expiry, stored only as a hash) is
+  // emailed to the confirmed address — the new admin chooses their own
+  // password through it, so no credential ever appears in email. Login is
+  // impossible until the link is used (a null hash is rejected at login).
   const user = await prisma.user.create({
     data: {
       email: body.email,
       firstName: body.firstName,
       lastName: body.lastName,
-      passwordHash,
       role: 'ADMIN',
       isEmailVerified: true,
       adminUser: { create: { roleId: body.roleId } },
@@ -261,18 +259,21 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
     include: { adminUser: { include: { role: true } } },
   });
 
-  const loginUrl = `${(process.env.ADMIN_URL || 'http://localhost:3002').replace(/\/+$/, '')}/login`;
+  const inviteToken = await issuePasswordToken(user.id, 'invite');
+  const loginUrl = adminUrl('/login');
   const emailed = await sendAdminInviteEmail({
     to: body.email,
     firstName: body.firstName,
     lastName: body.lastName,
-    tempPassword,
+    setPasswordUrl: adminUrl(`/reset-password?token=${inviteToken}`),
     loginUrl,
     roleName: role.name,
+    expiresLabel: '72 hours',
   });
 
   if (!emailed) {
-    // Roll back: an admin nobody can log in as is worse than no admin at all.
+    // Roll back: an admin nobody can log in as is worse than no admin at
+    // all. The unused invite token cascades away with the user row.
     try {
       await prisma.$transaction([
         prisma.adminUser.deleteMany({ where: { userId: user.id } }),
@@ -399,12 +400,12 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
   return c.json({ success: true });
 });
 
-// Regenerate an admin's password: issues a fresh temporary password and
+// Regenerate an admin's password: issues a fresh single-use reset link and
 // emails it to that admin's address (the UI has no password field — this
-// email is the only way credentials ever reach an account). Super admin
-// only, since it grants sign-in capability for any account. The email goes
-// out BEFORE the hash is swapped, so a failed send leaves the current
-// password untouched — an unknown secret is never stored.
+// email is the only way a new credential ever reaches an account). Super
+// admin only, since it starts sign-in recovery for any account. The link is
+// emailed first; a failed send discards it, so a failed request leaves the
+// current password untouched. Nothing changes until the link is used.
 admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
   const id = c.req.param('id');
   const actor = c.get('admin');
@@ -426,37 +427,36 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
   if (!user.email) {
     return c.json({
       success: false,
-      error: { code: 'NO_EMAIL', message: 'This admin has no email address, so a new password cannot be delivered.' },
+      error: { code: 'NO_EMAIL', message: 'This admin has no email address, so a reset link cannot be delivered.' },
     }, 400);
   }
 
-  const { randomBytes } = await import('node:crypto');
-  const bcrypt = await import('bcryptjs');
-  const tempPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await bcrypt.hash(tempPassword, 12);
-
-  const loginUrl = `${(process.env.ADMIN_URL || 'http://localhost:3002').replace(/\/+$/, '')}/login`;
+  const resetToken = await issuePasswordToken(user.id, 'reset');
+  const loginUrl = adminUrl('/login');
   const emailed = await sendAdminInviteEmail({
     to: user.email,
     firstName: user.firstName,
     lastName: user.lastName,
-    tempPassword,
+    setPasswordUrl: adminUrl(`/reset-password?token=${resetToken}`),
     loginUrl,
     roleName: user.adminUser.role?.name ?? '',
     kind: 'reset',
+    expiresLabel: '60 minutes',
   });
 
   if (!emailed) {
+    // Email-first: a link nobody received must not stay live — and the
+    // current password was never touched either way.
+    await discardPasswordToken(user.id, 'reset');
     return c.json({
       success: false,
       error: {
         code: 'EMAIL_FAILED',
-        message: 'The new password could not be emailed, so the current password was left unchanged. Check the SMTP settings and try again.',
+        message: 'The reset link could not be emailed, so the current password was left unchanged. Check the SMTP settings and try again.',
       },
     }, 502);
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
   await logAction(actor.userId, 'REGENERATE_ADMIN_PASSWORD', 'user', user.id, { email: user.email }, c);
   return c.json({ success: true, data: { email: user.email } });
 });

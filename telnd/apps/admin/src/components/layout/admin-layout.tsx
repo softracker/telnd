@@ -21,6 +21,9 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
   const isLoginPage = pathname === '/login';
+  // Reachable without a session: the login screen and the password-set page
+  // that emailed links (invite / super-admin regenerate / self) land on.
+  const isPublicPage = isLoginPage || pathname === '/reset-password';
 
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -36,9 +39,9 @@ export default function AdminLayout({
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthenticated && !isLoginPage) router.replace('/login');
+    if (!isAuthenticated && !isPublicPage) router.replace('/login');
     if (isAuthenticated && isLoginPage) router.replace('/');
-  }, [isAuthenticated, isLoading, router, isLoginPage]);
+  }, [isAuthenticated, isLoading, router, isLoginPage, isPublicPage]);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -73,9 +76,10 @@ export default function AdminLayout({
     );
   }
 
-  // Login page always renders just the children (no sidebar/header)
-  // The useEffect above handles redirect to / when authenticated
-  if (isLoginPage) {
+  // Login and the set-password page render just the children (no sidebar/
+  // header); both work without a session. The useEffect above handles
+  // redirect to / when authenticated on the login page.
+  if (isPublicPage) {
     return <>{children}</>;
   }
 

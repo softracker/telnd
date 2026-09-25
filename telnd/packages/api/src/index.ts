@@ -32,7 +32,7 @@ app.use('*', cors({
 }));
 
 // Public routes — no auth required
-const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
+const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/auth/reset-password', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
   const isPublic = publicPaths.some((p) => path === p || path.startsWith(p + '/'));
