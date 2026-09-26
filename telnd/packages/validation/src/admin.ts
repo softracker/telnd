@@ -49,6 +49,16 @@ export const updateAccountSchema = z.object({
   // Profile photo: a public URL minted by POST /upload/image (the bytes live
   // in R2), or null/"" to clear it. Raw file data is never accepted here.
   avatar: z.string().max(1000).nullable().optional(),
+  // Phone for SMS delivery (2FA codes): local ("01712345678"), country-coded
+  // ("+8801712345678") or bare ("1712345678") Bangladeshi mobile numbers.
+  // null / "" clears the number.
+  phone: z
+    .string()
+    .trim()
+    .regex(/^(\+?8801|01|1)\d{9}$/, 'Enter a valid mobile number (e.g. 01712345678)')
+    .nullable()
+    .optional()
+    .or(z.literal('')),
 });
 
 // Self-service password change: the current password proves possession of the

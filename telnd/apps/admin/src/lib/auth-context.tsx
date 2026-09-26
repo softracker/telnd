@@ -16,13 +16,20 @@ interface User {
   lastName: string;
   role: string;
   avatar: string | null;
+  /** Mobile number — where SMS 2FA codes are delivered (null = none). */
+  phone?: string | null;
   adminRole?: AdminRole | null;
 }
 
 interface AuthResponse {
   success: boolean;
   data: {
-    user: User;
+    user?: User;
+    // Set instead of `user` when the password was right but the sign-in
+    // stops at the two-factor gate (the pending challenge lives in its own
+    // cookie; the /2fa screen completes it).
+    requires2FA?: boolean;
+    requires2FAEnrollment?: boolean;
   };
 }
 
@@ -32,6 +39,11 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (email: string, password: string, turnstileToken?: string) => Promise<void>;
   logout: () => void;
+  /**
+   * Finish a sign-in that passed the two-factor gate: the /2fa screen
+   * calls this with the user the verify endpoint returned.
+   */
+  completeLogin: (user: User) => void;
   /** Flat "resource.action" grants of the current admin's role (["*"] for super admins). */
   permissions: string[];
   /** Current admin's panel role name, or null. */
@@ -114,13 +126,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...(turnstileToken ? { turnstileToken } : {}),
     });
 
+    // Password was right but 2FA is on (or required and not yet set up):
+    // no session cookie yet — hand off to the /2fa screen, which completes
+    // the challenge against the pending cookie the server just set.
+    if (response.data.requires2FA) {
+      router.replace('/2fa');
+      return;
+    }
+
     const { user: userData } = response.data;
+    if (!userData) return;
 
     // Token and refresh token are set as HttpOnly cookies by the server
     // Store only user metadata in localStorage for UI display
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
 
     setUser(userData);
+    router.replace('/');
+  }, [router]);
+
+  const completeLogin = useCallback((nextUser: User) => {
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    setUser(nextUser);
     router.replace('/');
   }, [router]);
 
@@ -143,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         isAuthenticated,
         login,
+        completeLogin,
         logout,
         permissions,
         roleName,

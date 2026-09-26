@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import ImageUploader from '@/components/image-uploader';
 import RoleBadge from '@/components/role-badge';
-import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon } from '@/components/action-icons';
+import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon, ShieldIcon, ShieldOffIcon } from '@/components/action-icons';
 import { ListPager } from '@/components/list-pager';
 import { Dropdown } from '@/components/dropdown';
 
@@ -24,6 +24,10 @@ interface AdminAccount {
   roleName: string | null;
   permissions: string[];
   isSelf: boolean;
+  // 2FA state — drives the row badge and the super-admin require toggle.
+  twoFactorEnabled: boolean;
+  twoFactorMethod: string | null;
+  twoFactorRequired: boolean;
 }
 
 interface AdminRole {
@@ -105,7 +109,9 @@ export default function TeamAccountSettingsPage() {
     lastName: string;
     email: string;
     avatar: string | null;
-  }>({ firstName: '', lastName: '', email: '', avatar: null });
+    // Phone — where SMS 2FA codes are delivered (empty = no number).
+    phone: string;
+  }>({ firstName: '', lastName: '', email: '', avatar: null, phone: '' });
   const [profileEditing, setProfileEditing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   // True while the photo is in flight — Save and Enter stay inert until it
@@ -124,6 +130,7 @@ export default function TeamAccountSettingsPage() {
         lastName: user.lastName || '',
         email: user.email || '',
         avatar: user.avatar ?? null,
+        phone: user.phone || '',
       });
       savedAvatarRef.current = user.avatar ?? null;
     }
@@ -177,6 +184,7 @@ export default function TeamAccountSettingsPage() {
         lastName: user.lastName || '',
         email: user.email || '',
         avatar: user.avatar ?? null,
+        phone: user.phone || '',
       });
     }
     setProfileEditing(false);
@@ -192,6 +200,8 @@ export default function TeamAccountSettingsPage() {
         lastName: profile.lastName,
         email: profile.email,
         avatar: profile.avatar,
+        // Empty input clears the number (the API treats "" as null).
+        phone: profile.phone.trim(),
       });
       // Photo lifecycle on success: the new upload graduates from pending; a
       // replaced or cleared saved photo is now unreferenced — remove it.
@@ -436,6 +446,58 @@ export default function TeamAccountSettingsPage() {
     }
   }
 
+  // ── Super admin: per-admin two-factor requirement ──
+  // Arm (first click shows the confirm icon) → act (second click PATCHes).
+  const [pendingTwoFaAdmin, setPendingTwoFaAdmin] = useState<string | null>(null);
+  const [twoFaToggleId, setTwoFaToggleId] = useState<string | null>(null);
+
+  async function handleAdminTwoFactor(a: AdminAccount) {
+    if (pendingTwoFaAdmin !== a.id) {
+      setPendingTwoFaAdmin(a.id);
+      return;
+    }
+    setPendingTwoFaAdmin(null);
+    setTwoFaToggleId(a.id);
+    const required = !a.twoFactorRequired;
+    const name = `${a.firstName} ${a.lastName}`;
+    try {
+      await api.patch(`/api/admin/admins/${a.id}/two-factor`, { required });
+      showToast('success', required ? t('twoFactor.requiredToast', { name }) : t('twoFactor.releasedToast', { name }));
+      await loadAdminRows();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaToggleId(null);
+    }
+  }
+
+  // ── Super admin: turn an enrolled admin's own 2FA off ──
+  // The Shield only dials the requirement, so an account that enrolled by
+  // itself (on, but never required) had no way to be turned off from this
+  // list. Same two-click arm → act pattern; the PATCH's release branch
+  // wipes the enrollment outright.
+  const [pendingTwoFaOff, setPendingTwoFaOff] = useState<string | null>(null);
+  const [twoFaOffId, setTwoFaOffId] = useState<string | null>(null);
+
+  async function handleAdminTwoFaOff(a: AdminAccount) {
+    if (pendingTwoFaOff !== a.id) {
+      setPendingTwoFaOff(a.id);
+      return;
+    }
+    setPendingTwoFaOff(null);
+    setTwoFaOffId(a.id);
+    const name = `${a.firstName} ${a.lastName}`;
+    try {
+      await api.patch(`/api/admin/admins/${a.id}/two-factor`, { required: false });
+      showToast('success', t('twoFactor.releasedToast', { name }));
+      await loadAdminRows();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaOffId(null);
+    }
+  }
+
   const pageLoading = loadingAdmins;
 
   return (
@@ -494,6 +556,16 @@ export default function TeamAccountSettingsPage() {
                   onChange={(v) => setProfile((p) => ({ ...p, email: v }))}
                   type="email"
                   required
+                />
+                {/* Where SMS 2FA codes get delivered — optional, but SMS
+                    sign-in codes can't work without it. */}
+                <Input
+                  label={t('account.phone')}
+                  value={profile.phone}
+                  onChange={(v) => setProfile((p) => ({ ...p, phone: v }))}
+                  type="tel"
+                  placeholder="01712345678"
+                  helperText={t('account.phoneHelp')}
                 />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
                   <button
@@ -560,6 +632,11 @@ export default function TeamAccountSettingsPage() {
                   <div style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {profile.email}
                   </div>
+                  {profile.phone && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--muted-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {profile.phone}
+                    </div>
+                  )}
                 </div>
                 <RowAction ariaLabel={t('common.edit')} onClick={() => setProfileEditing(true)}>
                   <EditIcon />
@@ -723,6 +800,23 @@ export default function TeamAccountSettingsPage() {
                         />
                         {a.isActive ? t('account.active') : t('account.suspended')}
                       </span>
+                      {/* 2FA state: green when on, accent when a super admin
+                          demands setup at the account's next sign-in. */}
+                      {(a.twoFactorEnabled || a.twoFactorRequired) && (
+                        <span
+                          title={a.twoFactorEnabled ? t('twoFactor.badgeOn') : t('twoFactor.badgeRequired')}
+                          style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            padding: '0.1875rem 0.5rem',
+                            borderRadius: '999px',
+                            background: a.twoFactorEnabled ? 'var(--success-bg)' : 'var(--accent-light)',
+                            color: a.twoFactorEnabled ? 'var(--success-text)' : 'var(--accent)',
+                          }}
+                        >
+                          {a.twoFactorEnabled ? t('twoFactor.badgeOn') : t('twoFactor.badgeRequired')}
+                        </span>
+                      )}
                     </div>
                     <span style={{ fontSize: '0.75rem', color: 'var(--muted-text)' }}>{a.email}</span>
                   </div>
@@ -746,6 +840,54 @@ export default function TeamAccountSettingsPage() {
                           <ConfirmIcon />
                         ) : (
                           <RefreshIcon />
+                        )}
+                      </RowAction>
+                    )}
+                    {/* Super admin only: require / release 2FA for this
+                        admin (two-click arm, like the other row actions). */}
+                    {isFullAccess && (
+                      <RowAction
+                        ariaLabel={
+                          pendingTwoFaAdmin === a.id
+                            ? t('account.confirmStatus')
+                            : a.twoFactorRequired
+                              ? t('twoFactor.rowRelease')
+                              : t('twoFactor.rowRequire')
+                        }
+                        onClick={() => handleAdminTwoFactor(a)}
+                        disabled={twoFaToggleId === a.id}
+                        style={pendingTwoFaAdmin === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {twoFaToggleId === a.id ? (
+                          <Spinner size={13} />
+                        ) : pendingTwoFaAdmin === a.id ? (
+                          <ConfirmIcon />
+                        ) : (
+                          <ShieldIcon />
+                        )}
+                      </RowAction>
+                    )}
+                    {/* Super admin only: turn off an account that enrolled
+                        by itself — visible only while it is on WITHOUT a
+                        requirement (otherwise the Shield's release is the
+                        turn-off). Two-click arm → act. */}
+                    {isFullAccess && a.twoFactorEnabled && !a.twoFactorRequired && (
+                      <RowAction
+                        ariaLabel={
+                          pendingTwoFaOff === a.id
+                            ? t('account.confirmStatus')
+                            : t('twoFactor.rowDisable')
+                        }
+                        onClick={() => handleAdminTwoFaOff(a)}
+                        disabled={twoFaOffId === a.id}
+                        style={pendingTwoFaOff === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {twoFaOffId === a.id ? (
+                          <Spinner size={13} />
+                        ) : pendingTwoFaOff === a.id ? (
+                          <ConfirmIcon />
+                        ) : (
+                          <ShieldOffIcon />
                         )}
                       </RowAction>
                     )}

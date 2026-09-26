@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import Toast, { type ToastType } from '@/components/toast';
+import { OtpInput } from '@/components/otp-input';
 import { type TranslationKey } from '@/lib/translations';
 
 interface DeviceSession {
@@ -21,6 +23,24 @@ interface SecurityData {
   lastLoginLocation: string | null;
   lastLoginCountryCode: string | null;
   sessions: DeviceSession[];
+}
+
+// GET /api/users/me/2fa — everything the card renders. canDisable and
+// canManagePolicy are decided server-side: an account someone else
+// required 2FA for (or the global policy) can't be released here, and
+// only a super admin sees the policy switch.
+interface TwoFaState {
+  enabled: boolean;
+  method: 'totp' | 'sms' | null;
+  pendingSetup: boolean;
+  hasPhone: boolean;
+  phoneMasked: string | null;
+  smsAvailable: boolean;
+  smsConfigured: boolean;
+  enforcedByAdmin: boolean;
+  policyRequired: boolean;
+  canDisable: boolean;
+  canManagePolicy: boolean;
 }
 
 interface ToastState {
@@ -108,6 +128,24 @@ const pillStyle = {
   color: 'var(--accent)',
   fontSize: '0.6875rem',
   fontWeight: 600,
+} as const;
+
+// Shared button look for the two-factor card (matches the regenerate
+// button above; armed state is applied at the call site).
+const tfBtnStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '0.5rem',
+  padding: '0.625rem 1rem',
+  borderRadius: '8px',
+  backgroundColor: 'var(--secondary-btn-bg)',
+  color: 'var(--text-main)',
+  border: '1px solid var(--border-color)',
+  fontSize: '0.8125rem',
+  fontWeight: 600,
+  cursor: 'pointer',
+  transition: 'background-color 0.15s',
 } as const;
 
 export default function SecuritySettingsPage() {
@@ -251,6 +289,178 @@ export default function SecuritySettingsPage() {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
       setRevokingAll(false);
+    }
+  }
+
+  // ── Two-factor authentication ──
+  const [twoFa, setTwoFa] = useState<TwoFaState | null>(null);
+  const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | null>(null);
+  // Which enrollment panel is open: authenticator app (QR) or SMS delivery.
+  const [setupPanel, setSetupPanel] = useState<'totp' | 'sms' | null>(null);
+  const [setup, setSetup] = useState<{ otpauthUri: string; secret: string } | null>(null);
+  const [twoFaCode, setTwoFaCode] = useState('');
+  const [smsSent, setSmsSent] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableCredential, setDisableCredential] = useState('');
+  // The global "require 2FA for all admins" switch arms like every other
+  // destructive toggle on this panel: first click confirms, second acts.
+  const [policyArmed, setPolicyArmed] = useState(false);
+
+  const loadTwoFa = useCallback(async () => {
+    try {
+      const res = await api.get<{ success: boolean; data: TwoFaState }>('/api/users/me/2fa');
+      setTwoFa(res.data);
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    }
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadTwoFa();
+  }, [loadTwoFa]);
+
+  // Re-sync whenever the tab comes back into view. A backgrounded tab (or a
+  // back/forward-cache restore) can hold this card from before an enable or
+  // disable that happened elsewhere — the pill must never go stale.
+  useEffect(() => {
+    const sync = () => {
+      if (document.visibilityState === 'visible') void loadTwoFa();
+    };
+    // A back/forward-cache restore replays an old snapshot without ever
+    // re-running the mount effect — catch that path too.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void loadTwoFa();
+    };
+    document.addEventListener('visibilitychange', sync);
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, [loadTwoFa]);
+
+  // SMS resend countdown — one tick per second while it runs.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
+
+  function closeSetupPanel() {
+    setSetupPanel(null);
+    setSetup(null);
+    setTwoFaCode('');
+    setSmsSent(false);
+    setResendIn(0);
+  }
+
+  async function handleStartTotpSetup() {
+    setTwoFaBusy('setup');
+    try {
+      const res = await api.post<{ success: boolean; data: { otpauthUri: string; secret: string } }>(
+        '/api/users/me/2fa/setup',
+        {},
+      );
+      setSetup(res.data);
+      setSetupPanel('totp');
+      setTwoFaCode('');
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  async function handleSendCode() {
+    setTwoFaBusy('send');
+    try {
+      await api.post('/api/users/me/2fa/send', {});
+      setSmsSent(true);
+      setResendIn(45);
+      showToast('success', t('twoFactor.sentToast'));
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  async function handleEnable(e: FormEvent) {
+    e.preventDefault();
+    if (twoFaCode.length !== 6 || !setupPanel || twoFaBusy) return;
+    setTwoFaBusy('enable');
+    try {
+      await api.post('/api/users/me/2fa/enable', { method: setupPanel, code: twoFaCode });
+      // Flip the card straight from the confirmed response — the pill and
+      // the enable/disable options switch immediately and never depend on
+      // the follow-up refetch succeeding.
+      setTwoFa((prev) =>
+        prev
+          ? {
+              ...prev,
+              enabled: true,
+              method: setupPanel,
+              pendingSetup: false,
+              canDisable: !prev.enforcedByAdmin && !prev.policyRequired,
+            }
+          : prev,
+      );
+      showToast('success', t('twoFactor.enabledToast'));
+      closeSetupPanel();
+      await loadTwoFa();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+      // The write may have landed even if the response didn't (dropped
+      // connection) — re-sync so the card can't disagree with the server.
+      void loadTwoFa();
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  async function handleDisable(e: FormEvent) {
+    e.preventDefault();
+    const value = disableCredential.trim();
+    if (!value || twoFaBusy) return;
+    // A six-digit value is a live verification code; passwords are at least
+    // 8 characters, so the two shapes can never collide.
+    const body = /^\d{6}$/.test(value) ? { code: value } : { password: value };
+    setTwoFaBusy('disable');
+    try {
+      await api.post('/api/users/me/2fa/disable', body);
+      setTwoFa((prev) =>
+        prev ? { ...prev, enabled: false, method: null, pendingSetup: false, canDisable: false } : prev,
+      );
+      showToast('success', t('twoFactor.disabledToast'));
+      setDisableOpen(false);
+      setDisableCredential('');
+      await loadTwoFa();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+      void loadTwoFa();
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  async function handlePolicyToggle() {
+    if (!twoFa || twoFaBusy) return;
+    if (!policyArmed) {
+      setPolicyArmed(true);
+      return;
+    }
+    setPolicyArmed(false);
+    const next = !twoFa.policyRequired;
+    setTwoFaBusy('policy');
+    try {
+      await api.post('/api/admin/two-factor-policy', { required: next });
+      showToast('success', next ? t('twoFactor.policyToastOn') : t('twoFactor.policyToastOff'));
+      await loadTwoFa();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaBusy(null);
     }
   }
 
@@ -429,6 +639,345 @@ export default function SecuritySettingsPage() {
               </Section>
             </div>
           </div>
+
+          {/* ── Two-factor authentication ── */}
+          {twoFa && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Section title={t('twoFactor.cardTitle')} description={t('twoFactor.cardDesc')}>
+                {/* Status line — enabled (green) / setup required (accent) /
+                    off (neutral). */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '0.1875rem 0.625rem',
+                      borderRadius: '999px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      backgroundColor: twoFa.enabled
+                        ? 'var(--success-bg)'
+                        : twoFa.enforcedByAdmin || twoFa.policyRequired
+                          ? 'var(--accent-light)'
+                          : 'var(--secondary-btn-bg)',
+                      color: twoFa.enabled
+                        ? 'var(--success-text)'
+                        : twoFa.enforcedByAdmin || twoFa.policyRequired
+                          ? 'var(--accent)'
+                          : 'var(--text-muted)',
+                    }}
+                  >
+                    {twoFa.enabled
+                      ? t('twoFactor.statusOn')
+                      : twoFa.enforcedByAdmin || twoFa.policyRequired
+                        ? t('twoFactor.statusRequired')
+                        : t('twoFactor.statusOff')}
+                  </span>
+                  {twoFa.enabled && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {twoFa.method === 'sms' ? t('twoFactor.methodSms') : t('twoFactor.methodApp')}
+                    </span>
+                  )}
+                </div>
+
+                {!twoFa.enabled ? (
+                  <div>
+                    {/* Factor choice — SMS is offered only when a usable
+                        number is on file AND the gateway is configured;
+                        otherwise a plain-text reason sits below the row. */}
+                    {!setupPanel && (
+                      <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={handleStartTotpSetup}
+                          disabled={twoFaBusy !== null}
+                          style={{ ...tfBtnStyle, opacity: twoFaBusy ? 0.7 : 1, cursor: twoFaBusy ? 'not-allowed' : 'pointer' }}
+                        >
+                          {twoFaBusy === 'setup' && <Spinner size={14} />}
+                          {t('twoFactor.setupApp')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSetupPanel('sms');
+                            setTwoFaCode('');
+                            setSmsSent(false);
+                          }}
+                          disabled={twoFaBusy !== null || !twoFa.smsAvailable || !twoFa.smsConfigured}
+                          style={{
+                            ...tfBtnStyle,
+                            opacity: twoFaBusy || !twoFa.smsAvailable || !twoFa.smsConfigured ? 0.55 : 1,
+                            cursor: twoFaBusy || !twoFa.smsAvailable || !twoFa.smsConfigured ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          {t('twoFactor.useSms')}
+                        </button>
+                      </div>
+                    )}
+                    {(!twoFa.smsAvailable || !twoFa.smsConfigured) && (
+                      <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.5rem', marginBottom: 0 }}>
+                        {!twoFa.smsConfigured ? t('twoFactor.smsNotConfigured') : t('twoFactor.phoneHint')}
+                      </p>
+                    )}
+
+                    {/* Authenticator-app panel: QR + manual key + proof code. */}
+                    {setupPanel === 'totp' && setup && (
+                      <form
+                        onSubmit={handleEnable}
+                        style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', marginTop: '0.75rem' }}
+                      >
+                        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                          {t('twoFactor.qrHelp')}
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.875rem' }}>
+                          <div style={{ background: '#ffffff', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.5rem', lineHeight: 0 }}>
+                            <QRCodeSVG value={setup.otpauthUri} size={156} marginSize={0} />
+                          </div>
+                        </div>
+                        <span style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                          {t('twoFactor.manualKey')}
+                        </span>
+                        <code
+                          style={{
+                            display: 'block',
+                            background: 'var(--input-bg)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '0.5rem 0.625rem',
+                            fontSize: '0.8125rem',
+                            wordBreak: 'break-all',
+                            userSelect: 'all',
+                            color: 'var(--text-main)',
+                            marginBottom: '0.875rem',
+                          }}
+                        >
+                          {setup.secret}
+                        </code>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                          {t('twoFactor.codeLabel')}
+                        </label>
+                        <OtpInput
+                          value={twoFaCode}
+                          onChange={setTwoFaCode}
+                          ariaLabel={t('twoFactor.codeLabel')}
+                          style={{
+                            height: '40px',
+                            fontSize: '0.9375rem',
+                            border: '1px solid var(--input-border)',
+                            backgroundColor: 'var(--input-bg)',
+                            color: 'var(--text-main)',
+                          }}
+                          focusStyle={{ borderColor: 'var(--accent)' }}
+                        />
+                        <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.875rem' }}>
+                          <button type="button" onClick={closeSetupPanel} style={tfBtnStyle}>
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={twoFaCode.length !== 6 || twoFaBusy !== null}
+                            style={{
+                              ...tfBtnStyle,
+                              backgroundColor: 'var(--accent)',
+                              color: '#ffffff',
+                              border: '1px solid var(--accent)',
+                              opacity: twoFaCode.length !== 6 || twoFaBusy ? 0.7 : 1,
+                              cursor: twoFaCode.length !== 6 || twoFaBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {twoFaBusy === 'enable' && <Spinner size={14} />}
+                            {twoFaBusy === 'enable' ? t('twoFactor.enabling') : t('twoFactor.enable')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* SMS panel: send → enter the code → enable. */}
+                    {setupPanel === 'sms' && (
+                      <form
+                        onSubmit={handleEnable}
+                        style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', marginTop: '0.75rem' }}
+                      >
+                        {!smsSent ? (
+                          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                            {t('twoFactor.smsEnrollDesc')}
+                          </p>
+                        ) : (
+                          <>
+                            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                              {t('twoFactor.smsSentTo', { phone: twoFa.phoneMasked || '•••' })}
+                            </p>
+                            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                              {t('twoFactor.codeLabel')}
+                            </label>
+                            <OtpInput
+                              value={twoFaCode}
+                              onChange={setTwoFaCode}
+                              ariaLabel={t('twoFactor.codeLabel')}
+                              autoFocus
+                              style={{
+                                height: '40px',
+                                fontSize: '0.9375rem',
+                                border: '1px solid var(--input-border)',
+                                backgroundColor: 'var(--input-bg)',
+                                color: 'var(--text-main)',
+                              }}
+                              focusStyle={{ borderColor: 'var(--accent)' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSendCode}
+                              disabled={twoFaBusy !== null || resendIn > 0}
+                              style={{
+                                ...tfBtnStyle,
+                                marginTop: '0.625rem',
+                                opacity: twoFaBusy || resendIn > 0 ? 0.6 : 1,
+                                cursor: twoFaBusy || resendIn > 0 ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {resendIn > 0 ? t('twoFactor.resendIn', { sec: resendIn }) : t('twoFactor.resendCode')}
+                            </button>
+                          </>
+                        )}
+                        <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.875rem' }}>
+                          <button type="button" onClick={closeSetupPanel} style={tfBtnStyle}>
+                            {t('common.cancel')}
+                          </button>
+                          {!smsSent && (
+                            <button
+                              type="button"
+                              onClick={handleSendCode}
+                              disabled={twoFaBusy !== null}
+                              style={{ ...tfBtnStyle, opacity: twoFaBusy ? 0.7 : 1, cursor: twoFaBusy ? 'not-allowed' : 'pointer' }}
+                            >
+                              {twoFaBusy === 'send' && <Spinner size={14} />}
+                              {twoFaBusy === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
+                            </button>
+                          )}
+                          <button
+                            type="submit"
+                            disabled={twoFaCode.length !== 6 || twoFaBusy !== null}
+                            style={{
+                              ...tfBtnStyle,
+                              backgroundColor: 'var(--accent)',
+                              color: '#ffffff',
+                              border: '1px solid var(--accent)',
+                              opacity: twoFaCode.length !== 6 || twoFaBusy ? 0.7 : 1,
+                              cursor: twoFaCode.length !== 6 || twoFaBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {twoFaBusy === 'enable' && <Spinner size={14} />}
+                            {twoFaBusy === 'enable' ? t('twoFactor.enabling') : t('twoFactor.enable')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ) : twoFa.canDisable ? (
+                  <div>
+                    {!disableOpen ? (
+                      <button type="button" onClick={() => setDisableOpen(true)} style={tfBtnStyle}>
+                        {t('twoFactor.disable')}
+                      </button>
+                    ) : (
+                      <form onSubmit={handleDisable} style={{ maxWidth: '420px' }}>
+                        <PasswordInput
+                          label={t('twoFactor.disableLabel')}
+                          value={disableCredential}
+                          onChange={setDisableCredential}
+                          required
+                          autoComplete="current-password"
+                          helperText={t('twoFactor.disableHint')}
+                        />
+                        <div style={{ display: 'flex', gap: '0.625rem' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDisableOpen(false);
+                              setDisableCredential('');
+                            }}
+                            style={tfBtnStyle}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!disableCredential.trim() || twoFaBusy !== null}
+                            style={{
+                              ...tfBtnStyle,
+                              backgroundColor: 'var(--error-bg)',
+                              color: 'var(--error-text)',
+                              border: '1px solid var(--error-text)',
+                              opacity: !disableCredential.trim() || twoFaBusy ? 0.7 : 1,
+                              cursor: !disableCredential.trim() || twoFaBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {twoFaBusy === 'disable' && <Spinner size={14} />}
+                            {twoFaBusy === 'disable' ? t('twoFactor.disabling') : t('twoFactor.confirmDisable')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', lineHeight: 1.6, margin: 0 }}>
+                    {twoFa.enforcedByAdmin ? t('twoFactor.requiredNote') : t('twoFactor.policyNote')}
+                  </p>
+                )}
+
+                {/* Super admin only: require 2FA for every admin account.
+                    Two-click arm, same as every other hard toggle here. */}
+                {twoFa.canManagePolicy && (
+                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ minWidth: 0, flex: '1 1 300px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                            {t('twoFactor.policyTitle')}
+                          </span>
+                          <span
+                            style={{
+                              ...pillStyle,
+                              backgroundColor: twoFa.policyRequired ? 'var(--success-bg)' : 'var(--secondary-btn-bg)',
+                              color: twoFa.policyRequired ? 'var(--success-text)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {twoFa.policyRequired ? t('twoFactor.policyOn') : t('twoFactor.policyOff')}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem', marginBottom: 0, lineHeight: 1.6 }}>
+                          {t('twoFactor.policyDesc')}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handlePolicyToggle}
+                        disabled={twoFaBusy !== null}
+                        style={{
+                          ...tfBtnStyle,
+                          backgroundColor: policyArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                          color: policyArmed ? 'var(--accent)' : 'var(--text-main)',
+                          border: policyArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          opacity: twoFaBusy ? 0.7 : 1,
+                          cursor: twoFaBusy ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {twoFaBusy === 'policy' ? (
+                          <Spinner size={14} />
+                        ) : policyArmed ? (
+                          t('account.confirmStatus')
+                        ) : twoFa.policyRequired ? (
+                          t('twoFactor.policyTurnOff')
+                        ) : (
+                          t('twoFactor.policyTurnOn')
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Section>
+            </div>
+          )}
 
           {/* ── Logged in devices ── */}
           <Section title={t('security.devicesTitle')} description={t('security.devicesDesc')}>

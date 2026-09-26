@@ -35,6 +35,15 @@ model User {
   // geolocation is best-effort (private IPs / offline lookups stay empty).
   lastLoginLocation    String?
   lastLoginCountryCode String?
+  // Two-factor authentication (§14.40). twoFactorSecret holds the base32
+  // TOTP shared secret (set while enrolling, cleared on disable); method is
+  // 'totp' (authenticator app) or 'sms' (Alpha.Net OTP). enforced means a
+  // super admin demands 2FA for this account — the next sign-in blocks on
+  // enrollment until it is set up.
+  twoFactorEnabled  Boolean  @default(false)
+  twoFactorMethod   String?
+  twoFactorSecret   String?
+  twoFactorEnforced Boolean  @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

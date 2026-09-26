@@ -1,13 +1,25 @@
 import { Hono } from 'hono';
+import { appendFileSync } from 'node:fs';
 import { prisma } from '@telnd/database';
-import { authMiddleware, requireAdmin } from '../middleware/auth';
+import { authMiddleware, requireAdmin, hasPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
-import { updateAccountSchema, changePasswordSchema } from '@telnd/validation';
+import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFactorDisableSchema } from '@telnd/validation';
 import { sendPasswordResetEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { getIp } from '../lib/getIp';
 import { backfillSessionLocations } from '../lib/geoLocation';
+import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
+import {
+  clearOtp,
+  getSmsGateway,
+  maskPhone,
+  sendOtpToUser,
+  smsSendFailure,
+  toBdSmsNumber,
+  twoFactorPolicyRequired,
+  verifyOtp,
+} from '../lib/twoFactor';
 
 type UsersEnv = {
   Variables: {
@@ -39,16 +51,23 @@ userRoutes.get('/me', authMiddleware, async (c) => {
     }, 404);
   }
 
-  const { passwordHash, ...safeUser } = user;
+  // passwordHash and the TOTP secret never round-trip to the client.
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
 
   return c.json({ success: true, data: safeUser });
 });
 
-// Own-account management: change name / email (password changes are
-// intentionally not handled here).
+// Own-account management: change name / email / phone (password changes are
+// intentionally not handled here). The phone number is what SMS 2FA codes
+// are delivered to — empty string clears it.
 userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c) => {
   const userId = c.get('userId') as string;
   const body = c.get('validatedData');
+
+  const current = await prisma.user.findUnique({ where: { id: userId } });
+  if (!current) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
 
   if (body.email) {
     const existing = await prisma.user.findFirst({
@@ -69,9 +88,27 @@ userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c)
   // Empty string is normalized to null so "remove photo" and "already empty"
   // end up in the same stored state.
   if (body.avatar !== undefined) data.avatar = body.avatar || null;
+  if (body.phone !== undefined) {
+    const phone = typeof body.phone === 'string' && body.phone.trim() ? body.phone.trim() : null;
+    if (phone) {
+      const existing = await prisma.user.findFirst({
+        where: { phone, NOT: { id: userId } },
+      });
+      if (existing) {
+        return c.json({
+          success: false,
+          error: { code: 'CONFLICT', message: 'An account with this phone number already exists' },
+        }, 409);
+      }
+    }
+    data.phone = phone;
+    // A number change invalidates any OTP already sent to the old one.
+    if (phone !== current.phone) clearOtp(userId);
+  }
 
   const user = await prisma.user.update({ where: { id: userId }, data });
-  const { passwordHash, ...safeUser } = user;
+  // passwordHash and the TOTP secret never round-trip to the client.
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
 
   return c.json({ success: true, data: safeUser });
 });
@@ -311,6 +348,218 @@ userRoutes.post(
 
     await logSelfService(c, user, 'REGENERATE_SELF_PASSWORD', { email: user.email });
     return c.json({ success: true, data: { email: user.email } });
+  },
+);
+
+// ============================================
+// Two-factor authentication (self-service — Security page)
+// ============================================
+
+// Current state: what's on, what's pending, whether SMS is even usable
+// (phone on file + gateway configured), and who is allowed to turn it off
+// (a required account can only be released by whoever required it).
+userRoutes.get('/me/2fa', authMiddleware, async (c) => {
+  const userId = c.get('userId') as string;
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  const [policyRequired, adminRole, gateway] = await Promise.all([
+    twoFactorPolicyRequired(),
+    prisma.adminUser.findUnique({ where: { userId }, include: { role: true } }),
+    getSmsGateway(),
+  ]);
+
+  // TEMPORARY DIAGNOSTIC: exactly what this request read and replied, so a
+  // stale-UI report can be checked against what the browser actually got.
+  try {
+    appendFileSync(
+      '/tmp/opencode/telnd_2fa_get.log',
+      `${new Date().toISOString()} user=${userId.slice(0, 8)} dbEnabled=${user.twoFactorEnabled} replied=${user.twoFactorEnabled} ua=${(c.req.header('user-agent') || '-').slice(0, 40)}\n`,
+    );
+  } catch {
+    // Never let diagnostics break the endpoint.
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      enabled: user.twoFactorEnabled,
+      method: user.twoFactorMethod,
+      // A secret generated by a setup that was never verified — the UI can
+      // resume that enrollment instead of starting over.
+      pendingSetup: !user.twoFactorEnabled && Boolean(user.twoFactorSecret),
+      hasPhone: Boolean(user.phone),
+      phoneMasked: maskPhone(user.phone),
+      smsAvailable: Boolean(toBdSmsNumber(user.phone)),
+      smsConfigured: gateway.configured,
+      enforcedByAdmin: user.twoFactorEnforced,
+      policyRequired,
+      canDisable: user.twoFactorEnabled && !user.twoFactorEnforced && !policyRequired,
+      canManagePolicy: hasPermission(adminRole?.role, '*'),
+    },
+  });
+});
+
+// First half of authenticator-app enrollment: mint a secret (2FA stays off
+// until the code below is verified) and hand back the QR payload.
+userRoutes.post('/me/2fa/setup', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), async (c) => {
+  const userId = c.get('userId') as string;
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+  if (user.twoFactorEnabled) {
+    return c.json({
+      success: false,
+      error: { code: 'TWO_FACTOR_ALREADY_ENABLED', message: 'Two-factor authentication is already enabled.' },
+    }, 409);
+  }
+
+  const secret = generateTotpSecret();
+  await prisma.user.update({ where: { id: userId }, data: { twoFactorSecret: secret } });
+  return c.json({
+    success: true,
+    data: { otpauthUri: otpauthUri({ secret, account: user.email || user.phone || 'admin' }), secret },
+  });
+});
+
+// Deliver an SMS OTP to the phone on file (enrollment proof or disable
+// confirmation — the code is single-use either way).
+userRoutes.post('/me/2fa/send', authMiddleware, rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
+  const userId = c.get('userId') as string;
+  const result = await sendOtpToUser(userId);
+  if (result.ok) return c.json({ success: true, data: { sent: true } });
+
+  const failure = smsSendFailure(result);
+  if (failure.retryAfterSec) c.header('Retry-After', String(failure.retryAfterSec));
+  return c.json({ success: false, error: { code: failure.code, message: failure.message } }, failure.status);
+});
+
+// Turn 2FA on: prove the chosen factor works before it starts guarding
+// sign-ins. The flag and method only flip on a correct code.
+userRoutes.post(
+  '/me/2fa/enable',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 10 }),
+  validate(twoFactorEnableSchema),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { method: 'totp' | 'sms'; code: string };
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+    }
+    if (user.twoFactorEnabled) {
+      return c.json({
+        success: false,
+        error: { code: 'TWO_FACTOR_ALREADY_ENABLED', message: 'Two-factor authentication is already enabled.' },
+      }, 409);
+    }
+
+    let ok = false;
+    let otpReason: string | null = null;
+    if (body.method === 'totp') {
+      if (!user.twoFactorSecret) {
+        return c.json({
+          success: false,
+          error: { code: 'SETUP_REQUIRED', message: 'Set up your authenticator app first, then enter the code.' },
+        }, 400);
+      }
+      ok = verifyTotp(user.twoFactorSecret, body.code);
+    } else {
+      const result = verifyOtp(userId, body.code);
+      ok = result.ok;
+      if (!result.ok) otpReason = result.reason;
+    }
+
+    if (!ok) {
+      if (otpReason === 'EXPIRED' || otpReason === 'NO_OTP') {
+        return c.json({ success: false, error: { code: 'OTP_EXPIRED', message: 'That code has expired. Send a new one.' } }, 400);
+      }
+      if (otpReason === 'TOO_MANY_ATTEMPTS') {
+        return c.json({ success: false, error: { code: 'OTP_TOO_MANY_ATTEMPTS', message: 'Too many incorrect codes. Send a new one.' } }, 400);
+      }
+      return c.json({ success: false, error: { code: 'INVALID_CODE', message: 'Incorrect code. Please try again.' } }, 400);
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorMethod: body.method,
+        // SMS keeps no shared secret; TOTP keeps the one from setup.
+        twoFactorSecret: body.method === 'sms' ? null : user.twoFactorSecret,
+      },
+    });
+    await logSelfService(c, c.get('user'), 'TWO_FACTOR_ENABLED', { method: body.method });
+    return c.json({ success: true, data: { enabled: true, method: body.method } });
+  },
+);
+
+// Turn 2FA off: a live code for the current factor OR the account password
+// proves possession (whichever the operator still has in hand). Disabled
+// means wiped — re-enrolling starts from a fresh secret. Blocked while a
+// super admin's per-account demand or the global policy is in force.
+userRoutes.post(
+  '/me/2fa/disable',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 10 }),
+  validate(twoFactorDisableSchema),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { code?: string; password?: string };
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+    }
+    if (!user.twoFactorEnabled) {
+      return c.json({
+        success: false,
+        error: { code: 'TWO_FACTOR_NOT_ENABLED', message: 'Two-factor authentication is not enabled.' },
+      }, 400);
+    }
+
+    const policyRequired = await twoFactorPolicyRequired();
+    if (user.twoFactorEnforced || policyRequired) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'TWO_FACTOR_REQUIRED',
+          message: user.twoFactorEnforced
+            ? 'Two-factor authentication is required for this account by an administrator.'
+            : 'Two-factor authentication is required for all admin accounts and cannot be turned off.',
+        },
+      }, 403);
+    }
+
+    let verified = false;
+    if (body.code) {
+      if (user.twoFactorMethod === 'totp' && user.twoFactorSecret) {
+        verified = verifyTotp(user.twoFactorSecret, body.code);
+      } else if (user.twoFactorMethod === 'sms') {
+        verified = verifyOtp(userId, body.code).ok;
+      }
+    }
+    if (!verified && body.password && user.passwordHash) {
+      const bcrypt = await import('bcryptjs');
+      verified = await bcrypt.compare(body.password, user.passwordHash);
+    }
+    if (!verified) {
+      return c.json({
+        success: false,
+        error: { code: 'VERIFICATION_FAILED', message: 'The verification code or password is incorrect.' },
+      }, 400);
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorEnabled: false, twoFactorMethod: null, twoFactorSecret: null },
+    });
+    clearOtp(userId);
+    await logSelfService(c, c.get('user'), 'TWO_FACTOR_DISABLED', {});
+    return c.json({ success: true, data: {} });
   },
 );
 

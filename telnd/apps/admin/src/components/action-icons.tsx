@@ -48,3 +48,24 @@ export function RefreshIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+// Shield — the two-factor requirement row action on the Admins list.
+export function ShieldIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} {...strokeProps}>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
+// Shield with a slash — turn an enrolled admin's own two-factor off
+// from the Admins list (the plain Shield only dials the requirement).
+export function ShieldOffIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} {...strokeProps}>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <line x1="4" y1="4" x2="20" y2="20" />
+    </svg>
+  );
+}

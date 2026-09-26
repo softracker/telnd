@@ -21,9 +21,10 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
   const isLoginPage = pathname === '/login';
-  // Reachable without a session: the login screen and the password-set page
-  // that emailed links (invite / super-admin regenerate / self) land on.
-  const isPublicPage = isLoginPage || pathname === '/reset-password';
+  // Reachable without a session: the login screen, the two-factor screen
+  // (sits between login and the app), and the password-set page that
+  // emailed links (invite / super-admin regenerate / self) land on.
+  const isPublicPage = isLoginPage || pathname === '/2fa' || pathname === '/reset-password';
 
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -41,7 +42,10 @@ export default function AdminLayout({
     if (isLoading) return;
     if (!isAuthenticated && !isPublicPage) router.replace('/login');
     if (isAuthenticated && isLoginPage) router.replace('/');
-  }, [isAuthenticated, isLoading, router, isLoginPage, isPublicPage]);
+    // A signed-in visitor has nothing to challenge — the pending cookie
+    // only exists mid-sign-in.
+    if (isAuthenticated && pathname === '/2fa') router.replace('/');
+  }, [isAuthenticated, isLoading, router, pathname, isLoginPage, isPublicPage]);
 
   useEffect(() => {
     setMobileOpen(false);

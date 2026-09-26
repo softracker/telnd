@@ -45,6 +45,10 @@ export async function apiRequest<T>(
     ...fetchOptions,
     headers,
     credentials: 'include',
+    // Never read a stored body for an API call: a write followed by a
+    // refetch must see the post-write state (Firefox otherwise serves the
+    // pre-write GET body from cache and the UI stays stale).
+    cache: 'no-store',
   });
 
   if (!response.ok) {

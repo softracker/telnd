@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema } from '@telnd/validation';
+import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
@@ -10,6 +10,18 @@ import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFail
 import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
+import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
+import {
+  countVerifyAttempt,
+  clearVerifyAttempts,
+  getSmsGateway,
+  maskPhone,
+  sendOtpToUser,
+  smsSendFailure,
+  toBdSmsNumber,
+  twoFactorPolicyRequired,
+  verifyOtp,
+} from '../lib/twoFactor';
 
 type AuthEnv = {
   Variables: {
@@ -45,6 +57,74 @@ const signRefresh = (userId: string) =>
 function setAuthCookie(c: any, name: string, value: string, maxAgeSeconds: number) {
   const isSecure = process.env.NODE_ENV === 'production';
   c.header('Set-Cookie', `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax; HttpOnly${isSecure ? '; Secure' : ''}`, { append: true });
+}
+
+/**
+ * Everything a *completed* sign-in does once credentials (and 2FA, when
+ * enabled) have been proven: session + refresh rows, auth cookies, the
+ * background location resolve and the last-login stamp. Returns the exact
+ * payload the login endpoint has always responded with — the 2FA verify
+ * route reuses it so both paths end identically.
+ */
+async function issueSession(c: any, user: any, ip: string) {
+  const token = await signAccess(user.id, user.role);
+  const refreshToken = await signRefresh(user.id);
+
+  const session = await prisma.session.create({
+    data: {
+      userId: user.id,
+      token,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      // Captured so the Security page can show Last login / Trusted devices.
+      // "unknown" (no forwarding headers, e.g. local dev) is stored as null
+      // and rendered as "Not recorded" instead of a fake address.
+      ipAddress: ip === 'unknown' ? null : ip,
+      userAgent: c.req.header('user-agent') || null,
+    },
+  });
+
+  // Resolve the sign-in's city/country in the background (Security page
+  // shows it with a flag) — never blocks or fails the login response.
+  void attachLoginLocation(user.id, session.id, ip);
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: refreshToken,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  // Include the admin panel role + permissions so the admin UI can show the
+  // role badge and gate buttons without an extra request.
+  const adminUser = await prisma.adminUser.findUnique({
+    where: { userId: user.id },
+    include: { role: true },
+  });
+
+  setAuthCookie(c, 'telnd_admin_token', token, 7 * 24 * 60 * 60);
+  setAuthCookie(c, 'telnd_admin_refresh_token', refreshToken, 30 * 24 * 60 * 60);
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      avatar: user.avatar,
+      phone: user.phone,
+      adminRole:
+        adminUser && adminUser.isActive
+          ? { name: adminUser.role.name, permissions: adminUser.role.permissions }
+          : null,
+    },
+  };
 }
 
 export const authRoutes = new Hono<AuthEnv>();
@@ -249,66 +329,249 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   // Step 6: Success — reset lockout completely
   await resetLockout(identifier);
 
-  const token = await signAccess(user.id, user.role);
-  const refreshToken = await signRefresh(user.id);
+  // Step 7: Two-factor gate. An enabled second factor stops the sign-in
+  // here — no session exists yet, only a 10-minute pending token in its
+  // own cookie, and the /2fa screen takes over. With 2FA not set up yet
+  // but required (global policy or a super admin's per-account demand),
+  // the same gate opens on the enrollment screen instead: the operator
+  // must finish setup before this account gets in.
+  let needsEnrollment = false;
+  if (!user.twoFactorEnabled) {
+    // The policy lookup only matters while nothing is set up yet.
+    needsEnrollment = user.twoFactorEnforced || (await twoFactorPolicyRequired());
+  }
+  if (user.twoFactorEnabled || needsEnrollment) {
+    const pending = await sign(
+      {
+        sub: user.id,
+        jti: randomUUID(),
+        type: '2fa-pending',
+        purpose: user.twoFactorEnabled ? '2fa' : '2fa-enroll',
+        exp: Math.floor(Date.now() / 1000) + 10 * 60,
+      },
+      getJwtSecret(),
+    );
+    setAuthCookie(c, 'telnd_2fa_pending', pending, 10 * 60);
+    return c.json({
+      success: true,
+      data: {
+        requires2FA: true,
+        requires2FAEnrollment: needsEnrollment,
+        method: user.twoFactorEnabled ? user.twoFactorMethod : null,
+      },
+    });
+  }
 
-  const session = await prisma.session.create({
-    data: {
-      userId: user.id,
-      token,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      // Captured so the Security page can show Last login / Trusted devices.
-      // "unknown" (no forwarding headers, e.g. local dev) is stored as null
-      // and rendered as "Not recorded" instead of a fake address.
-      ipAddress: ip === 'unknown' ? null : ip,
-      userAgent: c.req.header('user-agent') || null,
-    },
-  });
+  const payload = await issueSession(c, user, ip);
+  return c.json({ success: true, data: payload });
+});
 
-  // Resolve the sign-in's city/country in the background (Security page
-  // shows it with a flag) — never blocks or fails the login response.
-  void attachLoginLocation(user.id, session.id, ip);
+// ── Two-factor challenge (the /2fa screen) ───────────────────────────────
+// Sign-in above stops at the gate and leaves `telnd_2fa_pending`; these
+// routes run entirely on that cookie — no session exists yet.
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    },
-  });
+async function readPendingTwoFactor(c: any): Promise<{ userId: string; purpose: '2fa' | '2fa-enroll' } | null> {
+  const cookieHeader: string = c.req.header('Cookie') || '';
+  const pending = cookieHeader
+    .split(';')
+    .map((s) => s.trim())
+    .find((s) => s.startsWith('telnd_2fa_pending='))
+    ?.split('=')
+    .slice(1)
+    .join('=');
+  if (!pending) return null;
+  try {
+    const payload = await verify(pending, getJwtSecret(), 'HS256');
+    if (!payload || !payload.sub || payload.type !== '2fa-pending') return null;
+    const user = await prisma.user.findUnique({ where: { id: payload.sub as string } });
+    // A suspended or deleted account loses its challenge mid-flight.
+    if (!user || !user.isActive) return null;
+    return { userId: user.id, purpose: payload.purpose === '2fa-enroll' ? '2fa-enroll' : '2fa' };
+  } catch {
+    return null;
+  }
+}
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
+function clearPendingCookie(c: any) {
+  c.header('Set-Cookie', 'telnd_2fa_pending=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly', { append: true });
+}
 
-  // Include the admin panel role + permissions so the admin UI can show the
-  // role badge and gate buttons without an extra request.
-  const adminUser = await prisma.adminUser.findUnique({
-    where: { userId: user.id },
-    include: { role: true },
-  });
+function challengeExpired(c: any) {
+  return c.json({
+    success: false,
+    error: { code: 'CHALLENGE_EXPIRED', message: 'Your sign-in attempt expired. Please sign in again.' },
+  }, 401);
+}
 
-  setAuthCookie(c, 'telnd_admin_token', token, 7 * 24 * 60 * 60);
-  setAuthCookie(c, 'telnd_admin_refresh_token', refreshToken, 30 * 24 * 60 * 60);
+// What the /2fa screen renders on load: challenge vs. forced enrollment,
+// the enrolled method, a masked phone for SMS delivery, and whether SMS is
+// even an option right now (phone on file + gateway configured).
+authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+  const pending = await readPendingTwoFactor(c);
+  if (!pending) return challengeExpired(c);
+  const user = await prisma.user.findUnique({ where: { id: pending.userId } });
+  if (!user) return challengeExpired(c);
 
+  const gateway = await getSmsGateway();
   return c.json({
     success: true,
     data: {
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        avatar: user.avatar,
-        adminRole:
-          adminUser && adminUser.isActive
-            ? { name: adminUser.role.name, permissions: adminUser.role.permissions }
-            : null,
-      },
+      requiresEnrollment: pending.purpose === '2fa-enroll',
+      method: pending.purpose === '2fa' ? user.twoFactorMethod : null,
+      phoneMasked: maskPhone(user.phone),
+      smsAvailable: Boolean(toBdSmsNumber(user.phone)),
+      smsConfigured: gateway.configured,
     },
   });
+});
+
+// First half of authenticator-app enrollment: mint a fresh secret (stored
+// with 2FA still off) and hand back the QR payload. Only the verification
+// below flips the flag, so an abandoned attempt changes nothing.
+authRoutes.post('/2fa/challenge/setup', rateLimit({ windowMs: 60000, max: 5 }), async (c) => {
+  const pending = await readPendingTwoFactor(c);
+  if (!pending) return challengeExpired(c);
+  if (pending.purpose !== '2fa-enroll') {
+    return c.json({
+      success: false,
+      error: { code: 'ALREADY_ENROLLED', message: 'Two-factor authentication is already set up for this account.' },
+    }, 409);
+  }
+  const user = await prisma.user.findUnique({ where: { id: pending.userId } });
+  if (!user) return challengeExpired(c);
+
+  const secret = generateTotpSecret();
+  await prisma.user.update({ where: { id: user.id }, data: { twoFactorSecret: secret } });
+  return c.json({
+    success: true,
+    data: {
+      otpauthUri: otpauthUri({ secret, account: user.email || user.phone || 'admin' }),
+      secret,
+    },
+  });
+});
+
+// Deliver an SMS OTP to the phone on file — used both by the enrollment
+// screen and by an enrolled SMS-method challenge (send + resend).
+authRoutes.post('/2fa/challenge/send', rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
+  const pending = await readPendingTwoFactor(c);
+  if (!pending) return challengeExpired(c);
+
+  const result = await sendOtpToUser(pending.userId);
+  if (result.ok) return c.json({ success: true, data: { sent: true } });
+
+  const failure = smsSendFailure(result);
+  if (failure.retryAfterSec) c.header('Retry-After', String(failure.retryAfterSec));
+  return c.json({ success: false, error: { code: failure.code, message: failure.message } }, failure.status);
+});
+
+// Second half — verify the code and *then* complete the sign-in. Enrollment
+// ends by flipping twoFactorEnabled on before the session is issued.
+authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 }), validate(twoFactorVerifySchema), async (c) => {
+  const pending = await readPendingTwoFactor(c);
+  if (!pending) return challengeExpired(c);
+  const body = c.get('validatedData');
+  const user = await prisma.user.findUnique({ where: { id: pending.userId } });
+  if (!user) return challengeExpired(c);
+
+  // Brute-force cap per account (5 wrong tries → restart the sign-in),
+  // layered on top of the per-IP rate limit above.
+  if (countVerifyAttempt(user.id).blocked) {
+    clearVerifyAttempts(user.id);
+    clearPendingCookie(c);
+    c.header('Retry-After', '900');
+    return c.json({
+      success: false,
+      error: { code: 'TOO_MANY_ATTEMPTS', message: 'Too many incorrect codes. Please sign in again.' },
+    }, 429);
+  }
+
+  let method: string;
+  let ok = false;
+  let otpReason: string | null = null;
+
+  if (pending.purpose === '2fa') {
+    // Already enrolled: the stored method decides what counts.
+    method = user.twoFactorMethod || '';
+    if (method === 'totp') {
+      ok = Boolean(user.twoFactorSecret) && verifyTotp(user.twoFactorSecret!, body.code);
+    } else if (method === 'sms') {
+      const result = verifyOtp(user.id, body.code);
+      ok = result.ok;
+      if (!result.ok) otpReason = result.reason;
+    } else {
+      return c.json({
+        success: false,
+        error: { code: 'TWO_FACTOR_UNAVAILABLE', message: 'Two-factor authentication is misconfigured for this account. Contact an administrator.' },
+      }, 400);
+    }
+  } else {
+    // Forced enrollment: the screen says which factor it just set up.
+    method = body.method || '';
+    if (method === 'totp') {
+      if (!user.twoFactorSecret) {
+        return c.json({
+          success: false,
+          error: { code: 'SETUP_REQUIRED', message: 'Set up your authenticator app first, then enter the code.' },
+        }, 400);
+      }
+      ok = verifyTotp(user.twoFactorSecret, body.code);
+    } else if (method === 'sms') {
+      const result = verifyOtp(user.id, body.code);
+      ok = result.ok;
+      if (!result.ok) otpReason = result.reason;
+    } else {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_METHOD', message: 'Choose an authenticator app or SMS codes.' },
+      }, 400);
+    }
+  }
+
+  if (!ok) {
+    if (otpReason === 'EXPIRED' || otpReason === 'NO_OTP') {
+      return c.json({ success: false, error: { code: 'OTP_EXPIRED', message: 'That code has expired. Send a new one.' } }, 400);
+    }
+    if (otpReason === 'TOO_MANY_ATTEMPTS') {
+      return c.json({ success: false, error: { code: 'OTP_TOO_MANY_ATTEMPTS', message: 'Too many incorrect codes. Send a new one.' } }, 400);
+    }
+    return c.json({ success: false, error: { code: 'INVALID_CODE', message: 'Incorrect code. Please try again.' } }, 400);
+  }
+
+  clearVerifyAttempts(user.id);
+
+  if (pending.purpose === '2fa-enroll') {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorMethod: method,
+        // SMS keeps no shared secret; TOTP keeps the one from setup.
+        twoFactorSecret: method === 'sms' ? null : user.twoFactorSecret,
+      },
+    });
+    if (user.role === 'ADMIN') {
+      try {
+        await prisma.adminAction.create({
+          data: {
+            adminId: user.id,
+            action: 'TWO_FACTOR_ENABLED',
+            targetType: 'user',
+            targetId: user.id,
+            details: { method },
+            ipAddress: getIp(c),
+            userAgent: c.req.header('user-agent') || undefined,
+          },
+        });
+      } catch {
+        // Audit must never fail the request itself.
+      }
+    }
+  }
+
+  clearPendingCookie(c);
+  const payload = await issueSession(c, user, getIp(c));
+  return c.json({ success: true, data: payload });
 });
 
 // Dry-run of an emailed set-password link. The reset page calls this the
@@ -563,7 +826,8 @@ authRoutes.get('/me', authMiddleware, async (c) => {
     include: { role: true },
   });
 
-  const { passwordHash, ...safeUser } = user;
+  // passwordHash and the TOTP secret never round-trip to the client.
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
 
   return c.json({
     success: true,

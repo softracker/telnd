@@ -31,8 +31,20 @@ app.use('*', cors({
   maxAge: 86400,
 }));
 
+// Every response here is dynamic and session-scoped: without an explicit
+// directive a browser may heuristically reuse a GET body, and a stale body
+// served right after a write makes the UI show pre-write state forever (the
+// 2FA card and the Admins list both hit this). no-store ends the class.
+app.use('*', async (c, next) => {
+  c.header('Cache-Control', 'no-store');
+  await next();
+});
+
 // Public routes — no auth required
-const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/auth/reset-password', '/api/auth/reset-password/check', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
+// /api/auth/2fa/* — the two-factor challenge routes authorize themselves
+// against the short-lived `telnd_2fa_pending` cookie: at that point sign-in
+// has NO session yet, so they must be reachable without one.
+const publicPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/auth/reset-password', '/api/auth/reset-password/check', '/api/auth/2fa', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
   const isPublic = publicPaths.some((p) => path === p || path.startsWith(p + '/'));

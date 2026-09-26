@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
 import { sendAdminInviteEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
+import { clearOtp } from '../lib/twoFactor';
 
 type AdminEnv = {
   Variables: {
@@ -117,7 +118,10 @@ admin.get('/users', requireAdmin, requirePermission('users.view'), async (c) => 
     prisma.user.count({ where }),
   ]);
 
-  return c.json({ users, total, page, limit, totalPages: Math.ceil(total / limit) });
+  // Credential material never leaves the API — the password hash never did
+  // (it was leaked by accident), and the TOTP secret must not either.
+  const safeUsers = users.map(({ passwordHash, twoFactorSecret, ...u }) => u);
+  return c.json({ users: safeUsers, total, page, limit, totalPages: Math.ceil(total / limit) });
 });
 
 admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c) => {
@@ -127,7 +131,8 @@ admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c)
     include: { capabilities: true },
   });
   if (!user) return c.json({ error: 'User not found' }, 404);
-  return c.json(user);
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
+  return c.json(safeUser);
 });
 
 admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), async (c) => {
@@ -229,6 +234,11 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
       roleName: u.adminUser?.role?.name ?? null,
       permissions: (u.adminUser?.role?.permissions as unknown as string[] | null) ?? [],
       isSelf: u.id === selfId,
+      // 2FA state for the Admins list: "required" means a super admin
+      // demands setup at next sign-in; "enabled" means it's actually on.
+      twoFactorEnabled: u.twoFactorEnabled,
+      twoFactorMethod: u.twoFactorMethod,
+      twoFactorRequired: u.twoFactorEnforced,
     }))
     // Super admins appear only for a super admin. Filtering before paging
     // keeps totals honest for everyone else.
@@ -513,6 +523,77 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
 
   await logAction(actor.userId, 'REGENERATE_ADMIN_PASSWORD', 'user', user.id, { email: user.email }, c);
   return c.json({ success: true, data: { email: user.email } });
+});
+
+// ============================================
+// Two-factor administration (super admin only)
+// ============================================
+
+// Require (or release) 2FA for one admin from the Admins list. Requiring
+// doesn't provision anything for them — an unenrolled account blocks on the
+// setup screen at its next sign-in; an enrolled one starts challenging
+// immediately and can no longer be self-disabled. Releasing wipes the
+// enrollment entirely (fresh secret when it's turned back on).
+admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to manage two-factor authentication.' },
+    }, 403);
+  }
+
+  const id = c.req.param('id');
+  const { required } = c.get('validatedData') as { required: boolean };
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
+  if (!user || user.role !== 'ADMIN' || !user.adminUser) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+
+  const data = required
+    ? { twoFactorEnforced: true }
+    : { twoFactorEnforced: false, twoFactorEnabled: false, twoFactorMethod: null, twoFactorSecret: null };
+  const updated = await prisma.user.update({ where: { id }, data });
+  // A code sent for the released enrollment must not linger either.
+  clearOtp(user.id);
+
+  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR' : 'DISABLE_TWO_FACTOR', 'user', id, {}, c);
+  return c.json({
+    success: true,
+    data: {
+      twoFactorEnabled: updated.twoFactorEnabled,
+      twoFactorMethod: updated.twoFactorMethod,
+      twoFactorRequired: updated.twoFactorEnforced,
+    },
+  });
+});
+
+// "Require two-factor for all admins" — the switch on the Security page.
+// Stored under a Setting key that is deliberately NOT in KEY_PERMISSIONS,
+// so the generic settings PUT can never flip it: unknown keys resolve to
+// the "*" (super) permission on both read and write.
+admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to change the two-factor policy.' },
+    }, 403);
+  }
+
+  const { required } = c.get('validatedData') as { required: boolean };
+  await prisma.setting.upsert({
+    where: { key: 'twoFactorPolicy' },
+    update: { value: { requireTwoFactor: required } as any },
+    create: { key: 'twoFactorPolicy', value: { requireTwoFactor: required } as any },
+  });
+
+  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_ALL' : 'CLEAR_TWO_FACTOR_POLICY', 'setting', undefined, { required }, c);
+  return c.json({ success: true, data: { required } });
 });
 
 // ============================================
