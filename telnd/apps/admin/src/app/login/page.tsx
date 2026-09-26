@@ -25,7 +25,9 @@ export default function LoginPage() {
   useEffect(() => {
     async function loadSiteKey() {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/captcha-config`);
+        // Relative on purpose: same-origin through the /api rewrite proxy,
+        // so the fetch survives HTTPS tunnels (see lib/api.ts).
+        const res = await fetch('/api/captcha-config');
         if (res.ok) {
           const data = await res.json();
           if (data.success && data.data.enabled && data.data.siteKey) {

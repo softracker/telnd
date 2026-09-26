@@ -1,4 +1,10 @@
-const API_BASE_URL = process.env.API_URL || 'http://localhost:3001';
+// Browser → same-origin (the /api rewrite proxy in next.config.ts carries
+// it to the API), the only scheme that survives an HTTPS tunnel. Server →
+// direct to the API (server-side fetches reach localhost from anywhere).
+const API_BASE_URL =
+  typeof window === 'undefined'
+    ? process.env.API_URL || 'http://localhost:3001'
+    : '';
 
 interface RequestOptions extends RequestInit {
   token?: string;
