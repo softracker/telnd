@@ -83,9 +83,13 @@ export interface SettingsSection {
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { href: '/settings/general', permission: 'general.view' },
-  { href: '/settings/account', permission: 'admins.view' },
+  // Account and Security are open to every signed-in admin (like
+  // Preferences and About): Account holds your own profile card — the
+  // Admins management card inside it gates itself on admins.view — and
+  // Security holds your own sessions/password.
+  { href: '/settings/account', permission: null },
   { href: '/settings/roles', permission: 'roles.view' },
-  { href: '/settings/security', permission: 'security.view' },
+  { href: '/settings/security', permission: null },
   { href: '/settings/login-providers', permission: 'loginProviders.view' },
   { href: '/settings/captcha', permission: 'captcha.view' },
   { href: '/settings/smtp', permission: 'email.view' },

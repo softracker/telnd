@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema, resetPasswordSchema } from '@telnd/validation';
+import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
 import { sign, verify } from 'hono/jwt';
+import { randomUUID } from 'node:crypto';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
-import { findUsablePasswordToken } from '../lib/passwordTokens';
+import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
 
 type AuthEnv = {
   Variables: {
@@ -22,6 +23,23 @@ function getJwtSecret(): string {
   if (!secret) throw new Error('JWT_SECRET environment variable is required');
   return secret;
 }
+
+// Every token carries a fresh jti. Without it, two tokens signed in the
+// same second for the same user are byte-identical (HS256 over an
+// identical payload — exp only has second granularity), and the second
+// insert dies on Session.token's unique constraint: a 500 on a
+// double-clicked sign-in or a second device logging in at once. Tokens
+// minted before this change (no jti) still verify.
+const signAccess = (userId: string, role: string) =>
+  sign(
+    { sub: userId, jti: randomUUID(), role, type: 'access', exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60 },
+    getJwtSecret(),
+  );
+const signRefresh = (userId: string) =>
+  sign(
+    { sub: userId, jti: randomUUID(), type: 'refresh', exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 },
+    getJwtSecret(),
+  );
 
 function setAuthCookie(c: any, name: string, value: string, maxAgeSeconds: number) {
   const isSecure = process.env.NODE_ENV === 'production';
@@ -66,8 +84,8 @@ authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(sign
     },
   });
 
-  const token = await sign({ sub: user.id, role: user.role, type: 'access', exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60 }, getJwtSecret());
-  const refreshToken = await sign({ sub: user.id, type: 'refresh', exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }, getJwtSecret());
+  const token = await signAccess(user.id, user.role);
+  const refreshToken = await signRefresh(user.id);
 
   const session = await prisma.session.create({
     data: {
@@ -224,8 +242,8 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   // Step 6: Success — reset lockout completely
   await resetLockout(identifier);
 
-  const token = await sign({ sub: user.id, role: user.role, type: 'access', exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60 }, getJwtSecret());
-  const refreshToken = await sign({ sub: user.id, type: 'refresh', exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }, getJwtSecret());
+  const token = await signAccess(user.id, user.role);
+  const refreshToken = await signRefresh(user.id);
 
   await prisma.session.create({
     data: {
@@ -282,6 +300,31 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   });
 });
 
+// Dry-run of an emailed set-password link. The reset page calls this the
+// moment it opens so an expired or already-spent link says so up front —
+// not after someone has typed a password and pressed submit. Never spends
+// the token; the real validation still happens on the consume route below.
+// 60/min on its own per-path bucket: a dead link costs one call (the page
+// remembers verdicts per tab), and a reload loop on a *live* link may exhaust
+// it — falling back to the form, which is the correct state for that link.
+authRoutes.post('/reset-password/check', rateLimit({ windowMs: 60000, max: 60 }), validate(checkResetTokenSchema), async (c) => {
+  const body = c.get('validatedData');
+  const status = await checkPasswordToken(body.token, ['reset', 'invite']);
+  if (status === 'valid') {
+    return c.json({ success: true, data: {} });
+  }
+  if (status === 'expired') {
+    return c.json({
+      success: false,
+      error: { code: 'TOKEN_EXPIRED', message: 'This link has expired. Ask your administrator to send a new one.' },
+    }, 400);
+  }
+  return c.json({
+    success: false,
+    error: { code: 'TOKEN_INVALID', message: 'This link is invalid or has expired. Ask your administrator to send a new one.' },
+  }, 400);
+});
+
 // Consume a reset/invite link and set the new password. Single-use is
 // enforced inside one transaction: the token row is deleted alongside the
 // new hash, and every session is revoked — the next sign-in must use the
@@ -317,6 +360,11 @@ authRoutes.post('/reset-password', rateLimit({ windowMs: 60000, max: 5 }), valid
       await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
       // Password changed out-of-band — every existing session is suspect.
       await tx.session.deleteMany({ where: { userId: user.id } });
+      // ...and so is every refresh token: /api/auth/refresh trusts its row
+      // alone (and will even create a fresh session), so leaving one alive
+      // would let a stolen refresh token outlive the reset by up to 30 days
+      // and quietly regain access with the OLD password having been changed.
+      await tx.refreshToken.deleteMany({ where: { userId: user.id } });
     });
   } catch {
     return c.json({
@@ -392,8 +440,8 @@ authRoutes.post('/refresh', rateLimit({ windowMs: 60000, max: 10 }), async (c) =
     // Rotate: delete old, issue new
     await prisma.refreshToken.delete({ where: { id: storedRefresh.id } });
 
-    const newToken = await sign({ sub: storedRefresh.user.id, role: storedRefresh.user.role, type: 'access', exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60 }, getJwtSecret());
-    const newRefreshToken = await sign({ sub: storedRefresh.user.id, type: 'refresh', exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }, getJwtSecret());
+    const newToken = await signAccess(storedRefresh.user.id, storedRefresh.user.role);
+    const newRefreshToken = await signRefresh(storedRefresh.user.id);
 
     await prisma.session.update({
       where: { token: refreshToken },

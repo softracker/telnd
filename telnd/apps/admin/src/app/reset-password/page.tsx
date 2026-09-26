@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -12,6 +12,36 @@ function Spinner() {
       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="32" strokeDashoffset="10" strokeLinecap="round" />
     </svg>
   );
+}
+
+type DeadVerdict = 'expired' | 'invalid';
+
+const DEAD_LINK_KEY = 'telnd_reset_dead:';
+
+/**
+ * Tab-local memory of a dead link. Refreshing must never flip a link that
+ * already failed back into the input form: once this tab has a verdict it
+ * is reused on every reload with no request at all — so a refresh loop can
+ * neither re-drain the check endpoint's rate limit nor race it. A dead
+ * link only gets deader (expired stays expired, spent stays spent), so the
+ * verdict never needs to be re-verified; a live link is not remembered and
+ * is checked again each load.
+ */
+function readDeadLink(token: string): DeadVerdict | null {
+  try {
+    const value = sessionStorage.getItem(DEAD_LINK_KEY + token);
+    return value === 'expired' || value === 'invalid' ? value : null;
+  } catch {
+    return null; // storage unavailable — verify against the API instead
+  }
+}
+
+function rememberDeadLink(token: string, verdict: DeadVerdict): void {
+  try {
+    sessionStorage.setItem(DEAD_LINK_KEY + token, verdict);
+  } catch {
+    // Storage unavailable — this load is still guarded by the live check.
+  }
 }
 
 /**
@@ -33,6 +63,54 @@ function ResetPasswordForm() {
   const [error, setError] = useState('');
   // A missing token is the same failure as a bad one: one generic state.
   const [invalidLink, setInvalidLink] = useState(!token);
+  // The link is verified the moment the page opens: a dead one (expired or
+  // already spent) shows the notice immediately, before any typing — not
+  // only after a failed submit. A verdict already reached is remembered for
+  // this tab (readDeadLink), so refreshing can never flip a dead link back
+  // into the form; only genuinely unknown outcomes — a network blip or the
+  // rate limit — fall open to the form, and the submit path re-validates.
+  const [checking, setChecking] = useState(!!token);
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const cached = readDeadLink(token);
+    if (cached) {
+      if (cached === 'expired') setExpired(true);
+      else setInvalidLink(true);
+      setChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await apiRequest('/api/auth/reset-password/check', {
+          method: 'POST',
+          body: JSON.stringify({ token }),
+        });
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 400) {
+          const code = (err.data as { error?: { code?: string } } | null)?.error?.code;
+          // Cache only the verdicts that actually mean "link is dead" — a
+          // non-token 400 (e.g. a future password-policy rejection) must
+          // never poison a live link for this tab.
+          if (code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID') {
+            rememberDeadLink(token, code === 'TOKEN_EXPIRED' ? 'expired' : 'invalid');
+          }
+          if (code === 'TOKEN_EXPIRED') setExpired(true);
+          else setInvalidLink(true);
+        }
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -50,7 +128,12 @@ function ResetPasswordForm() {
       setDone(true);
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
-        setInvalidLink(true);
+        const code = (err.data as { error?: { code?: string } } | null)?.error?.code;
+        if (code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID') {
+          rememberDeadLink(token, code === 'TOKEN_EXPIRED' ? 'expired' : 'invalid');
+        }
+        if (code === 'TOKEN_EXPIRED') setExpired(true);
+        else setInvalidLink(true);
       } else if (err instanceof ApiError && err.status === 429) {
         setError(t('login.error.tooMany'));
       } else if (err instanceof ApiError) {
@@ -153,8 +236,25 @@ function ResetPasswordForm() {
               {t('reset.signIn')}
             </Link>
           </div>
-        ) : invalidLink ? (
+        ) : checking ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.625rem',
+              padding: '2.5rem 0',
+              fontSize: '0.875rem',
+              color: '#6b7280',
+            }}
+          >
+            <Spinner />
+            {t('reset.checking')}
+          </div>
+        ) : expired || invalidLink ? (
           <div>
+            {/* Notice only — the card's "Back to sign in" link below is the
+                way out, so no extra Sign in button here. */}
             <div
               style={{
                 background: '#fef2f2',
@@ -164,27 +264,11 @@ function ResetPasswordForm() {
                 padding: '0.875rem 1rem',
                 fontSize: '0.875rem',
                 lineHeight: 1.6,
-                marginBottom: '1.25rem',
+                marginBottom: '0.25rem',
               }}
             >
-              {t('reset.invalid')}
+              {expired ? t('reset.expired') : t('reset.invalid')}
             </div>
-            <Link
-              href="/login"
-              style={{
-                display: 'block',
-                textAlign: 'center',
-                background: '#0d9488',
-                color: '#ffffff',
-                textDecoration: 'none',
-                padding: '0.75rem 1rem',
-                borderRadius: '8px',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-              }}
-            >
-              {t('reset.signIn')}
-            </Link>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>

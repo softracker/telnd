@@ -41,9 +41,16 @@ export const resetPasswordSchema = z.object({
   password: z.string().min(8),
 });
 
+// Dry-run of an emailed set-password link: the page calls this on load so a
+// dead link is announced up front instead of after a filled-in form.
+export const checkResetTokenSchema = z.object({
+  token: z.string().min(1),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type RequestOtpInput = z.infer<typeof requestOtpSchema>;
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type CheckResetTokenInput = z.infer<typeof checkResetTokenSchema>;

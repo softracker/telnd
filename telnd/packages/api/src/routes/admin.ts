@@ -34,6 +34,13 @@ function clampPage(value: string | undefined): number {
   return parsed;
 }
 
+// Super admin = the "*" wildcard in a role's permission list. A super admin
+// is invisible to anyone who isn't one: the Admins list filters them out,
+// and the direct-ID routes below answer 404 as if the account didn't exist
+// — only a super admin may see, edit, suspend or delete one.
+const isSuper = (permissions: unknown): boolean =>
+  Array.isArray(permissions) && permissions.includes('*');
+
 // Log admin action
 const logAction = async (adminId: string, action: string, targetType: string, targetId?: string, details?: any, c?: any) => {
   await prisma.adminAction.create({
@@ -129,7 +136,20 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
   const reason = body.reason;
   const adminUser = c.get('admin');
 
-  const user = await prisma.user.update({
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
+  if (!user) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+  // A super admin doesn't exist for a non-super caller — not in the lists,
+  // and a direct suspend gets the same 404.
+  if (isSuper(user.adminUser?.role?.permissions) && !isSuper(adminUser?.role?.permissions)) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+
+  const updated = await prisma.user.update({
     where: { id },
     data: { isActive: false },
   });
@@ -139,12 +159,25 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
   await prisma.refreshToken.deleteMany({ where: { userId: id } });
 
   await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason }, c);
-  return c.json(user);
+  return c.json(updated);
 });
 
 admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), async (c) => {
   const id = c.req.param('id');
   const adminUser = c.get('admin');
+
+  const existing = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
+  if (!existing) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+  // Same invisibility rule as suspend: a super admin is not reachable by a
+  // non-super caller.
+  if (isSuper(existing.adminUser?.role?.permissions) && !isSuper(adminUser?.role?.permissions)) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
 
   const user = await prisma.user.update({
     where: { id },
@@ -174,6 +207,7 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
   // same row isn't shown twice. (Self password reset moves to a future
   // Security tab; other admins' regenerate action is unaffected.)
   const selfId = c.get('user')?.id;
+  const actorIsSuper = isSuper(c.get('admin')?.role?.permissions);
 
   const users = await prisma.user.findMany({
     where: { role: 'ADMIN', ...(selfId ? { NOT: { id: selfId } } : {}) },
@@ -181,20 +215,24 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
     include: { adminUser: { include: { role: true } } },
   });
 
-  const all = users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    firstName: u.firstName,
-    lastName: u.lastName,
-    avatar: u.avatar,
-    isActive: u.isActive,
-    createdAt: u.createdAt,
-    lastLoginAt: u.lastLoginAt,
-    roleId: u.adminUser?.roleId ?? null,
-    roleName: u.adminUser?.role?.name ?? null,
-    permissions: (u.adminUser?.role?.permissions as unknown as string[] | null) ?? [],
-    isSelf: u.id === selfId,
-  }));
+  const all = users
+    .map((u) => ({
+      id: u.id,
+      email: u.email,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      avatar: u.avatar,
+      isActive: u.isActive,
+      createdAt: u.createdAt,
+      lastLoginAt: u.lastLoginAt,
+      roleId: u.adminUser?.roleId ?? null,
+      roleName: u.adminUser?.role?.name ?? null,
+      permissions: (u.adminUser?.role?.permissions as unknown as string[] | null) ?? [],
+      isSelf: u.id === selfId,
+    }))
+    // Super admins appear only for a super admin. Filtering before paging
+    // keeps totals honest for everyone else.
+    .filter((u) => actorIsSuper || !u.permissions.includes('*'));
 
   if (!wantsPaging) {
     return c.json({ admins: all, total: all.length });
@@ -314,8 +352,16 @@ admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), valid
     return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'You cannot change your own role' } }, 400);
   }
 
-  const user = await prisma.user.findUnique({ where: { id } });
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
   if (!user || user.role !== 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+  // Super admins are absent from a non-super viewer's list — a direct call
+  // must look the same, and only a super admin may edit one.
+  if (isSuper(user.adminUser?.role?.permissions) && !isSuper(adminUser?.role?.permissions)) {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
   }
 
@@ -374,8 +420,16 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
     return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'You cannot delete your own account' } }, 400);
   }
 
-  const user = await prisma.user.findUnique({ where: { id } });
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
   if (!user || user.role !== 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+  // Only a super admin can delete a super admin — everyone else gets the
+  // same 404 their list implies, permission to delete or not.
+  if (isSuper(user.adminUser?.role?.permissions) && !isSuper(adminUser?.role?.permissions)) {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
   }
 

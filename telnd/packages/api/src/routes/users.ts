@@ -199,9 +199,47 @@ userRoutes.post(
       }, 400);
     }
 
+    // Re-submitting the current password is not a change: reject it as a
+    // validation error — never a quiet 200, which would report "success"
+    // to the admin AND revoke the other devices for no reason. Runs before
+    // the transaction, so a rejected attempt revokes nothing.
+    if (body.newPassword === body.currentPassword) {
+      return c.json({
+        success: false,
+        error: { code: 'SAME_PASSWORD', message: 'Your new password must be different from your current password.' },
+      }, 400);
+    }
+
     const passwordHash = await bcrypt.hash(body.newPassword, 12);
-    await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
-    await logSelfService(c, user, 'CHANGE_PASSWORD');
+
+    // A password change revokes every OTHER sign-in: all other sessions go,
+    // and so do other devices' refresh tokens — /api/auth/refresh trusts its
+    // row alone, so one left alive would outlive the change exactly like it
+    // used to outlive a link-based reset (§14.34). This device keeps both
+    // its session and its own refresh cookie; with no cookie in the request
+    // nothing can be exempted, so all refresh tokens are revoked (fail
+    // closed — the changer is only re-authenticated at the next refresh).
+    const currentRefresh = (c.req.header('Cookie') || '')
+      .split(';')
+      .map((s) => s.trim())
+      .find((s) => s.startsWith('telnd_admin_refresh_token='))
+      ?.slice('telnd_admin_refresh_token='.length);
+
+    const revoked = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+      const sessions = await tx.session.deleteMany({
+        where: { userId, NOT: { token: c.get('token') as string } },
+      });
+      const refreshes = await tx.refreshToken.deleteMany({
+        where: { userId, ...(currentRefresh ? { NOT: { token: currentRefresh } } : {}) },
+      });
+      return { sessions: sessions.count, refreshes: refreshes.count };
+    });
+
+    await logSelfService(c, user, 'CHANGE_PASSWORD', {
+      revokedOtherSessions: revoked.sessions,
+      revokedOtherRefreshTokens: revoked.refreshes,
+    });
     return c.json({ success: true, data: {} });
   },
 );

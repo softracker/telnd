@@ -134,15 +134,22 @@ export default function SecuritySettingsPage() {
   const [currentWrong, setCurrentWrong] = useState(false);
   const [shortArmed, setShortArmed] = useState(false);
   const [mismatchArmed, setMismatchArmed] = useState(false);
+  // Same-as-current: armed by the client-side pre-check (skips the pointless
+  // round trip) and by the API's SAME_PASSWORD 400 (the server is the
+  // authority). Like the *Armed flags it self-clears in the render
+  // condition the moment either field stops matching.
+  const [sameAsCurrent, setSameAsCurrent] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function handleChangePassword(e: FormEvent) {
     e.preventDefault();
     const short = next.length < 8;
     const mismatch = confirm !== next;
+    const same = next.length > 0 && next === current;
     setShortArmed(short);
     setMismatchArmed(mismatch);
-    if (short || mismatch) return;
+    setSameAsCurrent(same);
+    if (short || mismatch || same) return;
 
     setSaving(true);
     try {
@@ -156,10 +163,13 @@ export default function SecuritySettingsPage() {
       setCurrentWrong(false);
       setShortArmed(false);
       setMismatchArmed(false);
+      setSameAsCurrent(false);
       showToast('success', t('security.passwordChanged'));
     } catch (err) {
       if (err instanceof ApiError && (err.data as any)?.error?.code === 'INVALID_CURRENT_PASSWORD') {
         setCurrentWrong(true);
+      } else if (err instanceof ApiError && (err.data as any)?.error?.code === 'SAME_PASSWORD') {
+        setSameAsCurrent(true);
       } else {
         showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
       }
@@ -231,6 +241,12 @@ export default function SecuritySettingsPage() {
     }
   }
 
+  // Inline errors on the "new password" field: same-as-current wins over
+  // too-short (the more specific complaint); both re-evaluate every render,
+  // so editing either password field clears them without extra handlers.
+  const sameErr = sameAsCurrent && next === current;
+  const shortErr = shortArmed && next.length < 8;
+
   const lastLoginAt = data ? data.lastLoginAt ?? data.sessions[0]?.createdAt ?? null : null;
   const lastSession = data?.sessions[0];
   const prevSession = data?.sessions[1];
@@ -278,8 +294,8 @@ export default function SecuritySettingsPage() {
                     onChange={setNext}
                     required
                     autoComplete="new-password"
-                    error={shortArmed && next.length < 8 ? t('security.passwordTooShort') : undefined}
-                    helperText={!(shortArmed && next.length < 8) ? t('security.passwordHint') : undefined}
+                    error={sameErr ? t('security.passwordSameAsCurrent') : shortErr ? t('security.passwordTooShort') : undefined}
+                    helperText={!(sameErr || shortErr) ? t('security.passwordHint') : undefined}
                   />
                   <PasswordInput
                     label={t('security.confirmPassword')}
