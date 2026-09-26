@@ -18,6 +18,11 @@ export interface OtpInputHandle {
 interface OtpInputProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * Fired with the full code the moment the last box is filled (type, paste
+   * or autofill) — lets the caller submit instead of waiting for a click.
+   */
+  onComplete?: (value: string) => void;
   /** Accessible name of the whole row; also prefixes each box. */
   ariaLabel: string;
   /** Links an external <label> to the first box. */
@@ -46,6 +51,7 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
   {
     value,
     onChange,
+    onComplete,
     ariaLabel,
     firstInputId,
     length = 6,
@@ -77,8 +83,14 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
   }));
 
   function emit(next: string): void {
+    const prev = valueRef.current;
     valueRef.current = next;
     onChange(next);
+    // Only on the fill transition (5→6), never while replacing digits in an
+    // already-full row — so one completed code means exactly one submit.
+    if (next.length === length && prev.length < length) {
+      onComplete?.(next);
+    }
   }
 
   function handleFocus(index: number): void {
@@ -173,7 +185,12 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             fontSize: '1.125rem',
             fontWeight: 600,
             borderRadius: '8px',
-            border: '1px solid #d1d5db',
+            // Longhands only: a `border` shorthand here fights the
+            // focusStyle's `borderColor` on blur and React warns about
+            // removing a non-shorthand while the shorthand is set.
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#d1d5db',
             padding: 0,
             outline: 'none',
             transition: 'border-color 0.2s ease, box-shadow 0.2s ease',

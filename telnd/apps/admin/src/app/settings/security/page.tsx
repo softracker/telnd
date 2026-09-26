@@ -388,10 +388,17 @@ export default function SecuritySettingsPage() {
 
   async function handleEnable(e: FormEvent) {
     e.preventDefault();
-    if (twoFaCode.length !== 6 || !setupPanel || twoFaBusy) return;
+    await runEnable(twoFaCode);
+  }
+
+  // Shared by the form's submit and the OTP row's onComplete, which hands
+  // the sixth digit over directly — reading `twoFaCode` state there would
+  // race the re-render.
+  async function runEnable(value: string) {
+    if (value.length !== 6 || !setupPanel || twoFaBusy) return;
     setTwoFaBusy('enable');
     try {
-      await api.post('/api/users/me/2fa/enable', { method: setupPanel, code: twoFaCode });
+      await api.post('/api/users/me/2fa/enable', { method: setupPanel, code: value });
       // Flip the card straight from the confirmed response — the pill and
       // the enable/disable options switch immediately and never depend on
       // the follow-up refetch succeeding.
@@ -759,11 +766,16 @@ export default function SecuritySettingsPage() {
                         <OtpInput
                           value={twoFaCode}
                           onChange={setTwoFaCode}
+                          onComplete={(v) => {
+                            void runEnable(v);
+                          }}
                           ariaLabel={t('twoFactor.codeLabel')}
                           style={{
                             height: '40px',
                             fontSize: '0.9375rem',
-                            border: '1px solid var(--input-border)',
+                            borderWidth: '1px',
+                            borderStyle: 'solid',
+                            borderColor: 'var(--input-border)',
                             backgroundColor: 'var(--input-bg)',
                             color: 'var(--text-main)',
                           }}
@@ -813,12 +825,17 @@ export default function SecuritySettingsPage() {
                             <OtpInput
                               value={twoFaCode}
                               onChange={setTwoFaCode}
+                              onComplete={(v) => {
+                                void runEnable(v);
+                              }}
                               ariaLabel={t('twoFactor.codeLabel')}
                               autoFocus
                               style={{
                                 height: '40px',
                                 fontSize: '0.9375rem',
-                                border: '1px solid var(--input-border)',
+                                borderWidth: '1px',
+                                borderStyle: 'solid',
+                                borderColor: 'var(--input-border)',
                                 backgroundColor: 'var(--input-bg)',
                                 color: 'var(--text-main)',
                               }}

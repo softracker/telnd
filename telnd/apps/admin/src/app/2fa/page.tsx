@@ -128,12 +128,19 @@ export default function TwoFactorPage() {
 
   async function verify(e: FormEvent) {
     e.preventDefault();
-    if (busy || code.length !== 6) return;
+    await runVerify(code);
+  }
+
+  // Shared by the form's submit and the OTP row's onComplete, which hands
+  // the sixth digit over directly — reading the `code` state there would
+  // race the re-render.
+  async function runVerify(value: string) {
+    if (busy || value.length !== 6) return;
     setError('');
     setBusy(true);
     setBusyKind('verify');
     try {
-      const body: Record<string, unknown> = { code };
+      const body: Record<string, unknown> = { code: value };
       // Enrollment screens say which factor they just set up; an active
       // challenge always uses the method already stored on the account.
       if (info?.requiresEnrollment) {
@@ -195,6 +202,9 @@ export default function TwoFactorPage() {
         firstInputId="2fa-code"
         value={code}
         onChange={setCode}
+        onComplete={(v) => {
+          void runVerify(v);
+        }}
         ariaLabel={t('twoFactor.codeLabel')}
         autoFocus
         containerStyle={{ justifyContent: 'center' }}
@@ -602,6 +612,11 @@ export default function TwoFactorPage() {
 
         {body}
       </div>
+
+      {/* Spinner keyframes: this screen renders its own <Spinner>, and no
+          other stylesheet on /2fa defines `spin` — without it the icon
+          sits frozen instead of rotating. */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
