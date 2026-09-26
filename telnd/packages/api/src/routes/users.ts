@@ -7,6 +7,7 @@ import { updateAccountSchema, changePasswordSchema } from '@telnd/validation';
 import { sendPasswordResetEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { getIp } from '../lib/getIp';
+import { backfillSessionLocations } from '../lib/geoLocation';
 
 type UsersEnv = {
   Variables: {
@@ -96,34 +97,55 @@ async function logSelfService(c: any, user: any, action: string, details?: unkno
 // Security (self-service): password + trusted devices
 // ============================================
 
-// Active sessions, newest first — the "trusted devices" list on the Security
-// page. The caller's own row is flagged so the UI can mark "This device" and
-// never offer to revoke it. Device info predating IP/user-agent capture
-// comes back null and renders as "Not recorded".
+// Active sessions, newest first — the "logged in devices" list on the
+// Security page. The caller's own row is flagged so the UI can mark "This
+// device" and never offer to revoke it. Device info predating IP/user-agent
+// capture comes back null and renders as "Not recorded". Sessions that have
+// an IP but no stored geolocation get it resolved here once (backfilled
+// after the feature shipped) so the list shows city/country + flag.
 userRoutes.get('/me/sessions', authMiddleware, async (c) => {
   const userId = c.get('userId') as string;
   const token = c.get('token') as string;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { lastLoginAt: true },
+    select: { lastLoginAt: true, lastLoginLocation: true, lastLoginCountryCode: true },
   });
   const sessions = await prisma.session.findMany({
     where: { userId, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },
     take: 20,
-    select: { id: true, token: true, ipAddress: true, userAgent: true, createdAt: true },
+    select: {
+      id: true,
+      token: true,
+      ipAddress: true,
+      userAgent: true,
+      createdAt: true,
+      location: true,
+      countryCode: true,
+    },
   });
+
+  // Best-effort backfill; failures just leave the location empty.
+  try {
+    await backfillSessionLocations(sessions);
+  } catch {
+    /* ignore */
+  }
 
   return c.json({
     success: true,
     data: {
       lastLoginAt: user?.lastLoginAt ?? null,
+      lastLoginLocation: user?.lastLoginLocation ?? null,
+      lastLoginCountryCode: user?.lastLoginCountryCode ?? null,
       sessions: sessions.map((s) => ({
         id: s.id,
         ipAddress: s.ipAddress,
         userAgent: s.userAgent,
         createdAt: s.createdAt,
+        location: s.location,
+        countryCode: s.countryCode,
         isCurrent: s.token === token,
       })),
     },

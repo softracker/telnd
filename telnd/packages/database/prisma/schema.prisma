@@ -30,6 +30,11 @@ model User {
   countryId         String?
   lastActiveAt      DateTime?
   lastLoginAt       DateTime?
+  // Where the last successful login came from ("City, Country" + ISO code
+  // for the flag emoji). Resolved server-side after login, nullable because
+  // geolocation is best-effort (private IPs / offline lookups stay empty).
+  lastLoginLocation    String?
+  lastLoginCountryCode String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -98,6 +103,10 @@ model Session {
   token        String   @unique
   userAgent    String?
   ipAddress    String?
+  // Geolocation of the sign-in (resolved after login, best-effort):
+  // "City, Country" for display + 2-letter code for the flag emoji.
+  location     String?
+  countryCode  String?
   expiresAt    DateTime
   createdAt    DateTime @default(now())
 

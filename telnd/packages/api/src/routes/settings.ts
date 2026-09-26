@@ -213,6 +213,74 @@ settings.post('/r2/test', requireKeyEdit('r2'), async (c) => {
   return c.json({ success: false, error: { code: 'R2_TEST_FAILED', message: result.error || 'Connection failed' } }, 400);
 });
 
+// ── SMS gateway (Alpha SMS — api.sms.net.bd) ─────────────────────────────
+// The gateway answers HTTP 200 for failures too, so success is decided from
+// the body: every error payload carries a truthy `error` code plus a `msg`.
+
+const ALPHA_SMS_API = 'https://api.sms.net.bd';
+const ALPHA_TIMEOUT_MS = 15000;
+
+interface AlphaResponse {
+  error?: number | string | null;
+  msg?: string;
+  message?: string;
+  status?: string | boolean;
+  success?: boolean;
+  balance?: number | string;
+  wallet?: number | string;
+  data?: { balance?: number | string };
+}
+
+function alphaFailed(data: AlphaResponse | null): boolean {
+  if (!data || typeof data !== 'object') return true;
+  return Boolean(data.error) || data.success === false || data.status === 'error' || data.status === false;
+}
+
+function alphaMessage(data: AlphaResponse | null): string | undefined {
+  const msg = data?.msg || data?.message;
+  return typeof msg === 'string' && msg.trim() ? msg.trim() : undefined;
+}
+
+function alphaBalance(data: AlphaResponse | null): string | null {
+  const raw = data?.balance ?? data?.wallet ?? data?.data?.balance;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  return null;
+}
+
+async function callAlpha(path: string, init: RequestInit): Promise<{ data: AlphaResponse | null; status: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ALPHA_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ALPHA_SMS_API}${path}`, { ...init, signal: controller.signal });
+    const data = (await res.json().catch(() => null)) as AlphaResponse | null;
+    return { data, status: res.status };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+settings.post('/gateways/sms/alpha/balance', requireKeyEdit('gateway'), async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
+  if (!apiKey) {
+    return c.json({ success: false, error: { code: 'API_KEY_REQUIRED', message: 'API key is required' } }, 400);
+  }
+
+  try {
+    const { data, status } = await callAlpha(`/user/balance/?api_key=${encodeURIComponent(apiKey)}`, { method: 'GET' });
+    if (status < 200 || status >= 300 || alphaFailed(data)) {
+      return c.json({
+        success: false,
+        error: { code: 'GATEWAY_ERROR', message: alphaMessage(data) || `Gateway responded with status ${status}` },
+      }, 400);
+    }
+    return c.json({ success: true, data: { balance: alphaBalance(data) } });
+  } catch {
+    return c.json({ success: false, error: { code: 'GATEWAY_UNREACHABLE', message: 'Could not reach the SMS gateway' } }, 502);
+  }
+});
+
 // Registered before the single-segment '/:key' catch-all below.
 settings.get('/:key', async (c) => {
   const key = c.req.param('key');

@@ -11,11 +11,15 @@ interface DeviceSession {
   ipAddress: string | null;
   userAgent: string | null;
   createdAt: string;
+  location: string | null;
+  countryCode: string | null;
   isCurrent: boolean;
 }
 
 interface SecurityData {
   lastLoginAt: string | null;
+  lastLoginLocation: string | null;
+  lastLoginCountryCode: string | null;
   sessions: DeviceSession[];
 }
 
@@ -62,6 +66,15 @@ function absoluteTime(iso: string, language: string): string {
 
 // Browser + OS + form factor parsed from the stored user-agent. Unknown or
 // missing agents fall back to "Not recorded" instead of a raw UA string.
+// Regional-indicator emoji built from an ISO-3166 alpha-2 code
+// ("BD" → 🇧🇩) — flags are generated at runtime so no glyph ever
+// lands in translations.ts (ASCII-only rule).
+function countryFlag(code: string | null | undefined): string {
+  if (!code || !/^[A-Za-z]{2}$/.test(code)) return '';
+  const up = code.toUpperCase();
+  return String.fromCodePoint(0x1f1e6 + up.charCodeAt(0) - 65, 0x1f1e6 + up.charCodeAt(1) - 65);
+}
+
 function describeDevice(ua: string | null, t: (key: TranslationKey) => string): { name: string; icon: string } {
   if (!ua) return { name: t('security.notRecorded'), icon: '💻' };
   const browser =
@@ -250,6 +263,14 @@ export default function SecuritySettingsPage() {
   const lastLoginAt = data ? data.lastLoginAt ?? data.sessions[0]?.createdAt ?? null : null;
   const lastSession = data?.sessions[0];
   const prevSession = data?.sessions[1];
+
+  // "This device" pins to the top of the logged-in devices list. The sort
+  // is stable, so within each group the server's newest-first order holds —
+  // and data.sessions itself stays untouched, because lastLoginAt and
+  // lastSession above must keep referring to the actual newest sign-in.
+  const displaySessions = data
+    ? [...data.sessions].sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent))
+    : [];
   const hasOthers = !!data?.sessions.some((s) => !s.isCurrent);
 
   return (
@@ -369,6 +390,14 @@ export default function SecuritySettingsPage() {
                     >
                       {absoluteTime(lastLoginAt, language)}
                     </div>
+                    {(data?.lastLoginLocation ?? lastSession?.location) && (
+                      <InfoRow
+                        label={t('security.locationLabel')}
+                        value={`${countryFlag(data?.lastLoginCountryCode ?? lastSession?.countryCode)} ${
+                          data?.lastLoginLocation ?? lastSession?.location ?? ''
+                        }`.trim()}
+                      />
+                    )}
                     <InfoRow
                       label={t('security.ipLabel')}
                       value={lastSession?.ipAddress ?? t('security.notRecorded')}
@@ -401,13 +430,13 @@ export default function SecuritySettingsPage() {
             </div>
           </div>
 
-          {/* ── Trusted devices ── */}
+          {/* ── Logged in devices ── */}
           <Section title={t('security.devicesTitle')} description={t('security.devicesDesc')}>
             {data.sessions.length === 0 ? (
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{t('security.noLoginInfo')}</p>
             ) : (
               <>
-                {data.sessions.map((s, i) => {
+                {displaySessions.map((s, i) => {
                   const device = describeDevice(s.userAgent, t);
                   const armed = pendingSignOut === s.id;
                   const busy = revokingId === s.id;
@@ -431,6 +460,11 @@ export default function SecuritySettingsPage() {
                           <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
                             {device.name}
                           </span>
+                          {s.location && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              · {countryFlag(s.countryCode)} {s.location}
+                            </span>
+                          )}
                           {s.ipAddress && (
                             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>· {s.ipAddress}</span>
                           )}

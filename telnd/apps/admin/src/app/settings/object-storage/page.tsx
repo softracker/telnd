@@ -44,7 +44,6 @@ export default function ObjectStoragePage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [showSecrets, setShowSecrets] = useState(false);
   const toastIdRef = useRef(0);
 
   const showToast = useCallback((type: ToastType, message: string) => {
@@ -190,7 +189,7 @@ export default function ObjectStoragePage() {
                     Access Key ID <span style={{ color: 'var(--error-text, #ef4444)' }}>*</span>
                   </label>
                   <input
-                    type={showSecrets ? 'text' : 'password'}
+                    type="password"
                     value={settings.accessKeyId}
                     onChange={(e) => update('accessKeyId', e.target.value)}
                     placeholder="Your R2 access key ID"
@@ -208,7 +207,7 @@ export default function ObjectStoragePage() {
                     Secret Access Key <span style={{ color: 'var(--error-text, #ef4444)' }}>*</span>
                   </label>
                   <input
-                    type={showSecrets ? 'text' : 'password'}
+                    type="password"
                     value={settings.secretAccessKey}
                     onChange={(e) => update('secretAccessKey', e.target.value)}
                     placeholder="Your R2 secret access key"
@@ -221,19 +220,6 @@ export default function ObjectStoragePage() {
                     Same location as the Access Key ID above
                   </p>
                 </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                <input
-                  type="checkbox"
-                  id="showSecrets"
-                  checked={showSecrets}
-                  onChange={(e) => setShowSecrets(e.target.checked)}
-                  style={{ accentColor: 'var(--accent)' }}
-                />
-                <label htmlFor="showSecrets" style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                  Show secret keys
-                </label>
               </div>
             </div>
 

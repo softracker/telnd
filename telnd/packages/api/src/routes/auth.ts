@@ -8,6 +8,7 @@ import { sign, verify } from 'hono/jwt';
 import { randomUUID } from 'node:crypto';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
+import { attachLoginLocation } from '../lib/geoLocation';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
 
 type AuthEnv = {
@@ -50,6 +51,7 @@ export const authRoutes = new Hono<AuthEnv>();
 
 authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(signupSchema), async (c) => {
   const data = c.get('validatedData');
+  const ip = getIp(c);
 
   const existingUser = await prisma.user.findFirst({
     where: {
@@ -92,8 +94,13 @@ authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(sign
       userId: user.id,
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      // Same device capture as login — the Security page's "Logged in
+      // devices" list includes sessions created at signup.
+      ipAddress: ip === 'unknown' ? null : ip,
+      userAgent: c.req.header('user-agent') || null,
     },
   });
+  void attachLoginLocation(user.id, session.id, ip);
 
   await prisma.refreshToken.create({
     data: {
@@ -245,7 +252,7 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   const token = await signAccess(user.id, user.role);
   const refreshToken = await signRefresh(user.id);
 
-  await prisma.session.create({
+  const session = await prisma.session.create({
     data: {
       userId: user.id,
       token,
@@ -257,6 +264,10 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
       userAgent: c.req.header('user-agent') || null,
     },
   });
+
+  // Resolve the sign-in's city/country in the background (Security page
+  // shows it with a flag) — never blocks or fails the login response.
+  void attachLoginLocation(user.id, session.id, ip);
 
   await prisma.refreshToken.create({
     data: {
