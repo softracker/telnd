@@ -14,6 +14,7 @@
 import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import { prisma } from '@telnd/database';
 import { sendAlphaSms } from './alphaSms';
+import { isSmtpConfigured, sendTwoFactorCodeEmail, type OtpEmailContext } from './email';
 
 // ── Policy ───────────────────────────────────────────────────────────────
 
@@ -52,6 +53,14 @@ export function maskPhone(phone: string | null | undefined): string | null {
   return `+${digits.slice(0, 5)}•••${digits.slice(-4)}`;
 }
 
+/** "chinthika@gmail.com" → "c•••@gmail.com" (domain stays readable). */
+export function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf('@');
+  if (at < 1) return '•••';
+  return `${email.slice(0, 1)}•••${email.slice(at)}`;
+}
+
 // ── SMS gateway access ───────────────────────────────────────────────────
 
 export async function getSmsGateway(): Promise<{ configured: boolean; apiKey?: string }> {
@@ -75,25 +84,65 @@ export function otpMessage(code: string): string {
 }
 
 /**
- * Issue + deliver an OTP for `userId` to their profile phone.
- * Returns `{ ok }` with a machine reason the routes can map to messages.
+ * Issue + deliver an OTP for `userId` — to their profile phone (SMS) or
+ * their account email, depending on `channel`. Both channels share one
+ * store: a single live code per user, whichever door it arrived through.
+ * `context` only shapes the emailed copy (sign-in vs. setup) — the code
+ * itself is identical either way. Returns `{ ok }` with a machine reason
+ * the routes can map to messages.
  */
+export type OtpChannel = 'sms' | 'email';
 export type SmsSendFailure = {
   ok: false;
-  reason: 'NO_PHONE' | 'INVALID_PHONE' | 'NOT_CONFIGURED' | 'RESEND_SOON' | 'GATEWAY_ERROR';
+  reason:
+    | 'NO_PHONE'
+    | 'INVALID_PHONE'
+    | 'NOT_CONFIGURED'
+    | 'RESEND_SOON'
+    | 'GATEWAY_ERROR'
+    | 'NO_EMAIL'
+    | 'EMAIL_NOT_CONFIGURED'
+    | 'EMAIL_ERROR';
   retryAfterSec?: number;
   message?: string;
 };
 export type SmsSendResult = { ok: true } | SmsSendFailure;
 
-export async function sendOtpToUser(userId: string): Promise<SmsSendResult> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
-  const number = toBdSmsNumber(user?.phone ?? null);
-  if (!user?.phone) return { ok: false, reason: 'NO_PHONE' };
-  if (!number) return { ok: false, reason: 'INVALID_PHONE' };
+export async function sendOtpToUser(
+  userId: string,
+  channel: OtpChannel = 'sms',
+  context: OtpEmailContext = 'verify',
+): Promise<SmsSendResult> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { phone: true, email: true },
+  });
 
-  const gateway = await getSmsGateway();
-  if (!gateway.configured || !gateway.apiKey) return { ok: false, reason: 'NOT_CONFIGURED' };
+  // Channel preconditions first, then a deliverer for the chosen channel —
+  // everything below this point (resend gap, code minting, store write) is
+  // identical for both.
+  let deliver: (code: string) => Promise<string | null>;
+  if (channel === 'email') {
+    if (!user?.email) return { ok: false, reason: 'NO_EMAIL' };
+    if (!(await isSmtpConfigured())) return { ok: false, reason: 'EMAIL_NOT_CONFIGURED' };
+    const to = user.email;
+    deliver = async (code) =>
+      (await sendTwoFactorCodeEmail(to, code, context))
+        ? null
+        : 'The email with the code could not be delivered. Please try again.';
+  } else {
+    const number = toBdSmsNumber(user?.phone ?? null);
+    if (!user?.phone) return { ok: false, reason: 'NO_PHONE' };
+    if (!number) return { ok: false, reason: 'INVALID_PHONE' };
+
+    const gateway = await getSmsGateway();
+    if (!gateway.configured || !gateway.apiKey) return { ok: false, reason: 'NOT_CONFIGURED' };
+    const apiKey = gateway.apiKey;
+    deliver = async (code) => {
+      const result = await sendAlphaSms(apiKey, number, otpMessage(code));
+      return result.ok ? null : (result.message || 'The SMS gateway could not deliver the code. Please try again.');
+    };
+  }
 
   const existing = otpStore.get(userId);
   if (existing && existing.sentAt + OTP_RESEND_GAP_MS > Date.now()) {
@@ -101,8 +150,14 @@ export async function sendOtpToUser(userId: string): Promise<SmsSendResult> {
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  const result = await sendAlphaSms(gateway.apiKey, number, otpMessage(code));
-  if (!result.ok) return { ok: false, reason: 'GATEWAY_ERROR', message: result.message };
+  const failureMessage = await deliver(code);
+  if (failureMessage !== null) {
+    return {
+      ok: false,
+      reason: channel === 'email' ? 'EMAIL_ERROR' : 'GATEWAY_ERROR',
+      message: failureMessage,
+    };
+  }
 
   otpStore.set(userId, {
     hash: hashOtp(userId, code),
@@ -134,16 +189,27 @@ export function smsSendFailure(result: SmsSendFailure): {
       retryAfterSec,
     };
   }
+  const isEmail = result.reason === 'NO_EMAIL' || result.reason.startsWith('EMAIL');
   const messages: Record<string, string> = {
     NO_PHONE: 'No phone number is set on this account. Add one in My Account to use SMS codes.',
     INVALID_PHONE: 'The phone number on this account is not a valid Bangladeshi mobile number.',
     NOT_CONFIGURED: 'SMS sending is not configured. Set up the Alpha SMS gateway in Settings, or use an authenticator app.',
     GATEWAY_ERROR: result.message || 'The SMS gateway could not deliver the code. Please try again.',
+    NO_EMAIL: 'No email address is set on this account, so email codes cannot be used.',
+    EMAIL_NOT_CONFIGURED: 'Email sending is not configured. Set up SMTP in Settings, or use an authenticator app.',
+    EMAIL_ERROR: result.message || 'The email with the code could not be delivered. Please try again.',
   };
   return {
     status: 400,
-    code: result.reason === 'NOT_CONFIGURED' ? 'SMS_GATEWAY_NOT_CONFIGURED' : 'SMS_SEND_FAILED',
-    message: messages[result.reason] || 'The SMS gateway could not deliver the code. Please try again.',
+    code:
+      result.reason === 'NOT_CONFIGURED'
+        ? 'SMS_GATEWAY_NOT_CONFIGURED'
+        : result.reason === 'EMAIL_NOT_CONFIGURED'
+          ? 'EMAIL_NOT_CONFIGURED'
+          : isEmail
+            ? 'EMAIL_SEND_FAILED'
+            : 'SMS_SEND_FAILED',
+    message: messages[result.reason] || 'The code could not be delivered. Please try again.',
   };
 }
 

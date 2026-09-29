@@ -31,12 +31,15 @@ interface SecurityData {
 // only a super admin sees the policy switch.
 interface TwoFaState {
   enabled: boolean;
-  method: 'totp' | 'sms' | null;
+  method: 'totp' | 'sms' | 'email' | null;
   pendingSetup: boolean;
   hasPhone: boolean;
   phoneMasked: string | null;
   smsAvailable: boolean;
   smsConfigured: boolean;
+  emailMasked: string | null;
+  emailAvailable: boolean;
+  emailConfigured: boolean;
   enforcedByAdmin: boolean;
   policyRequired: boolean;
   canDisable: boolean;
@@ -296,10 +299,10 @@ export default function SecuritySettingsPage() {
   const [twoFa, setTwoFa] = useState<TwoFaState | null>(null);
   const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | null>(null);
   // Which enrollment panel is open: authenticator app (QR) or SMS delivery.
-  const [setupPanel, setSetupPanel] = useState<'totp' | 'sms' | null>(null);
+  const [setupPanel, setSetupPanel] = useState<'totp' | 'sms' | 'email' | null>(null);
   const [setup, setSetup] = useState<{ otpauthUri: string; secret: string } | null>(null);
   const [twoFaCode, setTwoFaCode] = useState('');
-  const [smsSent, setSmsSent] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
   const [resendIn, setResendIn] = useState(0);
   const [disableOpen, setDisableOpen] = useState(false);
   const [disableCredential, setDisableCredential] = useState('');
@@ -351,7 +354,7 @@ export default function SecuritySettingsPage() {
     setSetupPanel(null);
     setSetup(null);
     setTwoFaCode('');
-    setSmsSent(false);
+    setCodeSent(false);
     setResendIn(0);
   }
 
@@ -375,8 +378,11 @@ export default function SecuritySettingsPage() {
   async function handleSendCode() {
     setTwoFaBusy('send');
     try {
-      await api.post('/api/users/me/2fa/send', {});
-      setSmsSent(true);
+      // The panels are channel-specific; the server also derives the
+      // channel for an already-enabled account, but enrollment hasn't
+      // stored a method yet, so the panel says which one it is.
+      await api.post('/api/users/me/2fa/send', { method: setupPanel === 'email' ? 'email' : 'sms' });
+      setCodeSent(true);
       setResendIn(45);
       showToast('success', t('twoFactor.sentToast'));
     } catch (err) {
@@ -682,7 +688,11 @@ export default function SecuritySettingsPage() {
                   </span>
                   {twoFa.enabled && (
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {twoFa.method === 'sms' ? t('twoFactor.methodSms') : t('twoFactor.methodApp')}
+                      {twoFa.method === 'sms'
+                        ? t('twoFactor.methodSms')
+                        : twoFa.method === 'email'
+                          ? t('twoFactor.methodEmail')
+                          : t('twoFactor.methodApp')}
                     </span>
                   )}
                 </div>
@@ -690,8 +700,9 @@ export default function SecuritySettingsPage() {
                 {!twoFa.enabled ? (
                   <div>
                     {/* Factor choice — SMS is offered only when a usable
-                        number is on file AND the gateway is configured;
-                        otherwise a plain-text reason sits below the row. */}
+                        number is on file AND the gateway is configured,
+                        email only when SMTP is set up; otherwise a
+                        plain-text reason sits below the row. */}
                     {!setupPanel && (
                       <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap' }}>
                         <button
@@ -708,7 +719,7 @@ export default function SecuritySettingsPage() {
                           onClick={() => {
                             setSetupPanel('sms');
                             setTwoFaCode('');
-                            setSmsSent(false);
+                            setCodeSent(false);
                           }}
                           disabled={twoFaBusy !== null || !twoFa.smsAvailable || !twoFa.smsConfigured}
                           style={{
@@ -719,11 +730,32 @@ export default function SecuritySettingsPage() {
                         >
                           {t('twoFactor.useSms')}
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSetupPanel('email');
+                            setTwoFaCode('');
+                            setCodeSent(false);
+                          }}
+                          disabled={twoFaBusy !== null || !twoFa.emailAvailable || !twoFa.emailConfigured}
+                          style={{
+                            ...tfBtnStyle,
+                            opacity: twoFaBusy || !twoFa.emailAvailable || !twoFa.emailConfigured ? 0.55 : 1,
+                            cursor: twoFaBusy || !twoFa.emailAvailable || !twoFa.emailConfigured ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          {t('twoFactor.useEmail')}
+                        </button>
                       </div>
                     )}
                     {(!twoFa.smsAvailable || !twoFa.smsConfigured) && (
                       <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.5rem', marginBottom: 0 }}>
                         {!twoFa.smsConfigured ? t('twoFactor.smsNotConfigured') : t('twoFactor.phoneHint')}
+                      </p>
+                    )}
+                    {(!twoFa.emailAvailable || !twoFa.emailConfigured) && (
+                      <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.5rem', marginBottom: 0 }}>
+                        {!twoFa.emailConfigured ? t('twoFactor.emailNotConfigured') : t('twoFactor.emailHint')}
                       </p>
                     )}
 
@@ -810,7 +842,7 @@ export default function SecuritySettingsPage() {
                         onSubmit={handleEnable}
                         style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', marginTop: '0.75rem' }}
                       >
-                        {!smsSent ? (
+                        {!codeSent ? (
                           <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
                             {t('twoFactor.smsEnrollDesc')}
                           </p>
@@ -860,7 +892,94 @@ export default function SecuritySettingsPage() {
                           <button type="button" onClick={closeSetupPanel} style={tfBtnStyle}>
                             {t('common.cancel')}
                           </button>
-                          {!smsSent && (
+                          {!codeSent && (
+                            <button
+                              type="button"
+                              onClick={handleSendCode}
+                              disabled={twoFaBusy !== null}
+                              style={{ ...tfBtnStyle, opacity: twoFaBusy ? 0.7 : 1, cursor: twoFaBusy ? 'not-allowed' : 'pointer' }}
+                            >
+                              {twoFaBusy === 'send' && <Spinner size={14} />}
+                              {twoFaBusy === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
+                            </button>
+                          )}
+                          <button
+                            type="submit"
+                            disabled={twoFaCode.length !== 6 || twoFaBusy !== null}
+                            style={{
+                              ...tfBtnStyle,
+                              backgroundColor: 'var(--accent)',
+                              color: '#ffffff',
+                              border: '1px solid var(--accent)',
+                              opacity: twoFaCode.length !== 6 || twoFaBusy ? 0.7 : 1,
+                              cursor: twoFaCode.length !== 6 || twoFaBusy ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {twoFaBusy === 'enable' && <Spinner size={14} />}
+                            {twoFaBusy === 'enable' ? t('twoFactor.enabling') : t('twoFactor.enable')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Email panel: send → enter the code → enable. Same
+                        shape as SMS, different delivery channel. */}
+                    {setupPanel === 'email' && (
+                      <form
+                        onSubmit={handleEnable}
+                        style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', marginTop: '0.75rem' }}
+                      >
+                        {!codeSent ? (
+                          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                            {t('twoFactor.emailEnrollDesc')}
+                          </p>
+                        ) : (
+                          <>
+                            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                              {t('twoFactor.emailSentTo', { email: twoFa.emailMasked || '•••' })}
+                            </p>
+                            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--label-text)', marginBottom: '0.375rem' }}>
+                              {t('twoFactor.codeLabel')}
+                            </label>
+                            <OtpInput
+                              value={twoFaCode}
+                              onChange={setTwoFaCode}
+                              onComplete={(v) => {
+                                void runEnable(v);
+                              }}
+                              ariaLabel={t('twoFactor.codeLabel')}
+                              autoFocus
+                              style={{
+                                height: '40px',
+                                fontSize: '0.9375rem',
+                                borderWidth: '1px',
+                                borderStyle: 'solid',
+                                borderColor: 'var(--input-border)',
+                                backgroundColor: 'var(--input-bg)',
+                                color: 'var(--text-main)',
+                              }}
+                              focusStyle={{ borderColor: 'var(--accent)' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSendCode}
+                              disabled={twoFaBusy !== null || resendIn > 0}
+                              style={{
+                                ...tfBtnStyle,
+                                marginTop: '0.625rem',
+                                opacity: twoFaBusy || resendIn > 0 ? 0.6 : 1,
+                                cursor: twoFaBusy || resendIn > 0 ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {resendIn > 0 ? t('twoFactor.resendIn', { sec: resendIn }) : t('twoFactor.resendCode')}
+                            </button>
+                          </>
+                        )}
+                        <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.875rem' }}>
+                          <button type="button" onClick={closeSetupPanel} style={tfBtnStyle}>
+                            {t('common.cancel')}
+                          </button>
+                          {!codeSent && (
                             <button
                               type="button"
                               onClick={handleSendCode}

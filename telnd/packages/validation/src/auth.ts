@@ -48,18 +48,18 @@ export const checkResetTokenSchema = z.object({
 });
 
 // ── Two-factor authentication ────────────────────────────────────────────
-// A 6-digit code either from the authenticator app (TOTP) or the SMS OTP.
-// `method` is only supplied while enrolling — an active challenge already
-// knows its method from the user row.
+// A 6-digit code from the authenticator app (TOTP), an SMS OTP, or an
+// emailed OTP. `method` is only supplied while enrolling — an active
+// challenge already knows its method from the user row.
 export const twoFactorVerifySchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
-  method: z.enum(['totp', 'sms']).optional(),
+  method: z.enum(['totp', 'sms', 'email']).optional(),
 });
 
 // Turning 2FA on from the Security page: prove possession of the chosen
 // second factor before it becomes required at sign-in.
 export const twoFactorEnableSchema = z.object({
-  method: z.enum(['totp', 'sms']),
+  method: z.enum(['totp', 'sms', 'email']),
   code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
 });
 

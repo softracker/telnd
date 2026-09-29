@@ -18,10 +18,13 @@ function Spinner() {
 
 interface ChallengeInfo {
   requiresEnrollment: boolean;
-  method: 'totp' | 'sms' | null;
+  method: 'totp' | 'sms' | 'email' | null;
   phoneMasked: string | null;
   smsAvailable: boolean;
   smsConfigured: boolean;
+  emailMasked: string | null;
+  emailAvailable: boolean;
+  emailConfigured: boolean;
 }
 
 interface PendingSetup {
@@ -29,7 +32,7 @@ interface PendingSetup {
   secret: string;
 }
 
-type Mode = 'challenge' | 'choose' | 'setup-totp' | 'setup-sms';
+type Mode = 'challenge' | 'choose' | 'setup-totp' | 'setup-sms' | 'setup-email';
 
 /**
  * The screen sign-in stops at. Reached from /login when the password was
@@ -51,7 +54,7 @@ export default function TwoFactorPage() {
   const [busy, setBusy] = useState(false);
   const [busyKind, setBusyKind] = useState<'verify' | 'send' | 'setup' | null>(null);
   const [expired, setExpired] = useState(false);
-  const [smsSent, setSmsSent] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
   const [resendIn, setResendIn] = useState(0);
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<OtpInputHandle>(null);
@@ -92,13 +95,22 @@ export default function TwoFactorPage() {
     setError(t('login.error.general'));
   }
 
-  async function sendSms() {
+  // Which OTP channel the current screen delivers through: an enrollment
+  // screen names its own choice; an active challenge follows the method
+  // stored on the account (the server enforces the same thing).
+  function otpChannel(): 'sms' | 'email' {
+    if (mode === 'setup-email') return 'email';
+    if (mode === 'setup-sms') return 'sms';
+    return info?.method === 'email' ? 'email' : 'sms';
+  }
+
+  async function sendCode() {
     setError('');
     setBusy(true);
     setBusyKind('send');
     try {
-      await api.post('/api/auth/2fa/challenge/send', {});
-      setSmsSent(true);
+      await api.post('/api/auth/2fa/challenge/send', { method: otpChannel() });
+      setCodeSent(true);
       setResendIn(45);
       setTimeout(() => codeRef.current?.focus(), 50);
     } catch (err) {
@@ -144,7 +156,7 @@ export default function TwoFactorPage() {
       // Enrollment screens say which factor they just set up; an active
       // challenge always uses the method already stored on the account.
       if (info?.requiresEnrollment) {
-        body.method = mode === 'setup-totp' ? 'totp' : 'sms';
+        body.method = mode === 'setup-totp' ? 'totp' : mode === 'setup-email' ? 'email' : 'sms';
       }
       const res = await api.post<{ success: boolean; data: { user: Parameters<typeof completeLogin>[0] } }>(
         '/api/auth/2fa/challenge/verify',
@@ -288,6 +300,11 @@ export default function TwoFactorPage() {
       : !info.smsAvailable
         ? t('twoFactor.phoneHint')
         : null;
+    const emailNote = !info.emailConfigured
+      ? t('twoFactor.emailNotConfigured')
+      : !info.emailAvailable
+        ? t('twoFactor.emailHint')
+        : null;
     body = (
       <div>
         <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
@@ -355,6 +372,39 @@ export default function TwoFactorPage() {
           {smsNote && (
             <span style={{ display: 'block', fontSize: '0.75rem', color: '#b45309', marginTop: '0.5rem' }}>
               {smsNote}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setMode('setup-email');
+            setCopied(false);
+            setError('');
+          }}
+          disabled={Boolean(emailNote)}
+          style={{
+            display: 'block',
+            width: '100%',
+            textAlign: 'left',
+            background: '#ffffff',
+            border: '1px solid #d1d5db',
+            borderRadius: '10px',
+            padding: '1rem',
+            cursor: emailNote ? 'not-allowed' : 'pointer',
+            opacity: emailNote ? 0.55 : 1,
+          }}
+        >
+          <span style={{ display: 'block', fontSize: '0.9375rem', fontWeight: 600, color: '#111827' }}>
+            {t('twoFactor.optionEmail')}
+          </span>
+          <span style={{ display: 'block', fontSize: '0.8125rem', color: '#6b7280', marginTop: '0.25rem' }}>
+            {t('twoFactor.optionEmailDesc')}
+          </span>
+          {emailNote && (
+            <span style={{ display: 'block', fontSize: '0.75rem', color: '#b45309', marginTop: '0.5rem' }}>
+              {emailNote}
             </span>
           )}
         </button>
@@ -460,13 +510,13 @@ export default function TwoFactorPage() {
     body = (
       <form onSubmit={verify}>
         <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
-          {smsSent
+          {codeSent
             ? t('twoFactor.smsSentTo', { phone: info.phoneMasked || '•••' })
             : t('twoFactor.smsDesc')}
         </p>
 
-        {!smsSent ? (
-          <button type="button" onClick={sendSms} disabled={busy} style={{ ...primaryButton }}>
+        {!codeSent ? (
+          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton }}>
             {busyKind === 'send' ? <Spinner /> : null}
             {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
           </button>
@@ -489,7 +539,7 @@ export default function TwoFactorPage() {
             </button>
             <button
               type="button"
-              onClick={sendSms}
+              onClick={sendCode}
               disabled={busy || resendIn > 0}
               style={{
                 ...secondaryButton,
@@ -509,7 +559,7 @@ export default function TwoFactorPage() {
             onClick={() => {
               setMode('choose');
               setCode('');
-              setSmsSent(false);
+              setCodeSent(false);
               setResendIn(0);
               setError('');
             }}
@@ -523,27 +573,21 @@ export default function TwoFactorPage() {
         {backToLogin}
       </form>
     );
-  } else {
-    // Active challenge (already enrolled) — method decides the form.
-    const bySms = info.method === 'sms';
+  } else if (mode === 'setup-email') {
     body = (
       <form onSubmit={verify}>
         <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
-          {bySms && smsSent
-            ? t('twoFactor.smsSentTo', { phone: info.phoneMasked || '•••' })
-            : bySms
-              ? t('twoFactor.smsDesc')
-              : t('twoFactor.verifyTotpDesc')}
+          {codeSent
+            ? t('twoFactor.emailSentTo', { email: info.emailMasked || '•••' })
+            : t('twoFactor.emailDesc')}
         </p>
 
-        {bySms && !smsSent && (
-          <button type="button" onClick={sendSms} disabled={busy} style={{ ...primaryButton, marginBottom: '1rem' }}>
+        {!codeSent ? (
+          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton }}>
             {busyKind === 'send' ? <Spinner /> : null}
             {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
           </button>
-        )}
-
-        {(!bySms || smsSent) && (
+        ) : (
           <>
             <label
               htmlFor="2fa-code"
@@ -560,10 +604,90 @@ export default function TwoFactorPage() {
               {busyKind === 'verify' ? <Spinner /> : null}
               {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
             </button>
-            {bySms && resendIn > 0 && (
+            <button
+              type="button"
+              onClick={sendCode}
+              disabled={busy || resendIn > 0}
+              style={{
+                ...secondaryButton,
+                width: '100%',
+                height: '36px',
+                marginTop: '0.625rem',
+              }}
+            >
+              {resendIn > 0 ? t('twoFactor.resendIn', { sec: resendIn }) : t('twoFactor.resendCode')}
+            </button>
+          </>
+        )}
+
+        <div style={{ marginTop: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('choose');
+              setCode('');
+              setCodeSent(false);
+              setResendIn(0);
+              setError('');
+            }}
+            style={secondaryButton}
+          >
+            {t('twoFactor.back')}
+          </button>
+        </div>
+
+        {errorBox}
+        {backToLogin}
+      </form>
+    );
+  } else {
+    // Active challenge (already enrolled) — the stored method decides the
+    // form: TOTP asks for the app code, SMS and email send an OTP first.
+    const channel: 'sms' | 'email' | null =
+      info.method === 'sms' || info.method === 'email' ? info.method : null;
+    const description = channel
+      ? codeSent
+        ? channel === 'email'
+          ? t('twoFactor.emailSentTo', { email: info.emailMasked || '•••' })
+          : t('twoFactor.smsSentTo', { phone: info.phoneMasked || '•••' })
+        : channel === 'email'
+          ? t('twoFactor.emailDesc')
+          : t('twoFactor.smsDesc')
+      : t('twoFactor.verifyTotpDesc');
+    body = (
+      <form onSubmit={verify}>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
+          {description}
+        </p>
+
+        {channel && !codeSent && (
+          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton, marginBottom: '1rem' }}>
+            {busyKind === 'send' ? <Spinner /> : null}
+            {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
+          </button>
+        )}
+
+        {(!channel || codeSent) && (
+          <>
+            <label
+              htmlFor="2fa-code"
+              style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}
+            >
+              {t('twoFactor.codeLabel')}
+            </label>
+            {codeInput()}
+            <button
+              type="submit"
+              disabled={busy || code.length !== 6}
+              style={{ ...primaryButton, marginTop: '1rem' }}
+            >
+              {busyKind === 'verify' ? <Spinner /> : null}
+              {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
+            </button>
+            {channel && resendIn > 0 && (
               <button
                 type="button"
-                onClick={sendSms}
+                onClick={sendCode}
                 disabled={busy}
                 style={{ ...secondaryButton, width: '100%', height: '36px', marginTop: '0.625rem' }}
               >

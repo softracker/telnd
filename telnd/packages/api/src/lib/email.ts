@@ -116,6 +116,66 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   }
 }
 
+/**
+ * True when outgoing mail has somewhere to go — a stored SMTP setup or an
+ * environment-provided server. Mirrors exactly what sendEmail falls back
+ * to, so the two-factor UI can offer email codes only when a send would
+ * actually be attempted (and say so when it wouldn't).
+ */
+export async function isSmtpConfigured(): Promise<boolean> {
+  const dbConfig = await getSmtpConfigFromDb();
+  if (dbConfig) return true;
+  return Boolean(process.env.SMTP_HOST);
+}
+
+/**
+ * The lead sentence of the OTP email depends on why the code was sent —
+ * a sign-in challenge, an enrollment from the Security page or the login
+ * gate, or a neutral fallback. Pure so it can be checked without SMTP.
+ */
+export type OtpEmailContext = 'signin' | 'setup' | 'verify';
+
+export function twoFactorEmailLead(context: OtpEmailContext, appName: string): string {
+  const name = escapeHtml(appName);
+  if (context === 'signin') return `Enter this code to finish signing in to ${name}:`;
+  if (context === 'setup') return `Enter this code to finish setting up two-factor authentication for ${name}:`;
+  return `Enter this code to continue in ${name}:`;
+}
+
+/**
+ * One-time code for two-factor authentication, delivered by email. Short
+ * lived, single use — the same rules as the SMS body, worded for an inbox.
+ */
+export async function sendTwoFactorCodeEmail(
+  to: string,
+  code: string,
+  context: OtpEmailContext = 'verify',
+): Promise<boolean> {
+  const appName = (await getApplicationName()) || 'TELND';
+  const subject = `${appName} verification code`;
+  const lead = twoFactorEmailLead(context, appName);
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Your verification code</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">${lead}</p>
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px;text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;font-family:monospace;">${escapeHtml(code)}</div>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">The code expires in 5 minutes and can be used once. If you did not request this code, you can safely ignore this email.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
 interface AdminInviteParams {
   to: string;
   firstName: string;

@@ -5,7 +5,7 @@ import { authMiddleware, requireAdmin, hasPermission } from '../middleware/auth'
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFactorDisableSchema } from '@telnd/validation';
-import { sendPasswordResetEmail } from '../lib/email';
+import { sendPasswordResetEmail, isSmtpConfigured } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { getIp } from '../lib/getIp';
 import { backfillSessionLocations } from '../lib/geoLocation';
@@ -13,6 +13,7 @@ import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import {
   clearOtp,
   getSmsGateway,
+  maskEmail,
   maskPhone,
   sendOtpToUser,
   smsSendFailure,
@@ -365,10 +366,11 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
   }
 
-  const [policyRequired, adminRole, gateway] = await Promise.all([
+  const [policyRequired, adminRole, gateway, emailReady] = await Promise.all([
     twoFactorPolicyRequired(),
     prisma.adminUser.findUnique({ where: { userId }, include: { role: true } }),
     getSmsGateway(),
+    isSmtpConfigured(),
   ]);
 
   // TEMPORARY DIAGNOSTIC: exactly what this request read and replied, so a
@@ -394,6 +396,9 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
       phoneMasked: maskPhone(user.phone),
       smsAvailable: Boolean(toBdSmsNumber(user.phone)),
       smsConfigured: gateway.configured,
+      emailMasked: maskEmail(user.email),
+      emailAvailable: Boolean(user.email),
+      emailConfigured: emailReady,
       enforcedByAdmin: user.twoFactorEnforced,
       policyRequired,
       canDisable: user.twoFactorEnabled && !user.twoFactorEnforced && !policyRequired,
@@ -425,11 +430,29 @@ userRoutes.post('/me/2fa/setup', authMiddleware, rateLimit({ windowMs: 60000, ma
   });
 });
 
-// Deliver an SMS OTP to the phone on file (enrollment proof or disable
-// confirmation — the code is single-use either way).
+// Deliver an OTP (enrollment proof or disable confirmation — the code is
+// single-use either way). The body names the channel while enrolling; an
+// already-enabled account derives it from the stored method.
 userRoutes.post('/me/2fa/send', authMiddleware, rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
   const userId = c.get('userId') as string;
-  const result = await sendOtpToUser(userId);
+  const body = await c.req.json().catch(() => null);
+  const requested = body && typeof body === 'object' ? (body as { method?: unknown }).method : undefined;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { twoFactorEnabled: true, twoFactorMethod: true },
+  });
+
+  const channel: 'sms' | 'email' =
+    requested === 'sms' || requested === 'email'
+      ? requested
+      : user?.twoFactorEnabled && user.twoFactorMethod === 'email'
+        ? 'email'
+        : 'sms';
+
+  // Enable panels send before 2FA is on (the email then says "setting
+  // up"); a code requested on an already-protected account is a
+  // confirmation instead, so it stays context-neutral.
+  const result = await sendOtpToUser(userId, channel, user?.twoFactorEnabled ? 'verify' : 'setup');
   if (result.ok) return c.json({ success: true, data: { sent: true } });
 
   const failure = smsSendFailure(result);
@@ -446,7 +469,7 @@ userRoutes.post(
   validate(twoFactorEnableSchema),
   async (c) => {
     const userId = c.get('userId') as string;
-    const body = c.get('validatedData') as { method: 'totp' | 'sms'; code: string };
+    const body = c.get('validatedData') as { method: 'totp' | 'sms' | 'email'; code: string };
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
@@ -489,8 +512,8 @@ userRoutes.post(
       data: {
         twoFactorEnabled: true,
         twoFactorMethod: body.method,
-        // SMS keeps no shared secret; TOTP keeps the one from setup.
-        twoFactorSecret: body.method === 'sms' ? null : user.twoFactorSecret,
+        // Only TOTP keeps a shared secret; SMS and email keep none.
+        twoFactorSecret: body.method === 'totp' ? user.twoFactorSecret : null,
       },
     });
     await logSelfService(c, c.get('user'), 'TWO_FACTOR_ENABLED', { method: body.method });
@@ -538,7 +561,7 @@ userRoutes.post(
     if (body.code) {
       if (user.twoFactorMethod === 'totp' && user.twoFactorSecret) {
         verified = verifyTotp(user.twoFactorSecret, body.code);
-      } else if (user.twoFactorMethod === 'sms') {
+      } else if (user.twoFactorMethod === 'sms' || user.twoFactorMethod === 'email') {
         verified = verifyOtp(userId, body.code).ok;
       }
     }

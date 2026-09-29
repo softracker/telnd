@@ -10,11 +10,13 @@ import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFail
 import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
+import { isSmtpConfigured } from '../lib/email';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import {
   countVerifyAttempt,
   clearVerifyAttempts,
   getSmsGateway,
+  maskEmail,
   maskPhone,
   sendOtpToUser,
   smsSendFailure,
@@ -404,15 +406,15 @@ function challengeExpired(c: any) {
 }
 
 // What the /2fa screen renders on load: challenge vs. forced enrollment,
-// the enrolled method, a masked phone for SMS delivery, and whether SMS is
-// even an option right now (phone on file + gateway configured).
+// the enrolled method, masked delivery addresses for SMS/email, and
+// whether each channel is even an option right now.
 authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
   if (!user) return challengeExpired(c);
 
-  const gateway = await getSmsGateway();
+  const [gateway, emailReady] = await Promise.all([getSmsGateway(), isSmtpConfigured()]);
   return c.json({
     success: true,
     data: {
@@ -421,6 +423,9 @@ authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async
       phoneMasked: maskPhone(user.phone),
       smsAvailable: Boolean(toBdSmsNumber(user.phone)),
       smsConfigured: gateway.configured,
+      emailMasked: maskEmail(user.email),
+      emailAvailable: Boolean(user.email),
+      emailConfigured: emailReady,
     },
   });
 });
@@ -451,13 +456,28 @@ authRoutes.post('/2fa/challenge/setup', rateLimit({ windowMs: 60000, max: 5 }), 
   });
 });
 
-// Deliver an SMS OTP to the phone on file — used both by the enrollment
-// screen and by an enrolled SMS-method challenge (send + resend).
+// Deliver the OTP — SMS or email — used both by the enrollment screens and
+// by an enrolled OTP-method challenge (send + resend). An enrolled account
+// always delivers to its stored method; an enrollment screen says which
+// factor it is setting up in the body.
 authRoutes.post('/2fa/challenge/send', rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
 
-  const result = await sendOtpToUser(pending.userId);
+  let channel: 'sms' | 'email' = 'sms';
+  if (pending.purpose === '2fa') {
+    const user = await prisma.user.findUnique({ where: { id: pending.userId }, select: { twoFactorMethod: true } });
+    if (!user) return challengeExpired(c);
+    channel = user.twoFactorMethod === 'email' ? 'email' : 'sms';
+  } else {
+    const body = await c.req.json().catch(() => null);
+    if (body && typeof body === 'object' && (body as { method?: unknown }).method === 'email') {
+      channel = 'email';
+    }
+  }
+
+  // An active challenge is mid-sign-in; enrollment is the setup step.
+  const result = await sendOtpToUser(pending.userId, channel, pending.purpose === '2fa' ? 'signin' : 'setup');
   if (result.ok) return c.json({ success: true, data: { sent: true } });
 
   const failure = smsSendFailure(result);
@@ -495,7 +515,7 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
     method = user.twoFactorMethod || '';
     if (method === 'totp') {
       ok = Boolean(user.twoFactorSecret) && verifyTotp(user.twoFactorSecret!, body.code);
-    } else if (method === 'sms') {
+    } else if (method === 'sms' || method === 'email') {
       const result = verifyOtp(user.id, body.code);
       ok = result.ok;
       if (!result.ok) otpReason = result.reason;
@@ -516,14 +536,14 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
         }, 400);
       }
       ok = verifyTotp(user.twoFactorSecret, body.code);
-    } else if (method === 'sms') {
+    } else if (method === 'sms' || method === 'email') {
       const result = verifyOtp(user.id, body.code);
       ok = result.ok;
       if (!result.ok) otpReason = result.reason;
     } else {
       return c.json({
         success: false,
-        error: { code: 'INVALID_METHOD', message: 'Choose an authenticator app or SMS codes.' },
+        error: { code: 'INVALID_METHOD', message: 'Choose an authenticator app, SMS codes, or email codes.' },
       }, 400);
     }
   }
@@ -546,8 +566,8 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
       data: {
         twoFactorEnabled: true,
         twoFactorMethod: method,
-        // SMS keeps no shared secret; TOTP keeps the one from setup.
-        twoFactorSecret: method === 'sms' ? null : user.twoFactorSecret,
+        // Only TOTP keeps a shared secret; SMS and email keep none.
+        twoFactorSecret: method === 'totp' ? user.twoFactorSecret : null,
       },
     });
     if (user.role === 'ADMIN') {
