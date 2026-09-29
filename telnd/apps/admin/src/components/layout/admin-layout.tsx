@@ -84,6 +84,10 @@ export default function AdminLayout({
   // header); both work without a session. The useEffect above handles
   // redirect to / when authenticated on the login page.
   if (isPublicPage) {
+    // Signed-in visitors get routed home by that same effect — the login
+    // form and the two-factor challenge only make sense mid-sign-in. Paint
+    // nothing until the navigation lands, or the screen flashes first.
+    if (isAuthenticated && (isLoginPage || pathname === '/2fa')) return null;
     return <>{children}</>;
   }
 
