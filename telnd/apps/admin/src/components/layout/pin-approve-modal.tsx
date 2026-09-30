@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import { type PinPromptReason } from '@/lib/security-pin';
-import { OtpInput, otpBoxStyle, otpFocusStyle } from '@/components/otp-input';
+import { OtpInput, otpBoxStyle, otpErrorBoxStyle, otpErrorFocusStyle, otpFocusStyle } from '@/components/otp-input';
 import { LockIcon } from '@/components/action-icons';
 
 interface PinApproveModalProps {
@@ -33,7 +33,12 @@ function errCode(err: unknown): string | null {
 export default function PinApproveModal({ reason, onApproved, onCancel }: PinApproveModalProps) {
   const { t } = useLanguage();
   const [pin, setPin] = useState('');
-  const [error, setError] = useState<string | null>(reason === 'invalid' ? t('pinApprove.wrongPin') : null);
+  // A wrong PIN paints the boxes red and puts the caret back in the first
+  // one instead of spelling it out — also the state this modal opens in
+  // when it was raised by a PIN_INVALID challenge. Locked-out and
+  // unexpected server messages keep their text.
+  const [wrong, setWrong] = useState(reason === 'invalid');
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lockedOut, setLockedOut] = useState(false);
 
@@ -44,6 +49,13 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
+
+  // Caret back in the first box once the cleared row has committed — an
+  // inline focus() would hit an input that is still disabled, since
+  // `busy` only comes down in the verify request's finally.
+  useEffect(() => {
+    if (wrong) document.getElementById('approve-pin')?.focus();
+  }, [wrong]);
 
   // The digits arrive as an argument: the row's onComplete runs in the same
   // batch as its onChange, when the state variable still holds the old value.
@@ -64,8 +76,10 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
         // stands and the next attempt asks again from scratch.
         onCancel();
       } else if (err instanceof ApiError && (err.status === 403 || err.status === 429)) {
+        // Wrong PIN: clear the row and flag it red, no sentence — the
+        // effect above restores the caret once this commit lands.
         setPin('');
-        setError(t('pinApprove.wrongPin'));
+        setWrong(true);
       } else {
         setError(err instanceof ApiError ? err.message : t('common.failed'));
       }
@@ -128,6 +142,9 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
           maxWidth: '360px',
           overflow: 'hidden',
           boxShadow: '0 16px 48px rgba(0, 0, 0, 0.28)',
+          // Wrong PIN: the card jolts once with the red boxes — keyframes
+          // in the <style> at the bottom of this dialog.
+          animation: wrong ? 'shake 0.4s ease' : undefined,
         }}
       >
         {/* Pinned header */}
@@ -173,6 +190,7 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
               value={pin}
               onChange={(v) => {
                 setPin(v);
+                setWrong(false);
                 setError(null);
               }}
               onComplete={(v) => {
@@ -180,13 +198,14 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
                 void doApprove(v);
               }}
               ariaLabel={t('screenLock.pinLabel')}
+              firstInputId="approve-pin"
               type="password"
               autoComplete="off"
               autoFocus
               disabled={busy || lockedOut}
               containerStyle={{ justifyContent: 'center' }}
-              style={otpBoxStyle}
-              focusStyle={otpFocusStyle}
+              style={wrong ? otpErrorBoxStyle : otpBoxStyle}
+              focusStyle={wrong ? otpErrorFocusStyle : otpFocusStyle}
             />
             {error && (
               <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--error-text)', margin: '0.75rem 0 0' }}>
@@ -212,6 +231,9 @@ export default function PinApproveModal({ reason, onApproved, onCancel }: PinApp
           </div>
         </form>
       </div>
+      {/* Local keyframes: `spin` for the approve button's spinner, `shake`
+          for the dialog's wrong-entry jolt. */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }`}</style>
     </div>
   );
 }

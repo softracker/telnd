@@ -1,16 +1,18 @@
 'use client';
 
 // Screen lock (§14.44): the full-cover overlay raised by the side-rail
-// button, 5 minutes of inactivity, or a locked flag found on load (the
-// browser was closed). Shows verify when a PIN is on file, setup when
-// there is none (creating one — or a super admin demanding one). A fresh
-// sign-in never reaches this screen: the flag is dropped on the public
-// pages before the app mounts.
+// button, 5 minutes of inactivity, or a reopened browser (its sessionStorage
+// trust is gone — or the lock flag survived the close). Shows verify when a
+// PIN is on file, setup when there is none (creating one — or a super admin
+// demanding one), and nothing at all when the server says there is no PIN
+// and none is required. A fresh sign-in never reaches this screen: auth
+// marks the session trusted as it completes.
 
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
+import { announcePinChange } from '@/lib/security-pin';
 import { useLanguage } from '@/components/language-provider';
-import { OtpInput, otpBoxStyle, otpFocusStyle } from '@/components/otp-input';
+import { OtpInput, otpBoxStyle, otpErrorBoxStyle, otpErrorFocusStyle, otpFocusStyle } from '@/components/otp-input';
 import { LockIcon } from '@/components/action-icons';
 
 interface LockScreenProps {
@@ -37,10 +39,27 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lockedOut, setLockedOut] = useState(false);
+  // A wrong entry paints the boxes red and puts the caret back in the
+  // first one instead of spelling anything out — the next digit clears
+  // the colour. Locked-out and server messages keep their text.
+  const [wrong, setWrong] = useState(false);
 
   useEffect(() => {
-    if (pinSet !== null) setMode(pinSet ? 'verify' : 'setup');
+    if (pinSet !== null) {
+      setMode(pinSet ? 'verify' : 'setup');
+      setWrong(false);
+    }
   }, [pinSet]);
+
+  // The caret returns to the first box of the row that went red — but only
+  // after this commit, never from inside the handlers: the row is cleared
+  // and the inputs un-disabled in the same update, and focusing an input
+  // that is still disabled is a silent no-op (which is exactly what the
+  // old inline call did while the verify request was in flight).
+  useEffect(() => {
+    if (!wrong) return;
+    document.getElementById(mode === 'setup' ? 'lock-pin-confirm' : 'lock-pin')?.focus();
+  }, [wrong, mode]);
 
   // Both handlers take the digits as arguments: a row's onComplete runs in
   // the same batch as its onChange, so the state variable would still hold
@@ -59,13 +78,19 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
         setError(t('screenLock.lockedOut'));
       } else if (code === 'PIN_NOT_SET') {
         // Reset by an admin while we were locked — switch to creating a
-        // fresh one (the requirement, if any, still stands).
+        // fresh one (the requirement, if any, still stands). The PIN is
+        // gone server-side; tell the Security card underneath us too.
+        announcePinChange();
         setMode('setup');
         setPin('');
+        setWrong(false);
         setError(null);
       } else {
+        // Wrong PIN: clear the row and flag it red — no sentence; the
+        // effect above walks the caret into the first box once this
+        // commit lands (the row is still disabled while we're in here).
         setPin('');
-        setError(t('screenLock.wrongPin'));
+        setWrong(true);
       }
     } finally {
       setBusy(false);
@@ -75,13 +100,21 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
   async function doSetup(value: string, confirmValue: string) {
     if (value.length !== 4 || confirmValue.length !== 4 || busy) return;
     if (value !== confirmValue) {
-      setError(t('screenLock.mismatch'));
+      // Same treatment as a wrong verify: the confirm boxes go red and
+      // nothing is spelled out — the caret returns to their first box
+      // through the same effect.
+      setConfirm('');
+      setWrong(true);
+      setError(null);
       return;
     }
     setBusy(true);
     setError(null);
     try {
       await api.post('/api/users/me/pin', { pin: value });
+      // Tell the rest of the app — the Security card under this overlay
+      // must not keep reading "No PIN set" until someone hits refresh.
+      announcePinChange();
       onPinSet();
       onUnlocked();
     } catch (err) {
@@ -89,7 +122,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
       if (code === 'PIN_EXISTS') {
         // Someone (another tab, an admin's reset that raced us) already
         // has one on file — verify it instead.
+        announcePinChange();
         setMode('verify');
+        setWrong(false);
         setPin('');
         setConfirm('');
         setError(t('securityPin.pinExists'));
@@ -147,6 +182,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
           padding: '2rem 1.75rem',
           boxShadow: '0 16px 48px rgba(0, 0, 0, 0.18)',
           textAlign: 'center',
+          // Wrong entry: the card jolts once, in step with the red boxes
+          // (keyframes in the <style> at the bottom of this overlay).
+          animation: wrong ? 'shake 0.4s ease' : undefined,
         }}
       >
         <div
@@ -184,6 +222,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                 value={pin}
                 onChange={(v) => {
                   setPin(v);
+                  setWrong(false);
                   setError(null);
                 }}
                 onComplete={(v) => {
@@ -191,13 +230,14 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                   void doVerify(v);
                 }}
                 ariaLabel={t('screenLock.pinLabel')}
+                firstInputId="lock-pin"
                 type="password"
                 autoComplete="off"
                 autoFocus
                 disabled={busy || lockedOut}
                 containerStyle={{ justifyContent: 'center' }}
-                style={otpBoxStyle}
-                focusStyle={otpFocusStyle}
+                style={wrong ? otpErrorBoxStyle : otpBoxStyle}
+                focusStyle={wrong ? otpErrorFocusStyle : otpFocusStyle}
               />
               {error && (
                 <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--error-text)', margin: '0.75rem 0 0' }}>
@@ -229,10 +269,16 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                 value={pin}
                 onChange={(v) => {
                   setPin(v);
+                  setWrong(false);
                   setError(null);
                 }}
                 onComplete={(v) => {
-                  if (confirm.length === 4) void doSetup(v, confirm);
+                  if (confirm.length === 4) {
+                    void doSetup(v, confirm);
+                  } else {
+                    // First PIN in — hop straight to the confirm row.
+                    document.getElementById('lock-pin-confirm')?.focus();
+                  }
                 }}
                 ariaLabel={t('screenLock.pinLabel')}
                 firstInputId="lock-pin"
@@ -252,6 +298,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                 value={confirm}
                 onChange={(v) => {
                   setConfirm(v);
+                  setWrong(false);
                   setError(null);
                 }}
                 onComplete={(v) => {
@@ -263,8 +310,8 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                 autoComplete="off"
                 disabled={busy}
                 containerStyle={{ justifyContent: 'center' }}
-                style={otpBoxStyle}
-                focusStyle={otpFocusStyle}
+                style={wrong ? otpErrorBoxStyle : otpBoxStyle}
+                focusStyle={wrong ? otpErrorFocusStyle : otpFocusStyle}
               />
               {error && (
                 <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--error-text)', margin: '0.75rem 0 0' }}>
@@ -283,6 +330,10 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
           </>
         )}
       </div>
+      {/* Local keyframes: `spin` for the buttons' spinner (neither this
+          overlay nor its parents guarantee it), `shake` for the card's
+          wrong-entry jolt. */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }`}</style>
     </div>
   );
 }

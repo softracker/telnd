@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiError } from './api';
+import { markSessionTrusted } from './security-pin';
 
 interface AdminRole {
   name: string;
@@ -142,12 +143,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
 
     setUser(userData);
+    // Fresh sign-in: this browser session may enter without a PIN, and any
+    // lock the previous session left behind drops here — never on a mere
+    // visit to /login, only on a completed sign-in.
+    markSessionTrusted();
     router.replace('/');
   }, [router]);
 
   const completeLogin = useCallback((nextUser: User) => {
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
     setUser(nextUser);
+    // The two-factor gate just completed — a full sign-in, same trust as
+    // a password-only login.
+    markSessionTrusted();
     router.replace('/');
   }, [router]);
 

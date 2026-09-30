@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -63,6 +64,17 @@ export const otpBoxStyle: CSSProperties = {
 export const otpFocusStyle: CSSProperties = { borderColor: 'var(--accent)' };
 
 /**
+ * Wrong-entry feedback for the security PIN rows: the boxes go red
+ * instead of a sentence — the caret returns to the first box and the
+ * colour clears the moment a digit lands. Same shape as
+ * {@link otpBoxStyle}, restyled, so every PIN surface shares one look.
+ */
+export const otpErrorBoxStyle: CSSProperties = { ...otpBoxStyle, borderColor: 'var(--error-text)' };
+
+/** The red holds while a box is focused too — an error must not blink back to accent. */
+export const otpErrorFocusStyle: CSSProperties = { borderColor: 'var(--error-text)' };
+
+/**
  * The six separate boxes the 6-digit code is typed into — on the login
  * challenge and in the Security page enrolment panels alike. Digits land one
  * box at a time and the caret jumps ahead, Backspace clears and steps back,
@@ -91,6 +103,24 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
 ) {
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
   const [focused, setFocused] = useState(-1);
+
+  // `type="password"` is what makes a browser offer to save or manage a
+  // value as a credential — and for those fields it deliberately ignores
+  // autocomplete="off", so the hints still pop up over the boxes. A PIN is
+  // not a credential, and the six-box code rows (plain text) never
+  // attracted that popup; where the browser can mask a text input itself
+  // we use that instead: same dots, no password manager in sight.
+  // Detection waits for mount so server and client paint the same markup
+  // first; a browser without the property keeps a real password input, so
+  // the digits are never shown in clear either way.
+  const [masked, setMasked] = useState(false);
+  useEffect(() => {
+    if (type !== 'password') return;
+    if (typeof CSS !== 'undefined' && CSS.supports('-webkit-text-security', 'disc')) {
+      setMasked(true);
+    }
+  }, [type]);
+  const masking = type === 'password' && masked;
 
   // The value is a dense string (no holes), so edits that arrive before the
   // parent re-renders must still see the newest digits — keep a ref in sync
@@ -187,7 +217,7 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             boxes.current[index] = el;
           }}
           id={index === 0 ? firstInputId : undefined}
-          type={type}
+          type={masking ? 'text' : type}
           inputMode="numeric"
           pattern="[0-9]*"
           maxLength={1}
@@ -219,6 +249,8 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             borderColor: '#d1d5db',
             padding: 0,
             outline: 'none',
+            // The dots without a password input — see `masked` above.
+            ...(masking ? { WebkitTextSecurity: 'disc' } : undefined),
             transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
             ...style,
             ...(focused === index ? focusStyle : undefined),

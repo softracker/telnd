@@ -2052,6 +2052,15 @@ model AdminUser {
   userId    String   @unique
   roleId    String
   isActive  Boolean  @default(true)
+  // Security PIN (§14.44): a 4-digit credential that unlocks the screen
+  // lock and approves sensitive admin actions. Kept only as
+  // sha256(userId + ':' + pin) — same scheme as passwords/OTP/recovery
+  // codes — so the raw PIN exists nowhere server-side. pinRequired is the
+  // super-admin's per-account demand to have one set (the global demand
+  // lives in the Setting key `pinPolicy`).
+  pinHash     String?
+  pinSetAt    DateTime?
+  pinRequired Boolean  @default(false)
   metadata  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

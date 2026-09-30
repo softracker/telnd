@@ -5,7 +5,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import Toast, { type ToastType } from '@/components/toast';
-import { OtpInput, otpBoxStyle, otpFocusStyle } from '@/components/otp-input';
+import { OtpInput, otpBoxStyle, otpErrorBoxStyle, otpErrorFocusStyle, otpFocusStyle } from '@/components/otp-input';
+import { PIN_CHANGED_EVENT, announcePinChange } from '@/lib/security-pin';
 import { type TranslationKey } from '@/lib/translations';
 
 interface DeviceSession {
@@ -323,6 +324,10 @@ export default function SecuritySettingsPage() {
   const [pinBusy, setPinBusy] = useState<'setup' | 'policy' | 'disable' | null>(null);
   const [pinValue, setPinValue] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
+  // A wrong confirm paints that row's boxes red and puts the caret back
+  // in the first one instead of spelling it out — the next digit clears
+  // the colour. Server messages (e.g. PIN_EXISTS) keep their text.
+  const [pinWrong, setPinWrong] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   // The global "require a security PIN" switch arms like every other hard
   // toggle here: first click confirms, second acts.
@@ -389,6 +394,17 @@ export default function SecuritySettingsPage() {
       window.removeEventListener('pageshow', onPageShow);
     };
   }, [loadTwoFa, loadPin]);
+
+  // The lock overlay above this panel can create the PIN (its setup form)
+  // or learn it was reset elsewhere — either way this card's own snapshot
+  // goes stale without any page reload, so listen for the announcement
+  // and re-read. Our own setup/disable handlers also announce; the extra
+  // read here is the same cheap GET they were about to make anyway.
+  useEffect(() => {
+    const onChange = () => void loadPin();
+    window.addEventListener(PIN_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(PIN_CHANGED_EVENT, onChange);
+  }, [loadPin]);
 
   // SMS resend countdown — one tick per second while it runs.
   useEffect(() => {
@@ -577,9 +593,13 @@ export default function SecuritySettingsPage() {
   async function runPinSetup(pin: string, confirm: string) {
     if (pinBusy) return;
     setPinError(null);
+    // The rows passed validation — drop any wrong-entry red before the
+    // request goes out.
+    setPinWrong(false);
     setPinBusy('setup');
     try {
       await api.post('/api/users/me/pin', { pin });
+      announcePinChange();
       setPinValue('');
       setPinConfirm('');
       showToast('success', t('securityPin.savedToast'));
@@ -594,6 +614,13 @@ export default function SecuritySettingsPage() {
     }
   }
 
+  // Caret back in the first confirm box once the cleared row has
+  // committed — a synchronous focus() would race the state update that
+  // empties the row.
+  useEffect(() => {
+    if (pinWrong) document.getElementById('security-pin-confirm')?.focus();
+  }, [pinWrong]);
+
   function submitPinSetup(pin: string, confirm: string) {
     if (pinBusy) return;
     if (pin.length !== 4) {
@@ -601,7 +628,12 @@ export default function SecuritySettingsPage() {
       return;
     }
     if (confirm.length !== 4 || confirm !== pin) {
-      setPinError(t('securityPin.pinMismatch'));
+      // Wrong confirm: same treatment as a wrong verify — the confirm
+      // boxes go red and nothing is spelled out; the effect above puts
+      // the caret back in their first box.
+      setPinConfirm('');
+      setPinWrong(true);
+      setPinError(null);
       return;
     }
     void runPinSetup(pin, confirm);
@@ -620,6 +652,7 @@ export default function SecuritySettingsPage() {
     setPinBusy('policy');
     try {
       await api.post('/api/admin/pin-policy', { required: next });
+      announcePinChange();
       showToast('success', next ? t('securityPin.policyToastOn') : t('securityPin.policyToastOff'));
       await loadPin();
     } catch (err) {
@@ -643,6 +676,7 @@ export default function SecuritySettingsPage() {
     setPinBusy('disable');
     try {
       await api.delete('/api/users/me/pin');
+      announcePinChange();
       showToast('success', t('securityPin.disabledToast'));
       await loadPin();
     } catch (err) {
@@ -1538,12 +1572,17 @@ export default function SecuritySettingsPage() {
                         value={pinValue}
                         onChange={(v) => {
                           setPinValue(v);
+                          setPinWrong(false);
                           setPinError(null);
                         }}
                         onComplete={(v) => {
                           // Auto-submit only once the other row is full
-                          // too; a lone first row filling is no mistake.
-                          if (pinConfirm.length === 4) submitPinSetup(v, pinConfirm);
+                          // too; otherwise hop straight to the confirm row.
+                          if (pinConfirm.length === 4) {
+                            submitPinSetup(v, pinConfirm);
+                          } else {
+                            document.getElementById('security-pin-confirm')?.focus();
+                          }
                         }}
                         ariaLabel={t('securityPin.newPin')}
                         firstInputId="security-pin"
@@ -1562,6 +1601,7 @@ export default function SecuritySettingsPage() {
                         value={pinConfirm}
                         onChange={(v) => {
                           setPinConfirm(v);
+                          setPinWrong(false);
                           setPinError(null);
                         }}
                         onComplete={(v) => {
@@ -1571,8 +1611,8 @@ export default function SecuritySettingsPage() {
                         firstInputId="security-pin-confirm"
                         type="password"
                         autoComplete="off"
-                        style={otpBoxStyle}
-                        focusStyle={otpFocusStyle}
+                        style={pinWrong ? otpErrorBoxStyle : otpBoxStyle}
+                        focusStyle={pinWrong ? otpErrorFocusStyle : otpFocusStyle}
                       />
                     </div>
                   </div>
