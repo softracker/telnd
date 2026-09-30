@@ -10,6 +10,7 @@ import { deleteRecoveryCodes } from '../lib/recoveryCodes';
 import { clearOtp } from '../lib/twoFactor';
 import { clearPinAttempts, requirePinApproval } from '../lib/securityPin';
 import { notifyTwoFactorRequired, notifyTwoFactorRequiredForAll, notifyPinRequired, notifyPinRequiredForAll, actorNameOf } from '../lib/requirementNotices';
+import { ACTIVITY_TYPES, activityCategory, activityWhere, isActivityType } from '../lib/activityFeed';
 
 type AdminEnv = {
   Variables: {
@@ -58,6 +59,18 @@ const logAction = async (adminId: string, action: string, targetType: string, ta
       userAgent: c?.req.header('user-agent'),
     },
   });
+};
+
+// Which account a row's target was. The activity log must answer "which
+// admin, which account" from the details alone — even for DELETE_ADMIN,
+// where the account row is gone by the time anyone reads the log. Email
+// plus display name; a nameless account falls back to its address.
+const targetIdentity = (
+  u: { email?: string | null; firstName?: string | null; lastName?: string | null } | null | undefined,
+) => {
+  if (!u?.email) return {};
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
+  return { email: u.email, name: name || u.email };
 };
 
 // ============================================
@@ -166,7 +179,7 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
   await prisma.session.deleteMany({ where: { userId: id } });
   await prisma.refreshToken.deleteMany({ where: { userId: id } });
 
-  await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason }, c);
+  await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason, ...targetIdentity(user) }, c);
   return c.json(updated);
 });
 
@@ -192,7 +205,7 @@ admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edi
     data: { isActive: true },
   });
 
-  await logAction(adminUser.userId, 'ACTIVATE_USER', 'user', id, {}, c);
+  await logAction(adminUser.userId, 'ACTIVATE_USER', 'user', id, { ...targetIdentity(user) }, c);
   return c.json(user);
 });
 
@@ -350,7 +363,7 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
     }, 502);
   }
 
-  await logAction(adminUser.userId, 'CREATE_ADMIN', 'user', user.id, { email: body.email, roleId: body.roleId }, c);
+  await logAction(adminUser.userId, 'CREATE_ADMIN', 'user', user.id, { roleId: body.roleId, ...targetIdentity(user) }, c);
   return c.json({
     id: user.id,
     email: user.email,
@@ -419,7 +432,7 @@ admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), valid
     include: { adminUser: { include: { role: true } } },
   });
 
-  await logAction(adminUser.userId, 'UPDATE_ADMIN', 'user', id, body, c);
+  await logAction(adminUser.userId, 'UPDATE_ADMIN', 'user', id, { ...body, ...targetIdentity(updated) }, c);
   return c.json({
     id: updated.id,
     email: updated.email,
@@ -475,7 +488,7 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
     throw err;
   }
 
-  await logAction(adminUser.userId, 'DELETE_ADMIN', 'user', id, {}, c);
+  await logAction(adminUser.userId, 'DELETE_ADMIN', 'user', id, { ...targetIdentity(user) }, c);
   return c.json({ success: true });
 });
 
@@ -536,7 +549,7 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
     }, 502);
   }
 
-  await logAction(actor.userId, 'REGENERATE_ADMIN_PASSWORD', 'user', user.id, { email: user.email }, c);
+  await logAction(actor.userId, 'REGENERATE_ADMIN_PASSWORD', 'user', user.id, { ...targetIdentity(user) }, c);
   return c.json({ success: true, data: { email: user.email } });
 });
 
@@ -609,7 +622,7 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
     notifyTwoFactorRequired({ email: user.email, enrolled: user.twoFactorEnabled }, actor.userId);
   }
 
-  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR' : 'DISABLE_TWO_FACTOR', 'user', id, {}, c);
+  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR' : 'DISABLE_TWO_FACTOR', 'user', id, { ...targetIdentity(user) }, c);
   return c.json({
     success: true,
     data: {
@@ -701,7 +714,7 @@ admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit
   // The cleared PIN must not inherit the old one's lockout either.
   clearPinAttempts(user.id);
 
-  await logAction(actor.userId, 'SECURITY_PIN_RESET', 'user', id, {}, c);
+  await logAction(actor.userId, 'SECURITY_PIN_RESET', 'user', id, { ...targetIdentity(user) }, c);
   return c.json({ success: true, data: { pinSet: false } });
 });
 
@@ -739,7 +752,7 @@ admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ requir
   if (required && !wasRequired && user.email) {
     notifyPinRequired({ email: user.email, pinSet: Boolean(user.adminUser.pinHash) }, actor.userId);
   }
-  await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN' : 'CLEAR_SECURITY_PIN_REQUIREMENT', 'user', id, {}, c);
+  await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN' : 'CLEAR_SECURITY_PIN_REQUIREMENT', 'user', id, { ...targetIdentity(user) }, c);
   return c.json({ success: true, data: { required } });
 });
 
@@ -876,6 +889,149 @@ admin.patch('/reports/:id', requireAdmin, requirePermission('reports.edit'), val
 
   await logAction(adminUser.userId, 'REVIEW_REPORT', 'report', id, body, c);
   return c.json(report);
+});
+
+// ============================================
+// Activity feed — typed view over the action log (the /activity-logs page)
+// ============================================
+admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) => {
+  const page = clampPage(c.req.query('page'));
+  const limit = clampLimit(c.req.query('limit'), 25);
+  const type = c.req.query('type') || 'all';
+
+  if (!isActivityType(type)) {
+    return c.json({
+      success: false,
+      error: { code: 'INVALID_TYPE', message: `Unknown activity type. Valid: ${ACTIVITY_TYPES.join(', ')}` },
+    }, 400);
+  }
+
+  // Server-side search + date range (the /activity-logs filter bar).
+  // Every word of `q` must match somewhere (AND over tokens) and any
+  // searchable field can satisfy it (OR inside) — so "E2E Activity"
+  // finds a row whose actor is E2E Activity even though the name is
+  // stored in two columns. Plain columns match case-insensitively;
+  // `details` is JSON, where Prisma's string_contains is case-sensitive
+  // AND needs an explicit path (without one it only matches a
+  // top-level JSON string, never our object) — the paths below are the
+  // very fields the row card displays, plus the query's lowercase form
+  // so a caps-typed email still hits its lowercase stored copy.
+  // Both filters fold into the SAME `where` that drives the items, the
+  // count and the summary, so pagination stays correct server-side.
+  const q = (c.req.query('q') ?? '').trim().slice(0, 200);
+  const from = c.req.query('from') ?? '';
+  const to = c.req.query('to') ?? '';
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/;
+  if ((from && !dayOnly.test(from)) || (to && !dayOnly.test(to))) {
+    return c.json({
+      success: false,
+      error: { code: 'INVALID_DATE', message: "from/to must be dates like '2026-10-01'" },
+    }, 400);
+  }
+
+  const filters: Record<string, unknown>[] = [];
+  if (q) {
+    const tokens = q.split(/\s+/).filter(Boolean).slice(0, 10);
+    const detailKeys = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error'];
+    filters.push({
+      AND: tokens.map((tok) => ({
+        OR: [
+          { action: { contains: tok, mode: 'insensitive' } },
+          { targetType: { contains: tok, mode: 'insensitive' } },
+          { ipAddress: { contains: tok, mode: 'insensitive' } },
+          { userAgent: { contains: tok, mode: 'insensitive' } },
+          {
+            admin: {
+              OR: [
+                { email: { contains: tok, mode: 'insensitive' } },
+                { firstName: { contains: tok, mode: 'insensitive' } },
+                { lastName: { contains: tok, mode: 'insensitive' } },
+              ],
+            },
+          },
+          ...detailKeys.map((key) => ({ details: { path: [key], string_contains: tok } })),
+          ...(tok.toLowerCase() === tok
+            ? []
+            : detailKeys.map((key) => ({ details: { path: [key], string_contains: tok.toLowerCase() } }))),
+        ],
+      })),
+    });
+  }
+  // Day-granular bounds in UTC — the pickers carry dates, not instants.
+  if (from) filters.push({ createdAt: { gte: new Date(`${from}T00:00:00.000Z`) } });
+  if (to) filters.push({ createdAt: { lte: new Date(`${to}T23:59:59.999Z`) } });
+
+  const where = filters.length ? { AND: [activityWhere(type), ...filters] } : activityWhere(type);
+  const [items, total] = await Promise.all([
+    prisma.adminAction.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      // The actor: for LOGIN rows that is the account that signed in; for
+      // CREATE_JOB rows the employer's account (AdminAction.adminId is a
+      // plain User FK, so non-admin actors are legal); null for system
+      // rows (SMTP deliveries) — rendered as "System". The adminUser
+      // presence is what splits admin activity from future web-app user
+      // activity, so the join carries it.
+      include: {
+        admin: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            adminUser: { select: { id: true } },
+          },
+        },
+      },
+    }),
+    prisma.adminAction.count({ where }),
+  ]);
+
+  // The SMTP section doubles as the delivery counter: how many sends
+  // succeeded and how many failed — over the SAME search/date filters
+  // as the list, so the chips always describe the rows below them.
+  let summary: { sent: number; failed: number } | null = null;
+  if (type === 'smtp') {
+    const [sent, failed] = await Promise.all([
+      prisma.adminAction.count({ where: { AND: [where, { action: 'EMAIL_SENT' }] } }),
+      prisma.adminAction.count({ where: { AND: [where, { action: 'EMAIL_FAILED' }] } }),
+    ]);
+    summary = { sent, failed };
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      type,
+      // Per-row section, so the All view can badge each entry without
+      // re-deriving the partition on the client.
+      items: items.map((item) => ({
+        id: item.id,
+        action: item.action,
+        category: activityCategory(item.action, item.targetType, item.admin),
+        targetType: item.targetType,
+        targetId: item.targetId,
+        details: item.details,
+        ipAddress: item.ipAddress,
+        userAgent: item.userAgent,
+        createdAt: item.createdAt,
+        actor: item.admin
+          ? {
+              id: item.admin.id,
+              email: item.admin.email,
+              name: [item.admin.firstName, item.admin.lastName].filter(Boolean).join(' ') || item.admin.email,
+            }
+          : null,
+      })),
+      summary,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
 });
 
 // ============================================

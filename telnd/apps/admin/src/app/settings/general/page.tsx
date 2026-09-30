@@ -18,6 +18,7 @@ interface GeneralSettings {
   metaKeywords: string;
   metaDescription: string;
   ogImage: string;
+  bunnyImage: string;
   contactEmail: string;
   supportEmail: string;
   copyrightText: string;
@@ -35,6 +36,7 @@ const defaultSettings: GeneralSettings = {
   metaKeywords: '',
   metaDescription: '',
   ogImage: '',
+  bunnyImage: '',
   contactEmail: '',
   supportEmail: '',
   copyrightText: '',
@@ -46,7 +48,8 @@ type ImageField =
   | 'primaryLogoDark'
   | 'secondaryLogoLight'
   | 'secondaryLogoDark'
-  | 'ogImage';
+  | 'ogImage'
+  | 'bunnyImage';
 
 const IMAGE_FIELDS: ImageField[] = [
   'favicon',
@@ -55,6 +58,7 @@ const IMAGE_FIELDS: ImageField[] = [
   'secondaryLogoLight',
   'secondaryLogoDark',
   'ogImage',
+  'bunnyImage',
 ];
 
 interface ToastState {
@@ -260,6 +264,16 @@ export default function GeneralSettingsPage() {
               onUpload={trackUpload('ogImage')}
               onRemove={() => update('ogImage', '')}
               helperText="Social sharing image. Recommended: 1200x630px"
+            />
+            <ImageUploader
+              label={t('general.bunnyImage')}
+              value={settings.bunnyImage}
+              folder="settings/bunny"
+              maxWidth={1000}
+              maxHeight={1400}
+              onUpload={trackUpload('bunnyImage')}
+              onRemove={() => update('bunnyImage', '')}
+              helperText="Login page mascot — replaces the built-in bunny. Recommended: 866x1215px"
             />
           </div>
         </Section>

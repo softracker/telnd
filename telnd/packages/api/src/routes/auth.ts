@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
-import { notifyNewDeviceLogin, registerLoginDevice } from '../lib/loginAlerts';
+import { notifyNewDeviceLogin, registerLoginDevice, describeLoginDevice } from '../lib/loginAlerts';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
 import { isSmtpConfigured } from '../lib/email';
 import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
@@ -95,6 +95,27 @@ async function issueSession(c: any, user: any, ip: string) {
   // detail of the sign-in the first time it ever appears. Same rule as
   // the location resolve — fire-and-forget, never touches the response.
   void notifyNewDeviceLogin(user, ip, c.req.header('user-agent') || null);
+
+  // Activity feed (§ Activity Logs → Login Activity): one row per
+  // completed sign-in. Fire-and-forget like the hooks above — a log
+  // write must never fail a login. issueSession is called exactly when
+  // a session is issued for a sign-in (password login and the 2FA
+  // challenge), so this never double-counts.
+  void prisma.adminAction
+    .create({
+      data: {
+        adminId: user.id,
+        action: 'LOGIN',
+        targetType: 'user',
+        targetId: user.id,
+        details: { device: describeLoginDevice(c.req.header('user-agent') || null).label },
+        ipAddress: ip === 'unknown' ? null : ip,
+        userAgent: c.req.header('user-agent') || undefined,
+      },
+    })
+    .catch(() => {
+      // Deliberately swallowed — see above.
+    });
 
   await prisma.refreshToken.create({
     data: {

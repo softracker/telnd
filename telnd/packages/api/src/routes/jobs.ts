@@ -3,6 +3,7 @@ import { prisma } from '@telnd/database';
 import { createJobSchema, jobSearchSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { authMiddleware } from '../middleware/auth';
+import { getIp } from '../lib/getIp';
 
 type JobsEnv = {
   Variables: {
@@ -37,11 +38,13 @@ jobRoutes.get('/', async (c) => {
   }
 
   if (searchFilters.employmentType?.length) {
-    where.employmentType = { in: searchFilters.employmentType };
+    // Same direction as the POST fix: zod's names are lowercase, the
+    // Prisma enum is uppercase — un-mapped, any filtered search threw.
+    where.employmentType = { in: searchFilters.employmentType.map((v) => v.toUpperCase()) };
   }
 
   if (searchFilters.workplaceType?.length) {
-    where.workplaceType = { in: searchFilters.workplaceType };
+    where.workplaceType = { in: searchFilters.workplaceType.map((v) => v.toUpperCase()) };
   }
 
   const [jobs, total] = await Promise.all([
@@ -118,14 +121,38 @@ jobRoutes.post('/', authMiddleware, validate(createJobSchema), async (c) => {
       salaryMin: data.salaryMin,
       salaryMax: data.salaryMax,
       salaryCurrency: data.salaryCurrency,
-      employmentType: data.employmentType,
-      workplaceType: data.workplaceType,
+      // zod validates the lowercase names ('full_time'); the Prisma enum
+      // is uppercase (FULL_TIME) — without the mapping prisma.job.create
+      // always threw and this route answered 500.
+      employmentType: data.employmentType.toUpperCase(),
+      workplaceType: data.workplaceType.toUpperCase(),
       location: data.location,
       vacancies: data.vacancies,
       deadline: data.deadline ? new Date(data.deadline) : null,
-      visibility: data.visibility,
+      visibility: data.visibility.toUpperCase(),
     },
   });
+
+  // Employer activity (§ Activity Logs → Employer Activity): a company
+  // owner posted a job. AdminAction.adminId is a plain User FK, so the
+  // employer's own account is a legal actor. Fire-and-forget — a log
+  // write never fails the post.
+  const ip = getIp(c);
+  void prisma.adminAction
+    .create({
+      data: {
+        adminId: userId,
+        action: 'CREATE_JOB',
+        targetType: 'job',
+        targetId: job.id,
+        details: { title: job.title, companyId: company.id, company: company.name },
+        ipAddress: ip === 'unknown' ? null : ip,
+        userAgent: c.req.header('user-agent') || undefined,
+      },
+    })
+    .catch(() => {
+      // Deliberately swallowed — see above.
+    });
 
   return c.json({ success: true, data: job }, 201);
 });

@@ -2074,7 +2074,9 @@ model AdminUser {
 
 model AdminAction {
   id        String   @id @default(cuid())
-  adminId   String
+  // Nullable since the activity feed: system events (SMTP deliveries)
+  // are written by nobody, and render as "System".
+  adminId   String?
   action    String
   targetType String
   targetId  String?
@@ -2083,7 +2085,7 @@ model AdminAction {
   userAgent String?
   createdAt DateTime @default(now())
 
-  admin User @relation(fields: [adminId], references: [id])
+  admin User? @relation(fields: [adminId], references: [id])
 
   @@index([adminId])
   @@index([action])

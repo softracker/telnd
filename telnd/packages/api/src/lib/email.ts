@@ -151,10 +151,40 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
       subject,
       html,
     });
+    void logDelivery(to, subject, true);
     return true;
   } catch (err) {
     console.error('Failed to send email:', err);
+    void logDelivery(to, subject, false, err);
     return false;
+  }
+}
+
+/**
+ * Activity-feed row for the SMTP section (§ Activity Logs → SMTP Activity)
+ * — one row per delivery attempt with its outcome, so the section can show
+ * how many sends succeeded and how many failed. Actor is null on purpose
+ * (the mail system is not an account) and the row renders as "System".
+ * Fire-and-forget with a swallowed catch: logging must never change the
+ * caller's boolean, let alone fail the request behind the send.
+ */
+async function logDelivery(to: string, subject: string, ok: boolean, err?: unknown): Promise<void> {
+  try {
+    const { prisma } = await import('@telnd/database');
+    await prisma.adminAction.create({
+      data: {
+        adminId: null,
+        action: ok ? 'EMAIL_SENT' : 'EMAIL_FAILED',
+        targetType: 'smtp',
+        details: {
+          to,
+          subject,
+          ...(ok ? {} : { error: String((err as Error)?.message ?? err).slice(0, 500) }),
+        },
+      },
+    });
+  } catch {
+    // Deliberately swallowed — see above.
   }
 }
 

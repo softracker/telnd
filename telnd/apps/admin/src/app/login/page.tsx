@@ -16,6 +16,10 @@ export default function LoginPage() {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  // Bunny mascot from Settings -> General; empty until the public fetch
+  // returns one (or if none was ever uploaded) — then the bundled
+  // /images/bunny.png shows instead.
+  const [bunnyImage, setBunnyImage] = useState('');
   const turnstileRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
 
@@ -39,6 +43,27 @@ export default function LoginPage() {
       }
     }
     loadSiteKey();
+  }, []);
+
+  // Bunny mascot from Settings -> General (public endpoint, same
+  // relative-URL reason as the captcha config below). Until it returns
+  // an uploaded one, the bundled /images/bunny.png stays visible.
+  useEffect(() => {
+    async function loadBunny() {
+      try {
+        // Relative on purpose: same-origin through the /api rewrite proxy.
+        const res = await fetch('/api/settings/general');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && typeof data.data?.bunnyImage === 'string' && data.data.bunnyImage) {
+            setBunnyImage(data.data.bunnyImage);
+          }
+        }
+      } catch {
+        // ignore — the static bunny stays
+      }
+    }
+    loadBunny();
   }, []);
 
   // Render Turnstile widget when captcha becomes required
@@ -175,11 +200,17 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Bunny Character */}
+        {/* Bunny Character — Settings -> General upload when one exists,
+            otherwise the bundled image; a stale/removed upload URL falls
+            back through onError so the mascot never disappears. */}
         <div style={{ zIndex: 1 }}>
           <img
-            src="/images/bunny.png"
+            src={bunnyImage || '/images/bunny.png'}
             alt="TELND Bunny"
+            onError={(e) => {
+              const el = e.currentTarget;
+              if (!el.src.endsWith('/images/bunny.png')) el.src = '/images/bunny.png';
+            }}
             style={{
               width: '280px',
               height: 'auto',
