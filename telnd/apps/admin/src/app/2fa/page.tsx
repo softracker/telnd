@@ -516,6 +516,7 @@ export default function TwoFactorPage() {
             border: '1px solid #d1d5db',
             borderRadius: '10px',
             padding: '1rem',
+            marginBottom: '0.75rem',
             cursor: smsNote ? 'not-allowed' : 'pointer',
             opacity: smsNote ? 0.55 : 1,
           }}

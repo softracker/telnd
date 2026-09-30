@@ -277,7 +277,8 @@ export default function ActivityLogsLayout({ children }: { children: React.React
             </div>
           )}
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+        {/* Same sticky rule as desktop: no padding-top on the scroller. */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 1rem 1rem' }}>
           {children}
         </div>
       </div>
@@ -337,12 +338,20 @@ export default function ActivityLogsLayout({ children }: { children: React.React
           </svg>
         </button>
 
-        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '1.5rem 2rem' }}>
+        {/* No top padding on the SCROLLER: a sticky child pins against the
+            scroll container's content edge, so padding-top would stay
+            visible between the fixed top bar and the stuck filter bar.
+            The space belongs on the page content instead (.activity-page),
+            which scrolls away normally. */}
+        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '0 2rem 1.5rem 2rem' }}>
           {children}
         </div>
       </div>
 
       <style>{`
+        /* Top spacing for the page content — lives here, not on the
+           scroller, so the sticky filter bar pins flush under the top bar. */
+        .activity-page { padding-top: 1.5rem; }
         @media (max-width: 768px) {
           .activity-mobile-layout { display: flex !important; }
           .activity-layout { display: none !important; }
@@ -350,6 +359,7 @@ export default function ActivityLogsLayout({ children }: { children: React.React
           .admin-content:has(.activity-layout) {
             padding: 0;
           }
+          .activity-page { padding-top: 1rem; }
         }
         @media (min-width: 769px) {
           .activity-layout {

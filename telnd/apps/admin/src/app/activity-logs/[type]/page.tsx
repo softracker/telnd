@@ -30,13 +30,22 @@ function Spinner({ size = 16 }: { size?: number }) {
   );
 }
 
+// Which `details` keys we ever show, in display order: who/what first
+// (name, email), then context. Shared by the collapsed meta line and the
+// expanded breakdown so the two can never drift apart.
+const DETAIL_ORDER = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error'];
+
+function detailPairs(item: ActivityItem): [string, string][] {
+  const details = item.details || {};
+  return DETAIL_ORDER.filter((key) => typeof details[key] === 'string' && details[key]).map(
+    (key) => [key, details[key] as string],
+  );
+}
+
 /** Meta under the actor: target account, sign-in device, job, mail… */
 function detailsMeta(item: ActivityItem): string {
-  const details = item.details || {};
-  // Order is display order: who/what first (name, email), then context.
-  return ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error']
-    .map((key) => details[key])
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+  return detailPairs(item)
+    .map(([, value]) => value)
     .join(' · ');
 }
 
@@ -194,22 +203,36 @@ export default function ActivitySectionPage() {
   const [query, setQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [prevSection, setPrevSection] = useState(type);
+  // Rows expanded for their full breakdown (timeline rows are collapsed
+  // by default; ids only ever match rows on the current page).
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const filtersActive = Boolean(query || dateFrom || dateTo);
 
   // A mistyped section is not a page at all — same as the settings 404.
   if (!isActivityKey(type)) notFound();
   const section = ACTIVITY_BY_KEY[type];
 
-  // Any change to the section or a filter restarts at page 1.
-  useEffect(() => {
+  // Section changed → back to page 1, expanded rows folded. Adjusted
+  // during render (React's sanctioned pattern) rather than in an effect,
+  // so the fetch never fires once with the old page's number against the
+  // new section.
+  if (type !== prevSection) {
+    setPrevSection(type);
     setPage(1);
-  }, [type, query, dateFrom, dateTo]);
+    setExpanded(new Set());
+  }
 
-  // Debounce the search box so typing does not fire a request per keystroke.
+  // Debounce the search box so typing does not fire a request per
+  // keystroke. The page reset lands in the SAME batch as the query, so
+  // there is exactly one fetch — with page 1 — per committed change.
   useEffect(() => {
     const next = searchInput.trim();
     if (next === query) return;
-    const id = setTimeout(() => setQuery(next), 300);
+    const id = setTimeout(() => {
+      setQuery(next);
+      setPage(1);
+    }, 300);
     return () => clearTimeout(id);
   }, [searchInput, query]);
 
@@ -218,8 +241,11 @@ export default function ActivitySectionPage() {
     setLoading(true);
     const qs = new URLSearchParams({ type, page: String(page), limit: String(PAGE_SIZE) });
     if (query) qs.set('q', query);
-    if (dateFrom) qs.set('from', dateFrom);
-    if (dateTo) qs.set('to', dateTo);
+    // Date bounds are built in THIS browser's timezone (local midnight /
+    // end of day → ISO instant): rows render with toLocaleString(), so
+    // only browser-local boundaries can agree with the dates on screen.
+    if (dateFrom) qs.set('from', new Date(`${dateFrom}T00:00:00`).toISOString());
+    if (dateTo) qs.set('to', new Date(`${dateTo}T23:59:59.999`).toISOString());
     api
       .get<{ success: boolean; data: ActivityResponse }>(`/api/admin/activity?${qs.toString()}`)
       .then((res) => {
@@ -245,17 +271,66 @@ export default function ActivitySectionPage() {
     };
   }, [type, page, query, dateFrom, dateTo]);
 
+  // Each filter change resets the page in the same batch, so the next
+  // fetch is already for page 1 of the new result set.
+  const applyDateFrom = (value: string) => {
+    setDateFrom(value);
+    setPage(1);
+  };
+  const applyDateTo = (value: string) => {
+    setDateTo(value);
+    setPage(1);
+  };
   const clearFilters = () => {
     setSearchInput('');
     setQuery('');
     setDateFrom('');
     setDateTo('');
+    setPage(1);
   };
+
+  const toggleRow = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Timeline grouping: bucket the page's rows by their LOCAL calendar day
+  // (the cards render local times, so the headers must too). The API
+  // orders createdAt desc, so each day's rows arrive contiguously —
+  // appending to the last bucket is enough.
+  const dayGroups: { key: string; label: string; items: ActivityItem[] }[] = [];
+  {
+    const now = new Date();
+    const todayKey = now.toDateString();
+    const yesterdayKey = new Date(now.getTime() - 86_400_000).toDateString();
+    for (const item of items) {
+      const created = new Date(item.createdAt);
+      const key = created.toDateString();
+      let group = dayGroups[dayGroups.length - 1];
+      if (!group || group.key !== key) {
+        const label =
+          key === todayKey
+            ? t('activity.today')
+            : key === yesterdayKey
+              ? t('activity.yesterday')
+              : created.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+        group = { key, label, items: [] };
+        dayGroups.push(group);
+      }
+      group.items.push(item);
+    }
+  }
 
   const forbidden = error instanceof ApiError && error.status === 403;
 
   return (
-    <div style={{ maxWidth: '960px' }}>
+    // .activity-page supplies the top spacing (see the layout's <style>):
+    // the scroller itself carries no padding-top so the sticky bar below
+    // pins flush under the fixed top bar.
+    <div className="activity-page" style={{ maxWidth: '960px' }}>
       {/* Header identical to the settings pages: tight title→description
           gap (h1 margin-bottom, not the browser default), same weights. */}
       <div style={{ marginBottom: '1.5rem' }}>
@@ -325,15 +400,28 @@ export default function ActivitySectionPage() {
         </div>
       ) : (
         <>
-          <ActivityFilterBar
-            searchInput={searchInput}
-            onSearch={setSearchInput}
-            dateFrom={dateFrom}
-            onDateFrom={setDateFrom}
-            dateTo={dateTo}
-            onDateTo={setDateTo}
-            onClear={clearFilters}
-          />
+          {/* Sticky toolbar: the search/date controls stay in view while
+              the timeline scrolls under them (bg covers the rows beneath). */}
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 5,
+              backgroundColor: 'var(--bg-main)',
+              paddingTop: '0.25rem',
+              paddingBottom: '0.5rem',
+            }}
+          >
+            <ActivityFilterBar
+              searchInput={searchInput}
+              onSearch={setSearchInput}
+              dateFrom={dateFrom}
+              onDateFrom={applyDateFrom}
+              dateTo={dateTo}
+              onDateTo={applyDateTo}
+              onClear={clearFilters}
+            />
+          </div>
           {loading && items.length === 0 ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem 0', color: 'var(--muted-text)' }}>
               <Spinner />
@@ -345,109 +433,288 @@ export default function ActivitySectionPage() {
                 textAlign: 'center',
                 backgroundColor: 'var(--card-bg)',
                 border: '1px solid var(--border-color)',
-                borderRadius: '10px',
+                borderRadius: '12px',
               }}
             >
-              <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)' }}>
+              <svg
+                width="28"
+                height="28"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                style={{ color: 'var(--muted-text)', marginBottom: '0.5rem' }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <p style={{ fontSize: '0.875rem', color: 'var(--muted-text)', margin: 0 }}>
                 {filtersActive ? t('activity.noMatches') : t('activity.empty')}
               </p>
             </div>
           ) : (
             <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {items.map((item) => {
-              const category = ACTIVITY_BY_KEY[item.category] || ACTIVITY_BY_KEY.all;
-              const meta = detailsMeta(item);
-              return (
+          {/* Timeline: rows grouped under local-day headers, joined by a
+              rail between the icon nodes; each row expands for the full
+              breakdown (exact time, IP, browser, labeled details). */}
+          <div
+            style={{
+              backgroundColor: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '12px',
+              padding: '0.25rem 1.25rem 0.75rem',
+            }}
+          >
+            {dayGroups.map((group, gi) => (
+              <section key={group.key}>
                 <div
-                  key={item.id}
                   style={{
                     display: 'flex',
-                    alignItems: 'flex-start',
+                    alignItems: 'center',
                     gap: '0.75rem',
-                    padding: '0.875rem 1rem',
-                    backgroundColor: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '10px',
+                    marginTop: gi === 0 ? '0.625rem' : '1.375rem',
                   }}
                 >
                   <span
-                    aria-hidden="true"
                     style={{
-                      width: '36px',
-                      height: '36px',
-                      flexShrink: 0,
-                      borderRadius: '50%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: 'var(--accent-light)',
-                      color: 'var(--accent)',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--muted-text)',
                     }}
                   >
-                    {category.icon}
+                    {group.label}
                   </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'baseline',
-                        gap: '0.75rem',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                        {humanizeAction(item.action)}
-                        {type === 'all' && (
+                  <span aria-hidden="true" style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+                </div>
+                <div style={{ marginTop: '0.25rem' }}>
+                  {group.items.map((item, idx) => {
+                    const category = ACTIVITY_BY_KEY[item.category] || ACTIVITY_BY_KEY.all;
+                    const meta = detailsMeta(item);
+                    const isOpen = expanded.has(item.id);
+                    const created = new Date(item.createdAt);
+                    const pairs = detailPairs(item);
+                    return (
+                      <div key={item.id} style={{ position: 'relative' }}>
+                        {/* Rail: starts at this row's node center and — because
+                            height 100% spans this whole entry — lands exactly
+                            on the next node's center, expanded or not. */}
+                        {idx < group.items.length - 1 && (
                           <span
+                            aria-hidden="true"
                             style={{
-                              marginLeft: '0.5rem',
-                              fontSize: '0.6875rem',
-                              fontWeight: 600,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.03em',
-                              color: 'var(--muted-text)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: '999px',
-                              padding: '0.0625rem 0.5rem',
-                              verticalAlign: 'middle',
+                              position: 'absolute',
+                              left: '27px',
+                              top: '30px',
+                              width: '2px',
+                              height: '100%',
+                              backgroundColor: 'var(--border-color)',
+                            }}
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleRow(item.id)}
+                          aria-expanded={isOpen}
+                          style={{
+                            display: 'flex',
+                            width: '100%',
+                            alignItems: 'flex-start',
+                            gap: '0.75rem',
+                            padding: '0.75rem 0.5rem 0.75rem 0.625rem',
+                            backgroundColor: 'transparent',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontFamily: 'inherit',
+                            transition: 'background-color 0.12s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: '36px',
+                              height: '36px',
+                              flexShrink: 0,
+                              borderRadius: '50%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: 'var(--accent-light)',
+                              color: 'var(--accent)',
+                              position: 'relative',
+                              zIndex: 1,
+                              boxShadow: '0 0 0 3px var(--card-bg)',
                             }}
                           >
-                            {t(category.labelKey as any)}
+                            {category.icon}
                           </span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                                {humanizeAction(item.action)}
+                              </span>
+                              {type === 'all' && (
+                                <span
+                                  style={{
+                                    fontSize: '0.6875rem',
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.03em',
+                                    color: 'var(--muted-text)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '999px',
+                                    padding: '0.0625rem 0.5rem',
+                                  }}
+                                >
+                                  {t(category.labelKey as any)}
+                                </span>
+                              )}
+                              <span
+                                style={{
+                                  marginLeft: 'auto',
+                                  fontSize: '0.75rem',
+                                  color: 'var(--muted-text)',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={created.toLocaleString()}
+                              >
+                                {created.toLocaleTimeString()}
+                              </span>
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                                style={{
+                                  color: 'var(--muted-text)',
+                                  flexShrink: 0,
+                                  transform: isOpen ? 'rotate(90deg)' : 'none',
+                                  transition: 'transform 0.15s',
+                                }}
+                              >
+                                <polyline points="9 18 15 12 9 6" />
+                              </svg>
+                            </span>
+                            <span
+                              style={{
+                                display: 'block',
+                                fontSize: '0.8125rem',
+                                color: 'var(--muted-text)',
+                                marginTop: '0.2rem',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {item.actor ? (
+                                <>
+                                  <span style={{ color: 'var(--label-text)' }}>{item.actor.name}</span>
+                                  {' · '}
+                                  {item.actor.email}
+                                </>
+                              ) : (
+                                t('activity.systemActor')
+                              )}
+                            </span>
+                            {(meta || item.ipAddress) && (
+                              <span
+                                style={{
+                                  display: 'block',
+                                  fontSize: '0.75rem',
+                                  color: 'var(--muted-text)',
+                                  marginTop: '0.15rem',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {[item.ipAddress, meta].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                        {isOpen && (
+                          <div style={{ padding: '0 0.5rem 0.875rem 3.625rem' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.375rem',
+                                fontSize: '0.75rem',
+                                color: 'var(--muted-text)',
+                                backgroundColor: 'var(--bg-secondary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '8px',
+                                padding: '0.625rem 0.75rem',
+                              }}
+                            >
+                              <span style={{ fontWeight: 600, color: 'var(--label-text)' }}>
+                                {created.toLocaleString()}
+                              </span>
+                              {item.ipAddress && (
+                                <span>
+                                  <span style={{ fontWeight: 600, color: 'var(--label-text)' }}>
+                                    {t('activity.ip')}:{' '}
+                                  </span>
+                                  {item.ipAddress}
+                                </span>
+                              )}
+                              {item.userAgent && (
+                                <span style={{ wordBreak: 'break-word' }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--label-text)' }}>
+                                    {t('security.deviceLabel')}:{' '}
+                                  </span>
+                                  {item.userAgent}
+                                </span>
+                              )}
+                              {pairs.length > 0 && (
+                                <span
+                                  style={{
+                                    marginTop: '0.125rem',
+                                    fontSize: '0.625rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em',
+                                    color: 'var(--muted-text)',
+                                  }}
+                                >
+                                  {t('account.groupDetails')}
+                                </span>
+                              )}
+                              {pairs.map(([key, value]) => (
+                                <span key={key} style={{ wordBreak: 'break-word' }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--label-text)' }}>
+                                    {humanizeAction(key)}:{' '}
+                                  </span>
+                                  {value}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
                         )}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '0.75rem',
-                          color: 'var(--muted-text)',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {new Date(item.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', marginTop: '0.15rem' }}>
-                      {item.actor ? (
-                        <>
-                          <span style={{ color: 'var(--label-text)' }}>{item.actor.name}</span>
-                          {' · '}
-                          {item.actor.email}
-                        </>
-                      ) : (
-                        t('activity.systemActor')
-                      )}
-                    </div>
-                    {(meta || item.ipAddress) && (
-                      <div style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.2rem' }}>
-                        {[item.ipAddress, meta].filter(Boolean).join(' · ')}
                       </div>
-                    )}
-                  </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </section>
+            ))}
           </div>
           <ListPager
             page={page}

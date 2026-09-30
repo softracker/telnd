@@ -922,10 +922,30 @@ admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) 
   const from = c.req.query('from') ?? '';
   const to = c.req.query('to') ?? '';
   const dayOnly = /^\d{4}-\d{2}-\d{2}$/;
-  if ((from && !dayOnly.test(from)) || (to && !dayOnly.test(to))) {
+  // Bounds come in two shapes: `YYYY-MM-DD` — a whole UTC day, the
+  // simple API form — or a full ISO instant, which is what the filter
+  // bar sends. Rows DISPLAY with toLocaleString() in the admin's
+  // browser, so the day boundaries have to be built in that same
+  // timezone (local midnight → instant) or the selected range
+  // disagrees with the dates on screen by the whole UTC offset.
+  const parseBound = (raw: string, edge: 'start' | 'end'): Date | null | 'invalid' => {
+    if (!raw) return null;
+    let d: Date;
+    if (dayOnly.test(raw)) {
+      d = new Date(edge === 'start' ? `${raw}T00:00:00.000Z` : `${raw}T23:59:59.999Z`);
+    } else if (raw.includes('T')) {
+      d = new Date(raw);
+    } else {
+      return 'invalid';
+    }
+    return Number.isNaN(d.getTime()) ? 'invalid' : d;
+  };
+  const fromD = parseBound(from, 'start');
+  const toD = parseBound(to, 'end');
+  if (fromD === 'invalid' || toD === 'invalid') {
     return c.json({
       success: false,
-      error: { code: 'INVALID_DATE', message: "from/to must be dates like '2026-10-01'" },
+      error: { code: 'INVALID_DATE', message: "from/to must be '2026-10-01' or an ISO instant" },
     }, 400);
   }
 
@@ -957,9 +977,10 @@ admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) 
       })),
     });
   }
-  // Day-granular bounds in UTC — the pickers carry dates, not instants.
-  if (from) filters.push({ createdAt: { gte: new Date(`${from}T00:00:00.000Z`) } });
-  if (to) filters.push({ createdAt: { lte: new Date(`${to}T23:59:59.999Z`) } });
+  // Day-granular bounds: an ISO instant is used verbatim, a bare date
+  // becomes a UTC day (start/end edge respectively).
+  if (fromD) filters.push({ createdAt: { gte: fromD } });
+  if (toD) filters.push({ createdAt: { lte: toD } });
 
   const where = filters.length ? { AND: [activityWhere(type), ...filters] } : activityWhere(type);
   const [items, total] = await Promise.all([
