@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { appendFileSync } from 'node:fs';
 import { prisma } from '@telnd/database';
 import { authMiddleware, requireAdmin, hasPermission } from '../middleware/auth';
@@ -10,6 +11,7 @@ import { deleteRecoveryCodes, rotateRecoveryCodes, unusedRecoveryCodeCount } fro
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { getIp } from '../lib/getIp';
 import { backfillSessionLocations } from '../lib/geoLocation';
+import { clearPinAttempts, hashPin, normalizePin, pinPolicyRequired, requirePinApproval, verifySecurityPin } from '../lib/securityPin';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import {
   clearOtp,
@@ -411,6 +413,178 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
     },
   });
 });
+
+// ── Security PIN (§14.44) — screen lock + sensitive-action approval ──────
+
+// State for the Security page card and the lock screen: has one been set,
+// and is one demanded (per-account by a super admin, or globally by the
+// `pinPolicy` Setting).
+userRoutes.get('/me/pin', authMiddleware, async (c) => {
+  const userId = c.get('userId') as string;
+  const [row, policy] = await Promise.all([
+    prisma.adminUser.findUnique({
+      where: { userId },
+      select: { pinHash: true, pinRequired: true, role: { select: { permissions: true } } },
+    }),
+    pinPolicyRequired(),
+  ]);
+  return c.json({
+    success: true,
+    data: {
+      pinSet: Boolean(row?.pinHash),
+      enforcedByAdmin: Boolean(row?.pinRequired),
+      policyRequired: policy,
+      canManagePolicy: hasPermission(row?.role, '*'),
+    },
+  });
+});
+
+// Set the PIN — only possible while none exists (a forgotten one comes off
+// through an admin's reset, never silently replaced here, so a hijacked
+// session can't swap the credential it doesn't know).
+userRoutes.post(
+  '/me/pin',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 5 }),
+  validate(z.object({ pin: z.string() })),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const pin = normalizePin((c.get('validatedData') as { pin: string }).pin);
+    if (!pin) {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'A security PIN must be exactly 4 digits.' },
+      }, 400);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    if (user?.role !== 'ADMIN') {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Security PINs are an admin-panel feature.' },
+      }, 403);
+    }
+    const row = await prisma.adminUser.findUnique({ where: { userId } });
+    if (!row) {
+      return c.json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Admin profile not found.' },
+      }, 404);
+    }
+    if (row.pinHash) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'PIN_EXISTS',
+          message: 'A security PIN is already set. Ask an admin with permission to reset it first.',
+        },
+      }, 409);
+    }
+
+    await prisma.adminUser.update({
+      where: { id: row.id },
+      data: { pinHash: hashPin(userId, pin), pinSetAt: new Date() },
+    });
+    clearPinAttempts(userId);
+    await logSelfService(c, user, 'SECURITY_PIN_SET');
+    return c.json({ success: true, data: { pinSet: true } });
+  },
+);
+
+// Turn the PIN off — self-service, but only while nothing demands it (a
+// super admin's per-account requirement or the global pinPolicy must be
+// released first), and only through the approval gate: a hijacked session
+// must not be able to silently drop the credential its own sensitive
+// actions are gated behind. The requirement check runs before the gate on
+// purpose — a doomed request should not walk the user through the modal
+// to be told "release the requirement first" afterwards. Neither check
+// writes, logs or mails anything when it rejects.
+userRoutes.delete(
+  '/me/pin',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 5 }),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    if (user?.role !== 'ADMIN') {
+      return c.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Security PINs are an admin-panel feature.' },
+      }, 403);
+    }
+    const row = await prisma.adminUser.findUnique({ where: { userId } });
+    if (!row) {
+      return c.json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Admin profile not found.' },
+      }, 404);
+    }
+    if (!row.pinHash) {
+      return c.json({
+        success: false,
+        error: { code: 'PIN_NOT_SET', message: 'No security PIN is set for this account.' },
+      }, 404);
+    }
+    if (row.pinRequired || (await pinPolicyRequired())) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'PIN_ENFORCED',
+          message: 'Your security PIN is required for your account — release the requirement first.',
+        },
+      }, 403);
+    }
+
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
+
+    await prisma.adminUser.update({
+      where: { id: row.id },
+      data: { pinHash: null, pinSetAt: null },
+    });
+    clearPinAttempts(userId);
+    await logSelfService(c, user, 'SECURITY_PIN_CLEARED');
+    return c.json({ success: true, data: { pinSet: false } });
+  },
+);
+
+// Verify the PIN for the lock screen (and the approval modal's pre-check).
+// 5 wrong tries in 15 minutes locks further attempts.
+userRoutes.post(
+  '/me/pin/verify',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 12 }),
+  validate(z.object({ pin: z.string() })),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const pin = normalizePin((c.get('validatedData') as { pin: string }).pin);
+    if (!pin) {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'A security PIN must be exactly 4 digits.' },
+      }, 400);
+    }
+
+    const result = await verifySecurityPin(userId, pin);
+    if (result.ok) return c.json({ success: true, data: { valid: true } });
+    if (result.reason === 'NOT_SET') {
+      return c.json({
+        success: false,
+        error: { code: 'PIN_NOT_SET', message: 'No security PIN is set for this account.' },
+      }, 404);
+    }
+    if (result.reason === 'LOCKED') {
+      return c.json({
+        success: false,
+        error: { code: 'PIN_LOCKED', message: 'Too many wrong PIN attempts. Try again in 15 minutes.' },
+      }, 429);
+    }
+    return c.json({
+      success: false,
+      error: { code: 'PIN_INVALID', message: 'Your security PIN is incorrect.' },
+    }, 403);
+  },
+);
 
 // First half of authenticator-app enrollment: mint a secret (2FA stays off
 // until the code below is verified) and hand back the QR payload.

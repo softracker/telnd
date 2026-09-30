@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import Toast, { type ToastType } from '@/components/toast';
 import ImageUploader from '@/components/image-uploader';
 import RoleBadge from '@/components/role-badge';
-import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon, ShieldIcon, ShieldOffIcon } from '@/components/action-icons';
+import { EditIcon, DeleteIcon, ConfirmIcon, RefreshIcon, ShieldIcon, ShieldOffIcon, LockIcon, KeyIcon } from '@/components/action-icons';
 import { ListPager } from '@/components/list-pager';
 import { Dropdown } from '@/components/dropdown';
 
@@ -28,6 +28,9 @@ interface AdminAccount {
   twoFactorEnabled: boolean;
   twoFactorMethod: string | null;
   twoFactorRequired: boolean;
+  // Security PIN state (§14.44) — reset action + require toggle.
+  securityPinSet: boolean;
+  securityPinRequired: boolean;
 }
 
 interface AdminRole {
@@ -498,6 +501,59 @@ export default function TeamAccountSettingsPage() {
     }
   }
 
+  // ── Super admin: per-admin security-PIN requirement (§14.44) ──
+  // Arm (first click shows the confirm icon) → act (second click PATCHes),
+  // same rhythm as the two-factor toggles above.
+  const [pendingPinAdmin, setPendingPinAdmin] = useState<string | null>(null);
+  const [pinToggleId, setPinToggleId] = useState<string | null>(null);
+
+  async function handleAdminPinRequired(a: AdminAccount) {
+    if (pendingPinAdmin !== a.id) {
+      setPendingPinAdmin(a.id);
+      return;
+    }
+    setPendingPinAdmin(null);
+    setPinToggleId(a.id);
+    const name = `${a.firstName} ${a.lastName}`;
+    const next = !a.securityPinRequired;
+    try {
+      await api.patch(`/api/admin/admins/${a.id}/pin-required`, { required: next });
+      showToast('success', next ? t('securityPin.requiredToast', { name }) : t('securityPin.releasedToast', { name }));
+      await loadAdminRows();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setPinToggleId(null);
+    }
+  }
+
+  // ── Permission-enabled admin: reset a PIN nobody can type anymore ──
+  // The acting admin approves this action with their OWN PIN (the API's
+  // gate never looks at the target's — a forgotten PIN can't approve its
+  // own removal). The requirement survives: the target must set a fresh
+  // one at its next challenge.
+  const [pendingPinReset, setPendingPinReset] = useState<string | null>(null);
+  const [pinResetId, setPinResetId] = useState<string | null>(null);
+
+  async function handleAdminPinReset(a: AdminAccount) {
+    if (pendingPinReset !== a.id) {
+      setPendingPinReset(a.id);
+      return;
+    }
+    setPendingPinReset(null);
+    setPinResetId(a.id);
+    const name = `${a.firstName} ${a.lastName}`;
+    try {
+      await api.post(`/api/admin/admins/${a.id}/pin-reset`, {});
+      showToast('success', t('securityPin.resetToast', { name }));
+      await loadAdminRows();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setPinResetId(null);
+    }
+  }
+
   const pageLoading = loadingAdmins;
 
   return (
@@ -888,6 +944,56 @@ export default function TeamAccountSettingsPage() {
                           <ConfirmIcon />
                         ) : (
                           <ShieldOffIcon />
+                        )}
+                      </RowAction>
+                    )}
+                    {/* Super admin only: demand (or release) this admin's
+                        security PIN — two-click arm → act, like the 2FA
+                        shield above. Demanding provisions nothing; the
+                        account must set one at its next PIN challenge. */}
+                    {isFullAccess && (
+                      <RowAction
+                        ariaLabel={
+                          pendingPinAdmin === a.id
+                            ? t('account.confirmStatus')
+                            : a.securityPinRequired
+                              ? t('securityPin.rowRelease')
+                              : t('securityPin.rowRequire')
+                        }
+                        onClick={() => handleAdminPinRequired(a)}
+                        disabled={pinToggleId === a.id}
+                        style={pendingPinAdmin === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {pinToggleId === a.id ? (
+                          <Spinner size={13} />
+                        ) : pendingPinAdmin === a.id ? (
+                          <ConfirmIcon />
+                        ) : (
+                          <LockIcon />
+                        )}
+                      </RowAction>
+                    )}
+                    {/* Permission-enabled admin (admins.edit): clear a PIN
+                        nobody can type anymore — shown only while one is
+                        on file. The acting admin approves with their own
+                        PIN at the API gate. Two-click arm → act. */}
+                    {can('admins.edit') && a.securityPinSet && !a.isSelf && (
+                      <RowAction
+                        ariaLabel={
+                          pendingPinReset === a.id
+                            ? t('account.confirmStatus')
+                            : t('securityPin.rowReset')
+                        }
+                        onClick={() => handleAdminPinReset(a)}
+                        disabled={pinResetId === a.id}
+                        style={pendingPinReset === a.id ? { background: 'var(--accent-light)' } : undefined}
+                      >
+                        {pinResetId === a.id ? (
+                          <Spinner size={13} />
+                        ) : pendingPinReset === a.id ? (
+                          <ConfirmIcon />
+                        ) : (
+                          <KeyIcon />
                         )}
                       </RowAction>
                     )}

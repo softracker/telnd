@@ -69,3 +69,23 @@ export function ShieldOffIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+// Padlock — the screen-lock button at the foot of the side rail, and the
+// glyph on the lock screen itself.
+export function LockIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} {...strokeProps}>
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+// Key — the reset-PIN row action on the Admins list.
+export function KeyIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} {...strokeProps}>
+      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </svg>
+  );
+}

@@ -8,6 +8,7 @@ import { sendAdminInviteEmail, sendTwoFactorNoticeEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { deleteRecoveryCodes } from '../lib/recoveryCodes';
 import { clearOtp } from '../lib/twoFactor';
+import { clearPinAttempts, requirePinApproval } from '../lib/securityPin';
 
 type AdminEnv = {
   Variables: {
@@ -240,6 +241,10 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
       twoFactorEnabled: u.twoFactorEnabled,
       twoFactorMethod: u.twoFactorMethod,
       twoFactorRequired: u.twoFactorEnforced,
+      // Security PIN state for the row controls: whether one is on file
+      // (never the hash) and whether a super admin demands one.
+      securityPinSet: Boolean(u.adminUser?.pinHash),
+      securityPinRequired: u.adminUser?.pinRequired ?? false,
     }))
     // Super admins appear only for a super admin. Filtering before paging
     // keeps totals honest for everyone else.
@@ -279,6 +284,10 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
 });
 
 admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate(createAdminSchema), async (c) => {
+  // Sensitive: creating an admin grants panel access — approve with PIN.
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const body = c.get('validatedData');
   const adminUser = c.get('admin');
 
@@ -423,6 +432,10 @@ admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), valid
 });
 
 admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), async (c) => {
+  // Sensitive: removing an admin revokes their access — approve with PIN.
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const adminUser = c.get('admin');
   const selfId = c.get('user')?.id;
@@ -547,6 +560,13 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
   const id = c.req.param('id');
   const { required } = c.get('validatedData') as { required: boolean };
 
+  // Sensitive only in the release direction: turning 2FA OFF removes
+  // protection (requiring it adds protection and needs no approval).
+  if (!required) {
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
+  }
+
   const user = await prisma.user.findUnique({
     where: { id },
     include: { adminUser: { include: { role: true } } },
@@ -608,6 +628,14 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
   }
 
   const { required } = c.get('validatedData') as { required: boolean };
+
+  // Sensitive only when the policy is being dropped — requiring 2FA for
+  // everyone adds protection and needs no approval.
+  if (!required) {
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
+  }
+
   await prisma.setting.upsert({
     where: { key: 'twoFactorPolicy' },
     update: { value: { requireTwoFactor: required } as any },
@@ -615,6 +643,107 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
   });
 
   await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_ALL' : 'CLEAR_TWO_FACTOR_POLICY', 'setting', undefined, { required }, c);
+  return c.json({ success: true, data: { required } });
+});
+
+// ============================================
+// Security PIN administration (§14.44)
+// ============================================
+
+// Reset an admin's security PIN — the only way a forgotten PIN leaves an
+// account (there is no self-service removal: the PIN itself approves, so
+// a lost one needs a permission-enabled admin to clear it here). The
+// requirement survives the reset, so a demanded account must immediately
+// choose a fresh one at its next PIN challenge.
+admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit'), async (c) => {
+  // Approving a PIN change with the PIN being changed would defeat it —
+  // this gate checks the ACTING admin's own PIN.
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const id = c.req.param('id');
+  const actor = c.get('admin');
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: { include: { role: true } } },
+  });
+  if (!user || user.role !== 'ADMIN' || !user.adminUser) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+  // Same invisibility rule as delete: a super admin is managed only by a
+  // super admin — everyone else gets the 404 their list implies.
+  if (isSuper(user.adminUser.role?.permissions) && !isSuper(actor?.role?.permissions)) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+
+  await prisma.adminUser.update({
+    where: { id: user.adminUser.id },
+    data: { pinHash: null, pinSetAt: null },
+  });
+  // The cleared PIN must not inherit the old one's lockout either.
+  clearPinAttempts(user.id);
+
+  await logAction(actor.userId, 'SECURITY_PIN_RESET', 'user', id, {}, c);
+  return c.json({ success: true, data: { pinSet: false } });
+});
+
+// Super admin: demand (or release) a security PIN for one admin. Demanding
+// provisions nothing — the account must set a PIN at its next PIN
+// challenge (lock screen or first sensitive action) and can no longer
+// leave the panel without one.
+admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to manage security PINs.' },
+    }, 403);
+  }
+
+  const id = c.req.param('id');
+  const { required } = c.get('validatedData') as { required: boolean };
+
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: { adminUser: true },
+  });
+  if (!user || user.role !== 'ADMIN' || !user.adminUser) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
+  }
+
+  await prisma.adminUser.update({ where: { id: user.adminUser.id }, data: { pinRequired: required } });
+  await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN' : 'CLEAR_SECURITY_PIN_REQUIREMENT', 'user', id, {}, c);
+  return c.json({ success: true, data: { required } });
+});
+
+// "Require security PIN for all admins" — the sibling of the two-factor
+// policy, stored the same reserved way (Setting key `pinPolicy`: not in
+// KEY_PERMISSIONS, so only super '*' can touch it through the generic
+// settings routes).
+admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to change the security PIN policy.' },
+    }, 403);
+  }
+
+  const { required } = c.get('validatedData') as { required: boolean };
+
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  await prisma.setting.upsert({
+    where: { key: 'pinPolicy' },
+    update: { value: { requirePin: required } as any },
+    create: { key: 'pinPolicy', value: { requirePin: required } as any },
+  });
+
+  await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN_ALL' : 'CLEAR_SECURITY_PIN_POLICY', 'setting', undefined, { required }, c);
   return c.json({ success: true, data: { required } });
 });
 

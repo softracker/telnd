@@ -30,6 +30,13 @@ interface OtpInputProps {
   length?: number;
   disabled?: boolean;
   autoFocus?: boolean;
+  /**
+   * 'password' dots each box — the security PIN rows use it so a long-lived
+   * secret never sits in clear the way an ephemeral 6-digit code may.
+   */
+  type?: 'text' | 'password';
+  /** Autocomplete token for the first box; the PIN rows pass 'off'. */
+  autoComplete?: string;
   /** Extra styles for the row itself (alignment, margins…). */
   containerStyle?: CSSProperties;
   /** Resting look of one box. */
@@ -37,6 +44,23 @@ interface OtpInputProps {
   /** Merged over `style` while a box holds focus. */
   focusStyle?: CSSProperties;
 }
+
+/**
+ * The resting look of the code boxes, shared by the 2FA rows on the
+ * Security tab and the security PIN rows so the two stay in step.
+ */
+export const otpBoxStyle: CSSProperties = {
+  height: '40px',
+  fontSize: '0.9375rem',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  borderColor: 'var(--input-border)',
+  backgroundColor: 'var(--input-bg)',
+  color: 'var(--text-main)',
+};
+
+/** The focused-box accent that goes with {@link otpBoxStyle}. */
+export const otpFocusStyle: CSSProperties = { borderColor: 'var(--accent)' };
 
 /**
  * The six separate boxes the 6-digit code is typed into — on the login
@@ -57,6 +81,8 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
     length = 6,
     disabled = false,
     autoFocus = false,
+    type = 'text',
+    autoComplete = 'one-time-code',
     containerStyle,
     style,
     focusStyle,
@@ -161,11 +187,11 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             boxes.current[index] = el;
           }}
           id={index === 0 ? firstInputId : undefined}
-          type="text"
+          type={type}
           inputMode="numeric"
           pattern="[0-9]*"
           maxLength={1}
-          autoComplete={index === 0 ? 'one-time-code' : 'off'}
+          autoComplete={index === 0 ? autoComplete : 'off'}
           aria-label={`${ariaLabel} ${index + 1}/${length}`}
           value={value[index] ?? ''}
           disabled={disabled}

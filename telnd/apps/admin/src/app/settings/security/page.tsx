@@ -5,7 +5,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { api, ApiError } from '@/lib/api';
 import { useLanguage } from '@/components/language-provider';
 import Toast, { type ToastType } from '@/components/toast';
-import { OtpInput } from '@/components/otp-input';
+import { OtpInput, otpBoxStyle, otpFocusStyle } from '@/components/otp-input';
 import { type TranslationKey } from '@/lib/translations';
 
 interface DeviceSession {
@@ -46,6 +46,13 @@ interface TwoFaState {
   canManagePolicy: boolean;
   /** Unused recovery codes still on file (0 = regenerate is the only fix). */
   recoveryCodesRemaining: number;
+}
+
+interface PinState {
+  pinSet: boolean;
+  enforcedByAdmin: boolean;
+  policyRequired: boolean;
+  canManagePolicy: boolean;
 }
 
 interface ToastState {
@@ -311,6 +318,18 @@ export default function SecuritySettingsPage() {
   // The global "require 2FA for all admins" switch arms like every other
   // destructive toggle on this panel: first click confirms, second acts.
   const [policyArmed, setPolicyArmed] = useState(false);
+  // ── Security PIN (§14.44) ──
+  const [pinState, setPinState] = useState<PinState | null>(null);
+  const [pinBusy, setPinBusy] = useState<'setup' | 'policy' | 'disable' | null>(null);
+  const [pinValue, setPinValue] = useState('');
+  const [pinConfirm, setPinConfirm] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  // The global "require a security PIN" switch arms like every other hard
+  // toggle here: first click confirms, second acts.
+  const [pinPolicyArmed, setPinPolicyArmed] = useState(false);
+  // Turning the PIN off arms the same way — and the server then wants the
+  // PIN itself before it deletes anything.
+  const [pinDisableArmed, setPinDisableArmed] = useState(false);
   // Fresh recovery codes from the last enable/regenerate: shown once, only
   // until this panel is acknowledged. Never refetched — the server keeps
   // hashes only, so this state is the sole copy.
@@ -332,17 +351,36 @@ export default function SecuritySettingsPage() {
     loadTwoFa();
   }, [loadTwoFa]);
 
+  const loadPin = useCallback(async () => {
+    try {
+      const res = await api.get<{ success: boolean; data: PinState }>('/api/users/me/pin');
+      setPinState(res.data);
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    }
+  }, [showToast, t]);
+
+  useEffect(() => {
+    void loadPin();
+  }, [loadPin]);
+
   // Re-sync whenever the tab comes back into view. A backgrounded tab (or a
   // back/forward-cache restore) can hold this card from before an enable or
   // disable that happened elsewhere — the pill must never go stale.
   useEffect(() => {
     const sync = () => {
-      if (document.visibilityState === 'visible') void loadTwoFa();
+      if (document.visibilityState === 'visible') {
+        void loadTwoFa();
+        void loadPin();
+      }
     };
     // A back/forward-cache restore replays an old snapshot without ever
     // re-running the mount effect — catch that path too.
     const onPageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) void loadTwoFa();
+      if (e.persisted) {
+        void loadTwoFa();
+        void loadPin();
+      }
     };
     document.addEventListener('visibilitychange', sync);
     window.addEventListener('pageshow', onPageShow);
@@ -350,7 +388,7 @@ export default function SecuritySettingsPage() {
       document.removeEventListener('visibilitychange', sync);
       window.removeEventListener('pageshow', onPageShow);
     };
-  }, [loadTwoFa]);
+  }, [loadTwoFa, loadPin]);
 
   // SMS resend countdown — one tick per second while it runs.
   useEffect(() => {
@@ -526,6 +564,94 @@ export default function SecuritySettingsPage() {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
       setTwoFaBusy(null);
+    }
+  }
+
+  // ── Security PIN setup (§14.44) ──
+  // Creation only: a forgotten PIN comes off through an admin's reset, so
+  // this form never replaces an existing one (the server answers 409 and
+  // the reload flips the card to its "set" state). The two digits are
+  // handed in rather than read from state: a row's onComplete runs in the
+  // same batch as its onChange, when the state variable is still the old
+  // value — the other row's state is fresh because it was filled earlier.
+  async function runPinSetup(pin: string, confirm: string) {
+    if (pinBusy) return;
+    setPinError(null);
+    setPinBusy('setup');
+    try {
+      await api.post('/api/users/me/pin', { pin });
+      setPinValue('');
+      setPinConfirm('');
+      showToast('success', t('securityPin.savedToast'));
+      await loadPin();
+    } catch (err) {
+      setPinError(err instanceof ApiError ? err.message : t('common.failed'));
+      // A PIN may have appeared elsewhere (another tab, a reset race) —
+      // re-read so the card can't disagree with the server.
+      void loadPin();
+    } finally {
+      setPinBusy(null);
+    }
+  }
+
+  function submitPinSetup(pin: string, confirm: string) {
+    if (pinBusy) return;
+    if (pin.length !== 4) {
+      setPinError(t('securityPin.pinDigits'));
+      return;
+    }
+    if (confirm.length !== 4 || confirm !== pin) {
+      setPinError(t('securityPin.pinMismatch'));
+      return;
+    }
+    void runPinSetup(pin, confirm);
+  }
+
+  // Super admin: "require a security PIN for all admins" — two-click arm,
+  // same as the two-factor policy switch above.
+  async function handlePinPolicyToggle() {
+    if (!pinState || pinBusy) return;
+    if (!pinPolicyArmed) {
+      setPinPolicyArmed(true);
+      return;
+    }
+    setPinPolicyArmed(false);
+    const next = !pinState.policyRequired;
+    setPinBusy('policy');
+    try {
+      await api.post('/api/admin/pin-policy', { required: next });
+      showToast('success', next ? t('securityPin.policyToastOn') : t('securityPin.policyToastOff'));
+      await loadPin();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setPinBusy(null);
+    }
+  }
+
+  // Self-service: turn the PIN off. Two-click arm like every other hard
+  // toggle on this panel; the DELETE then passes through the central PIN
+  // interception, so the approval modal proves the digits before the
+  // server drops anything (and refuses outright while a requirement stands).
+  async function handlePinDisable() {
+    if (pinBusy) return;
+    if (!pinDisableArmed) {
+      setPinDisableArmed(true);
+      return;
+    }
+    setPinDisableArmed(false);
+    setPinBusy('disable');
+    try {
+      await api.delete('/api/users/me/pin');
+      showToast('success', t('securityPin.disabledToast'));
+      await loadPin();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+      // A requirement may have landed while the prompt was open — re-read
+      // so the card flips to its notice instead of offering a doomed button.
+      void loadPin();
+    } finally {
+      setPinBusy(null);
     }
   }
 
@@ -1326,6 +1452,223 @@ export default function SecuritySettingsPage() {
             </div>
           )}
 
+          {/* ── Security PIN (§14.44) — same 1rem rhythm as every other
+               card, so the logged-in devices card never sits flush. ── */}
+          {pinState && (
+            <Section
+              title={t('securityPin.cardTitle')}
+              description={t('securityPin.cardDesc')}
+              style={{ marginBottom: '1rem' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: pinState.pinSet ? '0.5rem' : '1rem' }}>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    padding: '0.1875rem 0.5rem',
+                    borderRadius: '999px',
+                    backgroundColor: pinState.pinSet ? 'var(--success-bg)' : 'var(--secondary-btn-bg)',
+                    color: pinState.pinSet ? 'var(--success-text)' : 'var(--muted-text)',
+                  }}
+                >
+                  {pinState.pinSet ? t('securityPin.statusSet') : t('securityPin.statusNotSet')}
+                </span>
+                {!pinState.pinSet && (pinState.enforcedByAdmin || pinState.policyRequired) && (
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent)' }}>
+                    {t('securityPin.requiredNotice')}
+                  </span>
+                )}
+              </div>
+
+              {pinState.pinSet ? (
+                <>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--muted-text)', lineHeight: 1.6, margin: 0 }}>
+                    {t('securityPin.resetNote')}
+                  </p>
+                  {/* While something demands the PIN there is nothing to
+                      turn off — say so instead of offering a button the
+                      server would refuse. */}
+                  {pinState.enforcedByAdmin || pinState.policyRequired ? (
+                    <p style={{ fontSize: '0.7875rem', color: 'var(--accent)', margin: '0.625rem 0 0', fontWeight: 600 }}>
+                      {t('securityPin.requiredNotice')}
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
+                      <button
+                        type="button"
+                        onClick={handlePinDisable}
+                        onBlur={() => setPinDisableArmed(false)}
+                        disabled={pinBusy !== null}
+                        aria-label={t('securityPin.disable')}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          padding: '0.5rem 1.125rem',
+                          borderRadius: '8px',
+                          fontSize: '0.8125rem',
+                          fontWeight: 600,
+                          backgroundColor: pinDisableArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                          color: pinDisableArmed ? 'var(--accent)' : 'var(--text-main)',
+                          border: pinDisableArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          opacity: pinBusy ? 0.7 : 1,
+                          cursor: pinBusy ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {pinBusy === 'disable' ? (
+                          <Spinner size={14} />
+                        ) : pinDisableArmed ? (
+                          t('account.confirmStatus')
+                        ) : (
+                          t('securityPin.disable')
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <form onSubmit={(e) => { e.preventDefault(); submitPinSetup(pinValue, pinConfirm); }}>
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                      <label htmlFor="security-pin" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.375rem' }}>
+                        {t('securityPin.newPin')}
+                      </label>
+                      <OtpInput
+                        length={4}
+                        value={pinValue}
+                        onChange={(v) => {
+                          setPinValue(v);
+                          setPinError(null);
+                        }}
+                        onComplete={(v) => {
+                          // Auto-submit only once the other row is full
+                          // too; a lone first row filling is no mistake.
+                          if (pinConfirm.length === 4) submitPinSetup(v, pinConfirm);
+                        }}
+                        ariaLabel={t('securityPin.newPin')}
+                        firstInputId="security-pin"
+                        type="password"
+                        autoComplete="off"
+                        style={otpBoxStyle}
+                        focusStyle={otpFocusStyle}
+                      />
+                    </div>
+                    <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                      <label htmlFor="security-pin-confirm" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.375rem' }}>
+                        {t('securityPin.confirmPin')}
+                      </label>
+                      <OtpInput
+                        length={4}
+                        value={pinConfirm}
+                        onChange={(v) => {
+                          setPinConfirm(v);
+                          setPinError(null);
+                        }}
+                        onComplete={(v) => {
+                          if (pinValue.length === 4) submitPinSetup(pinValue, v);
+                        }}
+                        ariaLabel={t('securityPin.confirmPin')}
+                        firstInputId="security-pin-confirm"
+                        type="password"
+                        autoComplete="off"
+                        style={otpBoxStyle}
+                        focusStyle={otpFocusStyle}
+                      />
+                    </div>
+                  </div>
+                  {pinError && (
+                    <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--error-text)', margin: '0.625rem 0 0' }}>
+                      {pinError}
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.875rem' }}>
+                    <button
+                      type="submit"
+                      disabled={pinBusy !== null}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1.125rem',
+                        borderRadius: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#ffffff',
+                        border: 'none',
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        cursor: pinBusy ? 'not-allowed' : 'pointer',
+                        opacity: pinBusy ? 0.7 : 1,
+                      }}
+                    >
+                      {pinBusy === 'setup' ? <Spinner size={14} /> : null}
+                      {pinBusy === 'setup' ? t('securityPin.saving') : t('securityPin.save')}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Super admin only: require a security PIN for every admin
+                  account. Two-click arm, same as every other hard toggle. */}
+              {pinState.canManagePolicy && (
+                <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 0, flex: '1 1 300px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                          {t('securityPin.policyTitle')}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            padding: '0.1875rem 0.5rem',
+                            borderRadius: '999px',
+                            backgroundColor: pinState.policyRequired ? 'var(--success-bg)' : 'var(--secondary-btn-bg)',
+                            color: pinState.policyRequired ? 'var(--success-text)' : 'var(--muted-text)',
+                          }}
+                        >
+                          {pinState.policyRequired ? t('securityPin.policyOn') : t('securityPin.policyOff')}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: '0.7875rem', color: 'var(--muted-text)', margin: '0.25rem 0 0', lineHeight: 1.6 }}>
+                        {t('securityPin.policyDesc')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePinPolicyToggle}
+                      onBlur={() => setPinPolicyArmed(false)}
+                      disabled={pinBusy !== null}
+                      aria-label={pinState.policyRequired ? t('securityPin.policyTurnOff') : t('securityPin.policyTurnOn')}
+                      style={{
+                        padding: '0.5rem 1.125rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8125rem',
+                        fontWeight: 600,
+                        flexShrink: 0,
+                        backgroundColor: pinPolicyArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                        color: pinPolicyArmed ? 'var(--accent)' : 'var(--text-main)',
+                        border: pinPolicyArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                        opacity: pinBusy ? 0.7 : 1,
+                        cursor: pinBusy ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {pinBusy === 'policy' ? (
+                        <Spinner size={14} />
+                      ) : pinPolicyArmed ? (
+                        t('account.confirmStatus')
+                      ) : pinState.policyRequired ? (
+                        t('securityPin.policyTurnOff')
+                      ) : (
+                        t('securityPin.policyTurnOn')
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </Section>
+          )}
+
           {/* ── Logged in devices ── */}
           <Section title={t('security.devicesTitle')} description={t('security.devicesDesc')}>
             {data.sessions.length === 0 ? (
@@ -1450,7 +1793,7 @@ export default function SecuritySettingsPage() {
   );
 }
 
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Section({ title, description, children, style }: { title: string; description?: string; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div
       style={{
@@ -1460,6 +1803,7 @@ function Section({ title, description, children }: { title: string; description?
         padding: '1.25rem 1.5rem',
         height: '100%',
         boxSizing: 'border-box',
+        ...style,
       }}
     >
       <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.25rem' }}>

@@ -9,9 +9,11 @@ interface SidebarProps {
   collapsed: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** Raise the screen lock (§14.44). */
+  onLock?: () => void;
 }
 
-export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }: SidebarProps) {
+export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }: SidebarProps) {
   const pathname = usePathname();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const { t } = useLanguage();
@@ -110,9 +112,15 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }: Sideba
       <aside
         ref={sidebarRef}
         className={`admin-sidebar${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}
+        // Flex column so the screen-lock footer pins to the true foot of
+        // the rail even when the nav is short (collapsed). The sections
+        // only use paddings, never margins, so nothing's collapse changes.
+        style={{ display: 'flex', flexDirection: 'column' }}
       >
+        {/* Sections keep their full height (flex-shrink off) so the rail
+            scrolls instead of squeezing them. */}
         {navSections.map((section) => (
-          <div key={section.title}>
+          <div key={section.title} style={{ flexShrink: 0 }}>
             <div className="sidebar-section-title">{section.title}</div>
             <ul className="sidebar-nav">
               {section.items.map((item) => {
@@ -160,6 +168,45 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }: Sideba
             </ul>
           </div>
         ))}
+
+        {/* Screen lock (14.44) — sticky to the foot of the rail: it stays
+            visible while the nav scrolls under it, and settles into flow
+            at the end when the rail fits (or is collapsed). */}
+        <div
+          style={{
+            position: 'sticky',
+            bottom: 0,
+            marginTop: 'auto',
+            flexShrink: 0,
+            backgroundColor: 'var(--sidebar-bg)',
+            borderTop: '1px solid var(--sidebar-border)',
+            padding: '0.5rem',
+          }}
+        >
+          <button
+            type="button"
+            onClick={onLock}
+            aria-label={t('screenLock.lockButton')}
+            title={t('screenLock.lockButton')}
+            className="sidebar-item"
+            style={{
+              width: '100%',
+              background: 'none',
+              border: 'none',
+              fontFamily: 'inherit',
+              color: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            <span className="sidebar-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </span>
+            <span className="sidebar-label">{t('screenLock.lockLabel')}</span>
+          </button>
+        </div>
       </aside>
     </>
   );

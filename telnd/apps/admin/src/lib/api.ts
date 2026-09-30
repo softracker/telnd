@@ -4,6 +4,8 @@
 // is blocked as mixed content, refused by CORS, and its SameSite=Lax
 // cookie never crosses sites). Server → direct to the API; server-side
 // fetches run on this machine, so localhost works behind any tunnel.
+import { requestPinPrompt } from './security-pin';
+
 const API_BASE_URL =
   typeof window === 'undefined'
     ? process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
@@ -11,6 +13,8 @@ const API_BASE_URL =
 
 interface RequestOptions extends RequestInit {
   token?: string;
+  /** Attached once the PIN modal approved — internal, set by the retry. */
+  pin?: string;
 }
 
 export class ApiError extends Error {
@@ -29,7 +33,7 @@ export async function apiRequest<T>(
   endpoint: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const { token, ...fetchOptions } = options;
+  const { token, pin, ...fetchOptions } = options;
 
   const headers = new Headers(fetchOptions.headers);
 
@@ -39,6 +43,9 @@ export async function apiRequest<T>(
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (pin) {
+    headers.set('X-Admin-Pin', pin);
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -53,6 +60,31 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const data = await response.json().catch(() => null);
+    // Sensitive endpoints answer PIN_REQUIRED / PIN_INVALID when the actor
+    // has a security PIN on file (§14.44). Open the approval modal and
+    // retry this exact request once with the verified PIN — one choke
+    // point, so every present and future sensitive action is covered.
+    // Setup/verify are excluded: there the check IS the request (the lock
+    // screen would loop forever otherwise). The self-service disable —
+    // DELETE /users/me/pin — is a sensitive action like any other and
+    // deliberately stays inside the flow.
+    const code = data?.error?.code;
+    const isPinChallenge = code === 'PIN_REQUIRED' || code === 'PIN_INVALID';
+    const isPinSelfCheck =
+      endpoint.endsWith('/users/me/pin/verify') ||
+      (endpoint.endsWith('/users/me/pin') && fetchOptions.method !== 'DELETE');
+    if (
+      isPinChallenge &&
+      !isPinSelfCheck &&
+      options.pin === undefined &&
+      typeof window !== 'undefined' &&
+      !(fetchOptions.body instanceof FormData)
+    ) {
+      const approved = await requestPinPrompt(code === 'PIN_INVALID' ? 'invalid' : 'required');
+      if (approved !== null) {
+        return apiRequest<T>(endpoint, { ...options, pin: approved });
+      }
+    }
     throw new ApiError(
       data?.error?.message || data?.message || `API error: ${response.status}`,
       response.status,
