@@ -51,9 +51,16 @@ export const checkResetTokenSchema = z.object({
 // A 6-digit code from the authenticator app (TOTP), an SMS OTP, or an
 // emailed OTP. `method` is only supplied while enrolling — an active
 // challenge already knows its method from the user row.
+// The challenge at sign-in: a 6-digit code from the enrolled factor, or —
+// when that factor is gone — one of the single-use recovery codes handed
+// out when 2FA was set up. At least one must be present; the handler
+// prefers the recovery code when both arrive.
 export const twoFactorVerifySchema = z.object({
-  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits').optional(),
+  recoveryCode: z.string().min(8).max(32).optional(),
   method: z.enum(['totp', 'sms', 'email']).optional(),
+}).refine((d) => Boolean(d.code || d.recoveryCode), {
+  message: 'A verification code or a recovery code is required',
 });
 
 // Turning 2FA on from the Security page: prove possession of the chosen

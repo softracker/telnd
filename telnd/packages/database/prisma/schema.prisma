@@ -54,6 +54,7 @@ model User {
   refreshTokens     RefreshToken[]
   sessions          Session[]
   passwordTokens    PasswordToken[]
+  twoFactorRecoveryCodes TwoFactorRecoveryCode[]
   country           Country?   @relation(fields: [countryId], references: [id])
   
   // New relations
@@ -146,6 +147,25 @@ model PasswordToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+// One-time recovery codes for two-factor authentication (§14.42) — the
+// fallback when the enrolled method itself is lost (phone gone, mailbox
+// locked out, authenticator wiped). Eight codes per set, each kept only as
+// a userId-scoped SHA-256 hash (same scheme as the SMS OTP): plaintext
+// exists in exactly one response, the one that creates the set. Spending
+// a code stamps usedAt; rotating the set deletes every old row, so a
+// regeneration revokes all previously saved codes.
+model TwoFactorRecoveryCode {
+  id        String   @id @default(uuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model RefreshToken {

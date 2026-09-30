@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFactorDisableSchema } from '@telnd/validation';
 import { sendPasswordResetEmail, isSmtpConfigured } from '../lib/email';
+import { deleteRecoveryCodes, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
 import { getIp } from '../lib/getIp';
 import { backfillSessionLocations } from '../lib/geoLocation';
@@ -366,11 +367,12 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
   }
 
-  const [policyRequired, adminRole, gateway, emailReady] = await Promise.all([
+  const [policyRequired, adminRole, gateway, emailReady, recoveryLeft] = await Promise.all([
     twoFactorPolicyRequired(),
     prisma.adminUser.findUnique({ where: { userId }, include: { role: true } }),
     getSmsGateway(),
     isSmtpConfigured(),
+    unusedRecoveryCodeCount(userId),
   ]);
 
   // TEMPORARY DIAGNOSTIC: exactly what this request read and replied, so a
@@ -403,6 +405,9 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
       policyRequired,
       canDisable: user.twoFactorEnabled && !user.twoFactorEnforced && !policyRequired,
       canManagePolicy: hasPermission(adminRole?.role, '*'),
+      // How many unused recovery codes are still in the set — the card
+      // shows the count and nudges a regenerate once they run out.
+      recoveryCodesRemaining: recoveryLeft,
     },
   });
 });
@@ -517,7 +522,36 @@ userRoutes.post(
       },
     });
     await logSelfService(c, c.get('user'), 'TWO_FACTOR_ENABLED', { method: body.method });
-    return c.json({ success: true, data: { enabled: true, method: body.method } });
+    // The first (and only) showing of the recovery codes — plaintext rides
+    // in this response, storage keeps hashes.
+    const recoveryCodes = await rotateRecoveryCodes(userId);
+    return c.json({ success: true, data: { enabled: true, method: body.method, recoveryCodes } });
+  },
+);
+
+// Regenerate the recovery-code set: every previously saved code is deleted
+// in the process, which is what makes this a revocation as well as a
+// refill. The plaintext appears only in this response. Available whenever
+// 2FA is on; 3/min so a refresh loop can't churn out sets.
+userRoutes.post(
+  '/me/2fa/recovery-codes',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 3 }),
+  async (c) => {
+    const userId = c.get('userId') as string;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { twoFactorEnabled: true } });
+    if (!user) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+    }
+    if (!user.twoFactorEnabled) {
+      return c.json({
+        success: false,
+        error: { code: 'TWO_FACTOR_NOT_ENABLED', message: 'Turn on two-factor authentication first.' },
+      }, 400);
+    }
+    const recoveryCodes = await rotateRecoveryCodes(userId);
+    await logSelfService(c, c.get('user'), 'TWO_FACTOR_RECOVERY_CODES_REGENERATED', {});
+    return c.json({ success: true, data: { recoveryCodes } });
   },
 );
 
@@ -581,6 +615,8 @@ userRoutes.post(
       data: { twoFactorEnabled: false, twoFactorMethod: null, twoFactorSecret: null },
     });
     clearOtp(userId);
+    // Codes are meaningless without the second factor — they die with it.
+    await deleteRecoveryCodes(userId);
     await logSelfService(c, c.get('user'), 'TWO_FACTOR_DISABLED', {});
     return c.json({ success: true, data: {} });
   },

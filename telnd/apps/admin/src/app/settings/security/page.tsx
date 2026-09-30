@@ -44,6 +44,8 @@ interface TwoFaState {
   policyRequired: boolean;
   canDisable: boolean;
   canManagePolicy: boolean;
+  /** Unused recovery codes still on file (0 = regenerate is the only fix). */
+  recoveryCodesRemaining: number;
 }
 
 interface ToastState {
@@ -297,7 +299,7 @@ export default function SecuritySettingsPage() {
 
   // ── Two-factor authentication ──
   const [twoFa, setTwoFa] = useState<TwoFaState | null>(null);
-  const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | null>(null);
+  const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | 'codes' | null>(null);
   // Which enrollment panel is open: authenticator app (QR) or SMS delivery.
   const [setupPanel, setSetupPanel] = useState<'totp' | 'sms' | 'email' | null>(null);
   const [setup, setSetup] = useState<{ otpauthUri: string; secret: string } | null>(null);
@@ -309,6 +311,13 @@ export default function SecuritySettingsPage() {
   // The global "require 2FA for all admins" switch arms like every other
   // destructive toggle on this panel: first click confirms, second acts.
   const [policyArmed, setPolicyArmed] = useState(false);
+  // Fresh recovery codes from the last enable/regenerate: shown once, only
+  // until this panel is acknowledged. Never refetched — the server keeps
+  // hashes only, so this state is the sole copy.
+  const [savedCodes, setSavedCodes] = useState<string[] | null>(null);
+  const [codesArmed, setCodesArmed] = useState(false);
+  const [codesSavedOk, setCodesSavedOk] = useState(false);
+  const [codesCopied, setCodesCopied] = useState(false);
 
   const loadTwoFa = useCallback(async () => {
     try {
@@ -404,7 +413,17 @@ export default function SecuritySettingsPage() {
     if (value.length !== 6 || !setupPanel || twoFaBusy) return;
     setTwoFaBusy('enable');
     try {
-      await api.post('/api/users/me/2fa/enable', { method: setupPanel, code: value });
+      const res = await api.post<{ success: boolean; data: { recoveryCodes?: string[] } }>(
+        '/api/users/me/2fa/enable',
+        { method: setupPanel, code: value },
+      );
+      // The one showing of the fresh set: the save panel replaces the
+      // setup panel below until it is acknowledged.
+      if (res.data.recoveryCodes && res.data.recoveryCodes.length > 0) {
+        setSavedCodes(res.data.recoveryCodes);
+        setCodesSavedOk(false);
+        setCodesCopied(false);
+      }
       // Flip the card straight from the confirmed response — the pill and
       // the enable/disable options switch immediately and never depend on
       // the follow-up refetch succeeding.
@@ -442,12 +461,45 @@ export default function SecuritySettingsPage() {
     setTwoFaBusy('disable');
     try {
       await api.post('/api/users/me/2fa/disable', body);
+      // The server deleted the codes with the factor they belonged to —
+      // drop any panel still showing the old set.
+      setSavedCodes(null);
+      setCodesArmed(false);
       setTwoFa((prev) =>
         prev ? { ...prev, enabled: false, method: null, pendingSetup: false, canDisable: false } : prev,
       );
       showToast('success', t('twoFactor.disabledToast'));
       setDisableOpen(false);
       setDisableCredential('');
+      await loadTwoFa();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+      void loadTwoFa();
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  // Rotate the recovery-code set. Two-click like every other revoking
+  // action on this panel: the first press warns (the old codes die), the
+  // second performs it and shows the new set once.
+  async function handleRegenerateCodes() {
+    if (!twoFa || twoFaBusy) return;
+    if (!codesArmed) {
+      setCodesArmed(true);
+      return;
+    }
+    setCodesArmed(false);
+    setTwoFaBusy('codes');
+    try {
+      const res = await api.post<{ success: boolean; data: { recoveryCodes: string[] } }>(
+        '/api/users/me/2fa/recovery-codes',
+        {},
+      );
+      setSavedCodes(res.data.recoveryCodes);
+      setCodesSavedOk(false);
+      setCodesCopied(false);
+      showToast('success', t('twoFactor.codesRotatedToast'));
       await loadTwoFa();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
@@ -696,6 +748,165 @@ export default function SecuritySettingsPage() {
                     </span>
                   )}
                 </div>
+
+                {/* Recovery codes: how many are unused, plus the two-click
+                    regenerate (which revokes every previously saved code).
+                    While a fresh set is being shown, the save panel below
+                    takes this spot over instead. */}
+                {twoFa.enabled && !savedCodes && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        color: twoFa.recoveryCodesRemaining > 0 ? 'var(--text-muted)' : 'var(--accent)',
+                      }}
+                    >
+                      {twoFa.recoveryCodesRemaining > 0
+                        ? t('twoFactor.codesRemaining', { n: twoFa.recoveryCodesRemaining })
+                        : t('twoFactor.codesNone')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRegenerateCodes}
+                      disabled={twoFaBusy !== null}
+                      style={{
+                        ...tfBtnStyle,
+                        padding: '0.375rem 0.75rem',
+                        fontSize: '0.75rem',
+                        backgroundColor: codesArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                        color: codesArmed ? 'var(--accent)' : 'var(--text-main)',
+                        border: codesArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                        opacity: twoFaBusy ? 0.7 : 1,
+                        cursor: twoFaBusy ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {twoFaBusy === 'codes' && <Spinner size={14} />}
+                      {twoFaBusy === 'codes'
+                        ? t('twoFactor.generating')
+                        : codesArmed
+                          ? t('common.confirm')
+                          : t('twoFactor.generateCodes')}
+                    </button>
+                  </div>
+                )}
+
+                {/* The one showing of a fresh set: plaintext exists only
+                    in the response that created it, so this panel is the
+                    only place the codes can ever be read. */}
+                {savedCodes && savedCodes.length > 0 && (
+                  <div
+                    style={{
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '10px',
+                      padding: '1rem',
+                      marginBottom: '0.875rem',
+                    }}
+                  >
+                    <p style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 0.375rem' }}>
+                      {t('twoFactor.saveCodesTitle')}
+                    </p>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 0.875rem', lineHeight: 1.6 }}>
+                      {t('twoFactor.saveCodesDesc')}
+                    </p>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: '0.5rem',
+                        backgroundColor: 'var(--secondary-btn-bg)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '0.75rem 1rem',
+                        marginBottom: '0.875rem',
+                      }}
+                    >
+                      {savedCodes.map((single, idx) => (
+                        <code
+                          key={`${idx}-${single}`}
+                          style={{
+                            textAlign: 'center',
+                            fontSize: '0.875rem',
+                            letterSpacing: '0.1em',
+                            color: 'var(--text-main)',
+                            userSelect: 'all',
+                          }}
+                        >
+                          {single}
+                        </code>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(savedCodes.join('\n')).then(() => {
+                            setCodesCopied(true);
+                            setTimeout(() => setCodesCopied(false), 2000);
+                          });
+                        }}
+                        style={tfBtnStyle}
+                      >
+                        {codesCopied ? t('twoFactor.codesCopied') : t('twoFactor.copyCodes')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const blob = new Blob([`${savedCodes.join('\n')}\n`], { type: 'text/plain' });
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = 'telnd-recovery-codes.txt';
+                          link.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={tfBtnStyle}
+                      >
+                        {t('twoFactor.downloadCodes')}
+                      </button>
+                    </div>
+
+                    <label
+                      style={{
+                        display: 'flex',
+                        gap: '0.5rem',
+                        alignItems: 'flex-start',
+                        fontSize: '0.8125rem',
+                        color: 'var(--text-main)',
+                        marginBottom: '0.875rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={codesSavedOk}
+                        onChange={(e) => setCodesSavedOk(e.target.checked)}
+                        style={{ marginTop: '0.125rem', accentColor: '#0d9488' }}
+                      />
+                      {t('twoFactor.codesSavedCheck')}
+                    </label>
+
+                    <button
+                      type="button"
+                      disabled={!codesSavedOk}
+                      onClick={() => {
+                        setSavedCodes(null);
+                        setCodesSavedOk(false);
+                      }}
+                      style={{
+                        ...tfBtnStyle,
+                        backgroundColor: 'var(--accent)',
+                        color: '#ffffff',
+                        border: '1px solid var(--accent)',
+                        opacity: codesSavedOk ? 1 : 0.6,
+                        cursor: codesSavedOk ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {t('twoFactor.codesDone')}
+                    </button>
+                  </div>
+                )}
 
                 {!twoFa.enabled ? (
                   <div>

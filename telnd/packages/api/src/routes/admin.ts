@@ -4,8 +4,9 @@ import { prisma } from '@telnd/database';
 import { authMiddleware, roleGuard, requireAdmin, requirePermission, requireAnyPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
-import { sendAdminInviteEmail } from '../lib/email';
+import { sendAdminInviteEmail, sendTwoFactorNoticeEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
+import { deleteRecoveryCodes } from '../lib/recoveryCodes';
 import { clearOtp } from '../lib/twoFactor';
 
 type AdminEnv = {
@@ -554,12 +555,33 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
   }
 
+  // The wipe below only means something when the account was actually
+  // enrolled — remember that before the update for the notice.
+  const wasEnrolled = user.twoFactorEnabled;
   const data = required
     ? { twoFactorEnforced: true }
     : { twoFactorEnforced: false, twoFactorEnabled: false, twoFactorMethod: null, twoFactorSecret: null };
   const updated = await prisma.user.update({ where: { id }, data });
   // A code sent for the released enrollment must not linger either.
   clearOtp(user.id);
+
+  if (!required) {
+    // Recovery codes are part of the factor they belong to — they die with it.
+    await deleteRecoveryCodes(user.id);
+    const targetEmail = user.email;
+    if (wasEnrolled && targetEmail) {
+      // The owner did not turn this off themselves: tell them, so a
+      // covert removal cannot go unnoticed. Resolve who acted for the
+      // wording; fire-and-forget so a slow or dead mail server never
+      // stalls or fails the administrative action.
+      void prisma.user
+        .findUnique({ where: { id: actor.userId }, select: { email: true } })
+        .then((actorUser) => sendTwoFactorNoticeEmail(targetEmail, actorUser?.email ?? null))
+        .catch(() => {
+          // Deliberately swallowed — see above.
+        });
+    }
+  }
 
   await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR' : 'DISABLE_TWO_FACTOR', 'user', id, {}, c);
   return c.json({

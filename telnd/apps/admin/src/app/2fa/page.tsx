@@ -25,6 +25,8 @@ interface ChallengeInfo {
   emailMasked: string | null;
   emailAvailable: boolean;
   emailConfigured: boolean;
+  /** An enrolled challenge offers the recovery-code path only when some remain. */
+  recoveryCodesAvailable: boolean;
 }
 
 interface PendingSetup {
@@ -33,6 +35,12 @@ interface PendingSetup {
 }
 
 type Mode = 'challenge' | 'choose' | 'setup-totp' | 'setup-sms' | 'setup-email';
+
+/** What `/2fa/challenge/verify` replies: the session user, sometimes plus a new code set. */
+type VerifyResult = {
+  user: Parameters<ReturnType<typeof useAuth>['completeLogin']>[0];
+  recoveryCodes?: string[];
+};
 
 /**
  * The screen sign-in stops at. Reached from /login when the password was
@@ -57,6 +65,17 @@ export default function TwoFactorPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [resendIn, setResendIn] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [recoveryValue, setRecoveryValue] = useState('');
+  // A verify response can carry a fresh recovery-code set (just enrolled,
+  // or the last code was just spent). The save screen must be acknowledged
+  // before the sign-in continues, so the payload parks here first.
+  const [pendingComplete, setPendingComplete] = useState<{
+    user: Parameters<typeof completeLogin>[0];
+    codes: string[];
+  } | null>(null);
+  const [codesCopied, setCodesCopied] = useState(false);
+  const [codesSavedOk, setCodesSavedOk] = useState(false);
   const codeRef = useRef<OtpInputHandle>(null);
 
   const loadChallenge = useCallback(async () => {
@@ -158,15 +177,47 @@ export default function TwoFactorPage() {
       if (info?.requiresEnrollment) {
         body.method = mode === 'setup-totp' ? 'totp' : mode === 'setup-email' ? 'email' : 'sms';
       }
-      const res = await api.post<{ success: boolean; data: { user: Parameters<typeof completeLogin>[0] } }>(
-        '/api/auth/2fa/challenge/verify',
-        body,
-      );
-      completeLogin(res.data.user);
+      const res = await api.post<{ success: boolean; data: VerifyResult }>('/api/auth/2fa/challenge/verify', body);
+      finishVerify(res.data);
     } catch (err) {
       failWith(err);
       setCode('');
       setTimeout(() => codeRef.current?.focus(), 50);
+    } finally {
+      setBusy(false);
+      setBusyKind(null);
+    }
+  }
+
+  // The sign-in is only half done when the response carries new recovery
+  // codes: park it until the save screen is acknowledged, otherwise go
+  // straight into the app.
+  function finishVerify(data: VerifyResult): void {
+    if (data.recoveryCodes && data.recoveryCodes.length > 0) {
+      setPendingComplete({ user: data.user, codes: data.recoveryCodes });
+    } else {
+      completeLogin(data.user);
+    }
+  }
+
+  // The lost-factor path: one single-use recovery code instead of the
+  // enrolled method. The server answers unknown and spent codes alike, so
+  // a failure just clears the field for another try.
+  async function runRecovery(e: FormEvent) {
+    e.preventDefault();
+    const digits = recoveryValue.replace(/\D/g, '');
+    if (busy || digits.length !== 10) return;
+    setError('');
+    setBusy(true);
+    setBusyKind('verify');
+    try {
+      const res = await api.post<{ success: boolean; data: VerifyResult }>('/api/auth/2fa/challenge/verify', {
+        recoveryCode: digits,
+      });
+      finishVerify(res.data);
+    } catch (err) {
+      failWith(err);
+      setRecoveryValue('');
     } finally {
       setBusy(false);
       setBusyKind(null);
@@ -258,7 +309,113 @@ export default function TwoFactorPage() {
 
   let body: React.ReactNode;
 
-  if (expired) {
+  if (pendingComplete) {
+    // The new codes exist in plaintext only in the response that issued
+    // them — this screen is the one chance to keep them. No other exit:
+    // the session below is already created server-side, so leaving means
+    // acknowledging the save first.
+    const codes = pendingComplete.codes;
+    const copyCodes = () => {
+      navigator.clipboard?.writeText(codes.join('\n')).then(() => {
+        setCodesCopied(true);
+        setTimeout(() => setCodesCopied(false), 2000);
+      });
+    };
+    const downloadCodes = () => {
+      const blob = new Blob([`${codes.join('\n')}\n`], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'telnd-recovery-codes.txt';
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+    body = (
+      <div>
+        <p style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: 700, color: '#111827' }}>
+          {t('twoFactor.saveCodesTitle')}
+        </p>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
+          {t('twoFactor.saveCodesDesc')}
+        </p>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+            gap: '0.5rem',
+            background: '#f9fafb',
+            border: '1px solid #e5e7eb',
+            borderRadius: '10px',
+            padding: '0.875rem 1rem',
+            marginBottom: '1rem',
+          }}
+        >
+          {codes.map((single, idx) => (
+            <code
+              key={`${idx}-${single}`}
+              style={{
+                textAlign: 'center',
+                fontSize: '0.9375rem',
+                letterSpacing: '0.12em',
+                color: '#111827',
+                userSelect: 'all',
+              }}
+            >
+              {single}
+            </code>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+          <button type="button" onClick={copyCodes} style={{ ...secondaryButton, flex: 1 }}>
+            {codesCopied ? t('twoFactor.codesCopied') : t('twoFactor.copyCodes')}
+          </button>
+          <button type="button" onClick={downloadCodes} style={{ ...secondaryButton, flex: 1 }}>
+            {t('twoFactor.downloadCodes')}
+          </button>
+        </div>
+
+        <label
+          style={{
+            display: 'flex',
+            gap: '0.5rem',
+            alignItems: 'flex-start',
+            fontSize: '0.8125rem',
+            color: '#374151',
+            marginBottom: '1rem',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={codesSavedOk}
+            onChange={(e) => setCodesSavedOk(e.target.checked)}
+            style={{ marginTop: '0.125rem', accentColor: '#0d9488' }}
+          />
+          {t('twoFactor.codesSavedCheck')}
+        </label>
+
+        <button
+          type="button"
+          disabled={!codesSavedOk}
+          onClick={() => {
+            const user = pendingComplete.user;
+            setPendingComplete(null);
+            setCodesSavedOk(false);
+            completeLogin(user);
+          }}
+          style={{
+            ...primaryButton,
+            cursor: codesSavedOk ? 'pointer' : 'not-allowed',
+            opacity: codesSavedOk ? 1 : 0.6,
+          }}
+        >
+          {t('twoFactor.codesDone')}
+        </button>
+      </div>
+    );
+  } else if (expired) {
     body = (
       <div>
         <div
@@ -640,6 +797,74 @@ export default function TwoFactorPage() {
         {backToLogin}
       </form>
     );
+  } else if (useRecovery && info.recoveryCodesAvailable) {
+    // The lost-factor form, reached from the challenge by someone whose
+    // phone, inbox or authenticator is gone. Ten digits in one field —
+    // not the six-box OTP row, whose shape would reject a recovery code.
+    body = (
+      <form onSubmit={runRecovery}>
+        <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#6b7280' }}>
+          {t('twoFactor.recoveryHelp')}
+        </p>
+
+        <label
+          htmlFor="recovery-code"
+          style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#374151', marginBottom: '0.375rem' }}
+        >
+          {t('twoFactor.recoveryLabel')}
+        </label>
+        <input
+          id="recovery-code"
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          spellCheck={false}
+          autoFocus
+          value={recoveryValue}
+          onChange={(e) => setRecoveryValue(e.target.value)}
+          disabled={busy}
+          placeholder="1234567890"
+          style={{
+            width: '100%',
+            height: '44px',
+            borderRadius: '8px',
+            border: '1px solid #d1d5db',
+            padding: '0 0.875rem',
+            fontSize: '1rem',
+            letterSpacing: '0.15em',
+            color: '#111827',
+            background: '#ffffff',
+            outline: 'none',
+          }}
+        />
+        <button
+          type="submit"
+          disabled={busy || recoveryValue.replace(/\D/g, '').length !== 10}
+          style={{ ...primaryButton, marginTop: '1rem' }}
+        >
+          {busyKind === 'verify' ? <Spinner /> : null}
+          {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
+        </button>
+
+        <div style={{ marginTop: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setUseRecovery(false);
+              setRecoveryValue('');
+              setError('');
+            }}
+            disabled={busy}
+            style={secondaryButton}
+          >
+            {t('twoFactor.back')}
+          </button>
+        </div>
+
+        {errorBox}
+        {backToLogin}
+      </form>
+    );
   } else {
     // Active challenge (already enrolled) — the stored method decides the
     // form: TOTP asks for the app code, SMS and email send an OTP first.
@@ -695,6 +920,32 @@ export default function TwoFactorPage() {
               </button>
             )}
           </>
+        )}
+
+        {info.recoveryCodesAvailable && (
+          <button
+            type="button"
+            onClick={() => {
+              setUseRecovery(true);
+              setError('');
+            }}
+            disabled={busy}
+            style={{
+              display: 'block',
+              width: '100%',
+              marginTop: '1rem',
+              padding: 0,
+              background: 'none',
+              border: 'none',
+              color: '#0d9488',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              textAlign: 'center',
+              cursor: busy ? 'default' : 'pointer',
+            }}
+          >
+            {t('twoFactor.useRecovery')}
+          </button>
         )}
 
         {errorBox}

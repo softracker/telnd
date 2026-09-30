@@ -302,6 +302,40 @@ export async function sendPasswordResetEmail(params: PasswordResetParams): Promi
   return sendEmail(to, subject, html);
 }
 
+/**
+ * Security notice sent to the account owner when a super admin turns their
+ * two-factor authentication off (release or turn-off from the Admins list).
+ * The account holder never did this themselves, so the mail says exactly
+ * that and tells them who to contact — a covert reset must not be able to
+ * go unnoticed. Fire-and-forget at the call site: a mail hiccup never
+ * fails the administrative action.
+ */
+export async function sendTwoFactorNoticeEmail(to: string, adminEmail: string | null): Promise<boolean> {
+  const appName = (await getApplicationName()) || 'TELND';
+  const subject = `${appName} two-factor authentication was turned off`;
+  const actor = adminEmail ? `by <strong>${escapeHtml(adminEmail)}</strong>` : 'by an administrator';
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Two-factor authentication turned off</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Two-factor authentication on your ${escapeHtml(appName)} account was turned off ${actor}. Your authenticator app, SMS and email codes, and your recovery codes all stopped working — the next sign-in will only ask for your password.</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">You can set two-factor authentication up again from <strong>Settings &rarr; Security</strong>.</p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">If this wasn't you, contact your administrator immediately — someone else may have accessed your account.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
 export async function testSmtpConnection(config: SmtpConfig): Promise<{ success: boolean; error?: string }> {
   try {
     const transportOptions: any = {

@@ -11,6 +11,7 @@ import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
 import { isSmtpConfigured } from '../lib/email';
+import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import {
   countVerifyAttempt,
@@ -414,7 +415,13 @@ authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
   if (!user) return challengeExpired(c);
 
-  const [gateway, emailReady] = await Promise.all([getSmsGateway(), isSmtpConfigured()]);
+  const [gateway, emailReady, recoveryLeft] = await Promise.all([
+    getSmsGateway(),
+    isSmtpConfigured(),
+    // Only an enrolled challenge can spend one — an enrollment screen has
+    // no set yet.
+    pending.purpose === '2fa' ? unusedRecoveryCodeCount(user.id) : Promise.resolve(0),
+  ]);
   return c.json({
     success: true,
     data: {
@@ -426,6 +433,7 @@ authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async
       emailMasked: maskEmail(user.email),
       emailAvailable: Boolean(user.email),
       emailConfigured: emailReady,
+      recoveryCodesAvailable: recoveryLeft > 0,
     },
   });
 });
@@ -510,7 +518,32 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
   let ok = false;
   let otpReason: string | null = null;
 
-  if (pending.purpose === '2fa') {
+  if (body.recoveryCode) {
+    // The enrolled account's escape hatch: a single-use recovery code when
+    // the method itself is gone (phone wiped, mailbox locked out,
+    // authenticator uninstalled). Unknown, spent and malformed codes all
+    // answer the same way, the attempt cap above already counted this try,
+    // and a successful spend flows into the shared tail exactly like a
+    // normal verify — including the backfill when it was the last one.
+    if (pending.purpose !== '2fa') {
+      return c.json({
+        success: false,
+        error: {
+          code: 'RECOVERY_UNAVAILABLE',
+          message: 'Recovery codes are created when two-factor authentication is set up. Enter the code from your method instead.',
+        },
+      }, 400);
+    }
+    const spent = await consumeRecoveryCode(user.id, body.recoveryCode);
+    if (!spent) {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_CODE', message: 'That recovery code is invalid or has already been used.' },
+      }, 400);
+    }
+    method = 'recovery';
+    ok = true;
+  } else if (pending.purpose === '2fa') {
     // Already enrolled: the stored method decides what counts.
     method = user.twoFactorMethod || '';
     if (method === 'totp') {
@@ -560,6 +593,10 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
 
   clearVerifyAttempts(user.id);
 
+  // A fresh set of recovery codes exists from the moment 2FA turns on —
+  // this response is the only time they appear in plaintext, so the screen
+  // must offer a save step before the session proceeds.
+  let recoveryCodes: string[] | undefined;
   if (pending.purpose === '2fa-enroll') {
     await prisma.user.update({
       where: { id: user.id },
@@ -587,11 +624,17 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
         // Audit must never fail the request itself.
       }
     }
+    recoveryCodes = await rotateRecoveryCodes(user.id);
+  } else if ((await unusedRecoveryCodeCount(user.id)) === 0) {
+    // Backfill on an ordinary sign-in: an account enrolled before recovery
+    // codes existed, or one whose last code was just spent above. Handing
+    // a fresh set now is the right moment — the save screen shows once.
+    recoveryCodes = await rotateRecoveryCodes(user.id);
   }
 
   clearPendingCookie(c);
   const payload = await issueSession(c, user, getIp(c));
-  return c.json({ success: true, data: payload });
+  return c.json({ success: true, data: recoveryCodes ? { ...payload, recoveryCodes } : payload });
 });
 
 // Dry-run of an emailed set-password link. The reset page calls this the
