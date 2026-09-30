@@ -2,7 +2,6 @@
 
 import {
   forwardRef,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -32,8 +31,10 @@ interface OtpInputProps {
   disabled?: boolean;
   autoFocus?: boolean;
   /**
-   * 'password' dots each box — the security PIN rows use it so a long-lived
-   * secret never sits in clear the way an ephemeral 6-digit code may.
+   * 'password' masks each box with a drawn bullet — the security PIN rows
+   * use it so a long-lived secret never sits in clear the way an ephemeral
+   * 6-digit code may. Deliberately NOT a real password input; see the note
+   * over the render for why that distinction is the whole point.
    */
   type?: 'text' | 'password';
   /** Autocomplete token for the first box; the PIN rows pass 'off'. */
@@ -104,23 +105,22 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
   const [focused, setFocused] = useState(-1);
 
-  // `type="password"` is what makes a browser offer to save or manage a
-  // value as a credential — and for those fields it deliberately ignores
-  // autocomplete="off", so the hints still pop up over the boxes. A PIN is
-  // not a credential, and the six-box code rows (plain text) never
-  // attracted that popup; where the browser can mask a text input itself
-  // we use that instead: same dots, no password manager in sight.
-  // Detection waits for mount so server and client paint the same markup
-  // first; a browser without the property keeps a real password input, so
-  // the digits are never shown in clear either way.
-  const [masked, setMasked] = useState(false);
-  useEffect(() => {
-    if (type !== 'password') return;
-    if (typeof CSS !== 'undefined' && CSS.supports('-webkit-text-security', 'disc')) {
-      setMasked(true);
-    }
-  }, [type]);
-  const masking = type === 'password' && masked;
+  // A PIN is not a credential, and `type="password"` is precisely what
+  // makes a browser offer to save one — for those fields it deliberately
+  // ignores autocomplete="off", so the save/manage hints pop up over the
+  // boxes. The first round masked with `-webkit-text-security` where the
+  // browser supported it, but Firefox doesn't: it fell back to a real
+  // password input and its login manager came back. So the mask is drawn
+  // here instead: password rows are plain text inputs whose *visible*
+  // value is a bullet — the digit lives only in React state, the DOM
+  // shows `•`, and there is no password field for any browser to latch
+  // onto. The six-box code rows were plain text already (they never
+  // attracted the popup), and every edit path below reads the real digit
+  // string, never the rendered box: Backspace/Delete intercept the event
+  // before it reaches the DOM, paste is prevented outright, and
+  // handleChange strips non-digits — bullet included — from whatever the
+  // DOM does hand over.
+  const masking = type === 'password';
 
   // The value is a dense string (no holes), so edits that arrive before the
   // parent re-renders must still see the newest digits — keep a ref in sync
@@ -217,13 +217,13 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             boxes.current[index] = el;
           }}
           id={index === 0 ? firstInputId : undefined}
-          type={masking ? 'text' : type}
+          type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           maxLength={1}
           autoComplete={index === 0 ? autoComplete : 'off'}
           aria-label={`${ariaLabel} ${index + 1}/${length}`}
-          value={value[index] ?? ''}
+          value={masking && value[index] ? '•' : (value[index] ?? '')}
           disabled={disabled}
           autoFocus={autoFocus && index === 0}
           onChange={(e) => handleChange(index, e.target.value)}
@@ -249,8 +249,6 @@ export const OtpInput = forwardRef<OtpInputHandle, OtpInputProps>(function OtpIn
             borderColor: '#d1d5db',
             padding: 0,
             outline: 'none',
-            // The dots without a password input — see `masked` above.
-            ...(masking ? { WebkitTextSecurity: 'disc' } : undefined),
             transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
             ...style,
             ...(focused === index ? focusStyle : undefined),

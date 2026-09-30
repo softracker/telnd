@@ -194,6 +194,26 @@ export default function AdminLayout({
     return () => window.removeEventListener('storage', onStorage);
   }, [lockScreenNow]);
 
+  // Keyboard lock: Ctrl+Shift+L anywhere in the panel. The bare Ctrl+L is
+  // every browser's address bar (Ctrl+K the search bar, Ctrl+Shift+K
+  // Firefox's browser console), but no browser binds Ctrl+Shift+L — it
+  // keeps the "L for lock" mnemonic (Cmd+Shift+L covers macOS). A
+  // deliberate chord, so it fires even mid-typing; while already locked
+  // there is nothing to do, so the listener exists only in the unlocked
+  // state — the same guard as the idle timer, and public pages never
+  // reach it. The rail button's tooltip advertises the shortcut.
+  useEffect(() => {
+    if (screenLock !== 'unlocked') return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        lockScreenNow();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [screenLock, lockScreenNow]);
+
   // The API layer's PIN challenge resolves through this modal.
   useEffect(() => {
     setPinPromptHandler(

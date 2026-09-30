@@ -186,8 +186,8 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
           <button
             type="button"
             onClick={onLock}
-            aria-label={t('screenLock.lockButton')}
-            title={t('screenLock.lockButton')}
+            aria-label={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
+            title={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
             className="sidebar-item"
             style={{
               width: '100%',
