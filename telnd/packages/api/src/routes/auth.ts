@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFailedAttempt, resetLockout, getFailedCount } from '../lib/loginLockout';
 import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
+import { notifyNewDeviceLogin, registerLoginDevice } from '../lib/loginAlerts';
 import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
 import { isSmtpConfigured } from '../lib/email';
 import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
@@ -89,6 +90,11 @@ async function issueSession(c: any, user: any, ip: string) {
   // Resolve the sign-in's city/country in the background (Security page
   // shows it with a flag) — never blocks or fails the login response.
   void attachLoginLocation(user.id, session.id, ip);
+
+  // New-device alert: recognize the device and email the owner every
+  // detail of the sign-in the first time it ever appears. Same rule as
+  // the location resolve — fire-and-forget, never touches the response.
+  void notifyNewDeviceLogin(user, ip, c.req.header('user-agent') || null);
 
   await prisma.refreshToken.create({
     data: {
@@ -184,6 +190,10 @@ authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(sign
     },
   });
   void attachLoginLocation(user.id, session.id, ip);
+  // Recognize the signup device silently (no alert at account creation),
+  // so the owner's real first sign-in afterwards is not announced as "new
+  // device" when it is the very browser they just signed up from.
+  void registerLoginDevice(user.id, c.req.header('user-agent') || null);
 
   await prisma.refreshToken.create({
     data: {

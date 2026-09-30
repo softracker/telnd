@@ -55,6 +55,7 @@ model User {
   sessions          Session[]
   passwordTokens    PasswordToken[]
   twoFactorRecoveryCodes TwoFactorRecoveryCode[]
+  loginDevices      UserLoginDevice[]
   country           Country?   @relation(fields: [countryId], references: [id])
   
   // New relations
@@ -165,6 +166,28 @@ model TwoFactorRecoveryCode {
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+// Every distinct device an account has signed in from — the memory behind
+// the new-device alert email (§14.43). The FIRST row for a (user,
+// deviceKey) pair triggers the email; later visits only move lastSeenAt.
+// deviceKey is family-level ("chrome|windows|desktop", mirroring the
+// Security page's describeDevice), so a browser version bump is still the
+// same device instead of a fresh alert every few weeks. Signup registers
+// its device silently, so a brand-new account doesn't get an email moments
+// after it was created.
+model UserLoginDevice {
+  id          String   @id @default(uuid())
+  userId      String
+  deviceKey   String
+  userAgent   String?
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceKey])
   @@index([userId])
 }
 

@@ -336,6 +336,58 @@ export async function sendTwoFactorNoticeEmail(to: string, adminEmail: string | 
   return sendEmail(to, subject, html);
 }
 
+/**
+ * New-device sign-in alert: fired the first time an account is opened
+ * from a given device (see lib/loginAlerts). Carries every detail of the
+ * sign-in that is known — when, where, from what, and from which address —
+ * because the whole point is letting the owner judge whether it was them.
+ */
+export async function sendNewDeviceLoginEmail(params: {
+  to: string;
+  firstName: string;
+  /** Family label, e.g. "Chrome on Windows". */
+  device: string;
+  ip: string | null;
+  location: string | null;
+  signedInAt: Date;
+}): Promise<boolean> {
+  const { to, firstName, device, ip, location, signedInAt } = params;
+  const appName = (await getApplicationName()) || 'TELND';
+  const subject = `New sign-in to your ${appName} account`;
+  // Accounts created without a name still read as a sentence.
+  const displayName = escapeHtml((firstName || '').trim() || 'there');
+  const when = escapeHtml(`${signedInAt.toUTCString()} (UTC)`);
+  const deviceCell = escapeHtml(device);
+  const ipCell = escapeHtml(ip ?? 'Not available');
+  const locationCell = escapeHtml(location ?? 'Not available');
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">New sign-in to your account</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Hi ${displayName}, a device you have not signed in from before just accessed your ${escapeHtml(appName)} account:</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;">
+            <tr><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#6b7280;width:40%;">When</td><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#111827;">${when}</td></tr>
+            <tr><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#6b7280;">Device</td><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#111827;">${deviceCell}</td></tr>
+            <tr><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#6b7280;">IP address</td><td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#111827;">${ipCell}</td></tr>
+            <tr><td style="padding:10px 14px;color:#6b7280;">Location</td><td style="padding:10px 14px;color:#111827;">${locationCell}</td></tr>
+          </table>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">If this was you, there is nothing to do — we will recognize this device from now on. If you do not recognize this sign-in, secure your account right away: change your password and contact support if you need help.</p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">We only send this email the first time a device signs in, not on every visit.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
 export async function testSmtpConnection(config: SmtpConfig): Promise<{ success: boolean; error?: string }> {
   try {
     const transportOptions: any = {
