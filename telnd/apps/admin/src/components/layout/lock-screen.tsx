@@ -156,6 +156,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
 
   return (
     <div
+      className="lock-backdrop"
       role="dialog"
       aria-modal="true"
       aria-label={mode === 'setup' ? t('screenLock.setupTitle') : t('screenLock.verifyTitle')}
@@ -163,9 +164,11 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
         position: 'fixed',
         inset: 0,
         zIndex: 3000,
-        // Solid on purpose: a lock screen must hide the page behind it,
-        // not blur it into legibility.
-        backgroundColor: 'var(--card-bg)',
+        // Frosted glass, per request: the veil + blur live in
+        // `.lock-backdrop` (style tag at the bottom of this overlay) — the
+        // app shows through, but blurred past legibility and dimmed by a
+        // translucent card tint, so the page still can't be read and the
+        // lock card keeps its contrast against it.
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -333,7 +336,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
       {/* Local keyframes: `spin` for the buttons' spinner (neither this
           overlay nor its parents guarantee it), `shake` for the card's
           wrong-entry jolt. */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }\n.lock-backdrop {\n  /* Two background declarations on purpose: the plain veil parses\n     everywhere (last resort), the theme-aware card tint wins in any\n     browser that understands color-mix() — white in light, the dark\n     card colour in dark. */\n  background-color: rgba(0, 0, 0, 0.45);\n  background-color: color-mix(in srgb, var(--card-bg) 62%, transparent);\n  -webkit-backdrop-filter: blur(12px);\n  backdrop-filter: blur(12px);\n}`}</style>
     </div>
   );
 }

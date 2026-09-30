@@ -325,6 +325,13 @@ html[data-theme='dark'] .admin-logo-img.logo-light:not(.only) {
   cursor: pointer;
   color: var(--sidebar-text);
   text-decoration: none;
+  /* The utility-row buttons share this class: these two kill the UA
+     button face/border. They must live here and not inline — an inline
+     `background` would also beat the :hover/:active rules below (inline
+     beats every stylesheet declaration), which is why the old lock
+     button never highlighted. */
+  background: none;
+  border: none;
   transition: background 0.15s, color 0.15s;
   margin-bottom: 1px;
   position: relative;

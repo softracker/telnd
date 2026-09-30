@@ -43,14 +43,15 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
         { label: t('sidebar.reports'), href: '/reports', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10M18 20V4M6 20v-4"/></svg> },
       ],
     },
-    {
-      title: t('sidebar.platform'),
-      items: [
-        { label: t('sidebar.support'), href: '/support', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
-        { label: t('sidebar.activityLogs'), href: '/activity-logs', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> },
-        { label: t('sidebar.settings'), href: '/settings', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> },
-      ],
-    },
+  ];
+
+  // Support / Activity Logs / Settings used to be a "Platform" section of
+  // the nav — they now live in the horizontal utility row at the foot of
+  // the rail, beside the screen-lock button (rendered below).
+  const utilityItems = [
+    { label: t('sidebar.support'), href: '/support', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+    { label: t('sidebar.activityLogs'), href: '/activity-logs', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> },
+    { label: t('sidebar.settings'), href: '/settings', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> },
   ];
 
   useEffect(() => {
@@ -112,7 +113,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
       <aside
         ref={sidebarRef}
         className={`admin-sidebar${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}
-        // Flex column so the screen-lock footer pins to the true foot of
+        // Flex column so the utility footer pins to the true foot of
         // the rail even when the nav is short (collapsed). The sections
         // only use paddings, never margins, so nothing's collapse changes.
         style={{ display: 'flex', flexDirection: 'column' }}
@@ -169,9 +170,15 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
           </div>
         ))}
 
-        {/* Screen lock (14.44) — sticky to the foot of the rail: it stays
-            visible while the nav scrolls under it, and settles into flow
-            at the end when the rail fits (or is collapsed). */}
+        {/* Utility row at the foot of the rail (user request): Support,
+            Activity Logs, Settings and the screen lock (§14.44) side by
+            side. Icon-only cells — four icon+label pairs need ~340px and
+            the expanded rail only gives ~233px of content — so every cell
+            carries aria-label + title instead. One horizontal line in the
+            250px rail; a line of four 16px icons cannot fit the 60px
+            collapsed rail (64px > 59px), so there the row wraps 2×2 —
+            where the labels would be hidden by the rail's rules anyway.
+            Sticky, so it stays visible while the nav scrolls under it. */}
         <div
           style={{
             position: 'sticky',
@@ -180,32 +187,52 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
             flexShrink: 0,
             backgroundColor: 'var(--sidebar-bg)',
             borderTop: '1px solid var(--sidebar-border)',
-            padding: '0.5rem',
+            padding: collapsed ? '0.4rem 0.3rem' : '0.5rem',
           }}
         >
-          <button
-            type="button"
-            onClick={onLock}
-            aria-label={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
-            title={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
-            className="sidebar-item"
-            style={{
-              width: '100%',
-              background: 'none',
-              border: 'none',
-              fontFamily: 'inherit',
-              color: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            <span className="sidebar-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </span>
-            <span className="sidebar-label">{t('screenLock.lockLabel')}</span>
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
+            {utilityItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={onCloseMobile}
+                className={`sidebar-item${isActive(item.href) ? ' active' : ''}`}
+                aria-label={item.label}
+                title={item.label}
+                style={{
+                  flex: collapsed ? '1 1 calc(50% - 1px)' : '1 1 0',
+                  minWidth: 0,
+                  justifyContent: 'center',
+                  padding: '0.6rem 0',
+                  margin: 0,
+                }}
+              >
+                <span className="sidebar-icon" style={{ margin: 0 }}>{item.icon}</span>
+              </Link>
+            ))}
+            <button
+              type="button"
+              onClick={onLock}
+              aria-label={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
+              title={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
+              className="sidebar-item"
+              style={{
+                flex: collapsed ? '1 1 calc(50% - 1px)' : '1 1 0',
+                minWidth: 0,
+                justifyContent: 'center',
+                padding: '0.6rem 0',
+                margin: 0,
+                fontFamily: 'inherit',
+              }}
+            >
+              <span className="sidebar-icon" style={{ margin: 0 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </span>
+            </button>
+          </div>
         </div>
       </aside>
     </>
