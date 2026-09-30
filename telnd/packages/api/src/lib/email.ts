@@ -95,6 +95,48 @@ async function getApplicationName(): Promise<string | undefined> {
   }
 }
 
+/**
+ * The org footer every outgoing mail ends with: organization name, phone
+ * number, address and website link in small grey text under a hairline
+ * (user request). Straight from Settings -> Organization ('organization'
+ * setting); fields that are not configured are simply left out, and the
+ * name falls back to the application name so the footer never loses its
+ * heading. Returns the closing <tr> block to append as the last row of
+ * the white card in each template. Exported so the markup can be checked
+ * without SMTP — same reason as twoFactorEmailLead.
+ */
+export async function emailFooterRow(): Promise<string> {
+  let org: Record<string, unknown> = {};
+  try {
+    const { prisma } = await import('@telnd/database');
+    const row = await prisma.setting.findUnique({ where: { key: 'organization' } });
+    if (row?.value && typeof row.value === 'object') org = row.value as Record<string, unknown>;
+  } catch {
+    // No settings row / unreachable DB: fall through to the defaults.
+  }
+  // One line of text, never a line break — an injected newline in a
+  // subject-style field must not be able to split the footer markup.
+  const pick = (v: unknown): string => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim() : '');
+  const name = pick(org.name) || (await getApplicationName()) || 'TELND';
+  const phone = pick(org.phone);
+  const address = pick(org.address);
+  const website = pick(org.website);
+  const href = /^https?:\/\//i.test(website) ? website : website ? `https://${website}` : '';
+
+  const lines: string[] = [`<div style="font-weight:600;color:#6b7280;">${escapeHtml(name)}</div>`];
+  if (phone) lines.push(`<div>Phone: ${escapeHtml(phone)}</div>`);
+  if (address) lines.push(`<div>${escapeHtml(address)}</div>`);
+  if (website) {
+    lines.push(`<div><a href="${escapeHtml(href)}" style="color:#6b7280;text-decoration:underline;">${escapeHtml(website)}</a></div>`);
+  }
+  return (
+    '        <tr><td style="padding:14px 28px 20px;border-top:1px solid #e5e7eb;' +
+    'font-size:11px;line-height:1.7;color:#9ca3af;text-align:center;">' +
+    lines.join('') +
+    '</td></tr>'
+  );
+}
+
 export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   try {
     const config = await getSmtpConfig();
@@ -152,6 +194,7 @@ export async function sendTwoFactorCodeEmail(
   context: OtpEmailContext = 'verify',
 ): Promise<boolean> {
   const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
   const subject = `${appName} verification code`;
   const lead = twoFactorEmailLead(context, appName);
   const html = `
@@ -168,6 +211,7 @@ export async function sendTwoFactorCodeEmail(
           <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px;text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;font-family:monospace;">${escapeHtml(code)}</div>
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">The code expires in 5 minutes and can be used once. If you did not request this code, you can safely ignore this email.</p>
         </td></tr>
+${footer}
       </table>
     </td></tr>
   </table>
@@ -211,6 +255,7 @@ export async function sendAdminInviteEmail(params: AdminInviteParams): Promise<b
   const safeLoginUrl = escapeHtml(loginUrl);
   const safeSetUrl = escapeHtml(setPasswordUrl);
   const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
   const isReset = kind === 'reset';
   const subject = isReset
     ? `Set a new ${appName} Admin password`
@@ -243,6 +288,7 @@ export async function sendAdminInviteEmail(params: AdminInviteParams): Promise<b
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link expires in <strong>${escapeHtml(expiresLabel)}</strong> and can only be used once. Requesting another one invalidates it.</p>
           <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you were not expecting this email, please ignore it or contact your administrator.</p>
         </td></tr>
+${footer}
       </table>
     </td></tr>
   </table>
@@ -271,6 +317,7 @@ export async function sendPasswordResetEmail(params: PasswordResetParams): Promi
   const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
   const safeResetUrl = escapeHtml(resetUrl);
   const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
   const subject = `Set a new ${appName} password`;
   const html = `
 <!DOCTYPE html>
@@ -294,6 +341,7 @@ export async function sendPasswordResetEmail(params: PasswordResetParams): Promi
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link expires in <strong>${escapeHtml(expiresLabel)}</strong> and can only be used once. When it is used, all existing sign-ins are ended and the new password is required.</p>
           <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you did not request this, you can safely ignore this email &mdash; your password will not change.</p>
         </td></tr>
+${footer}
       </table>
     </td></tr>
   </table>
@@ -310,10 +358,11 @@ export async function sendPasswordResetEmail(params: PasswordResetParams): Promi
  * go unnoticed. Fire-and-forget at the call site: a mail hiccup never
  * fails the administrative action.
  */
-export async function sendTwoFactorNoticeEmail(to: string, adminEmail: string | null): Promise<boolean> {
+export async function sendTwoFactorNoticeEmail(to: string, adminName: string | null): Promise<boolean> {
   const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
   const subject = `${appName} two-factor authentication was turned off`;
-  const actor = adminEmail ? `by <strong>${escapeHtml(adminEmail)}</strong>` : 'by an administrator';
+  const actor = adminName ? `by <strong>${escapeHtml(adminName)}</strong>` : 'by an administrator';
   const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -328,6 +377,7 @@ export async function sendTwoFactorNoticeEmail(to: string, adminEmail: string | 
           <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">You can set two-factor authentication up again from <strong>Settings &rarr; Security</strong>.</p>
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">If this wasn't you, contact your administrator immediately — someone else may have accessed your account.</p>
         </td></tr>
+${footer}
       </table>
     </td></tr>
   </table>
@@ -353,6 +403,7 @@ export async function sendNewDeviceLoginEmail(params: {
 }): Promise<boolean> {
   const { to, firstName, device, ip, location, signedInAt } = params;
   const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
   const subject = `New sign-in to your ${appName} account`;
   // Accounts created without a name still read as a sentence.
   const displayName = escapeHtml((firstName || '').trim() || 'there');
@@ -380,12 +431,89 @@ export async function sendNewDeviceLoginEmail(params: {
           <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">If this was you, there is nothing to do — we will recognize this device from now on. If you do not recognize this sign-in, secure your account right away: change your password and contact support if you need help.</p>
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">We only send this email the first time a device signs in, not on every visit.</p>
         </td></tr>
+${footer}
       </table>
     </td></tr>
   </table>
 </body>
 </html>`;
   return sendEmail(to, subject, html);
+}
+
+export interface RequirementNoticeParams {
+  to: string;
+  /** Which requirement the notice is about. */
+  kind: 'two-factor' | 'pin';
+  /**
+   * 'account' = one admin was made to comply specifically;
+   * 'all'    = the whole-admins policy flipped, recipient still not set up.
+   */
+  scope: 'account' | 'all';
+  /** Who made the change — their account NAME, not the address (null → "an administrator"). */
+  adminName: string | null;
+  /** Does the recipient already satisfy the requirement? */
+  alreadySet: boolean;
+}
+
+/**
+ * "2FA / security PIN is now required" notice. Covers all four events —
+ * per-admin require and require-for-all, for either feature — with the
+ * action paragraph chosen from (kind, scope, alreadySet): the copy only
+ * ever asks for the work the recipient actually has left. Delivered
+ * through lib/noticeQueue (batched), never called inline from a handler.
+ */
+export async function sendRequirementNoticeEmail(params: RequirementNoticeParams): Promise<boolean> {
+  const { kind, scope, adminName, alreadySet } = params;
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const feature = kind === 'two-factor' ? 'two-factor authentication' : 'security PIN';
+  const featureTitle = kind === 'two-factor' ? 'Two-factor authentication' : 'Security PIN';
+  const subject =
+    scope === 'all'
+      ? `${appName} ${feature} is now required for all admins`
+      : `${appName} ${feature} is now required`;
+  const actor = adminName ? `by <strong>${escapeHtml(adminName)}</strong>` : 'by an administrator';
+  const lead =
+    scope === 'all'
+      ? `${featureTitle} is now required for every ${escapeHtml(appName)} admin account &mdash; the policy was changed ${actor}.`
+      : `${featureTitle} on your ${escapeHtml(appName)} admin account was made required ${actor}.`;
+
+  let action: string;
+  if (kind === 'two-factor' && !alreadySet) {
+    action =
+      `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">You do not have it set up yet. Pick a method (authenticator app, SMS, or email code) from <strong>Settings &rarr; Security</strong>. While the requirement stands, your next sign-in will not finish until two-factor authentication is set up &mdash; you will be taken straight to the setup screen.</p>` +
+      `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">If you already have it turned on, nothing is left to do.</p>`;
+  } else if (kind === 'two-factor') {
+    action = `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Your account already has it set up, so there is nothing to do. While the requirement stands it stays on and can no longer be turned off.</p>`;
+  } else if (!alreadySet) {
+    action =
+      `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">You do not have a PIN yet. Create your 4-digit PIN from <strong>Settings &rarr; Security</strong> &mdash; or straight from the lock screen the next time it appears. Until you do, the screen lock and your first sensitive action will each ask you to create one.</p>` +
+      `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">If your PIN is already set, nothing is left to do.</p>`;
+  } else {
+    action = `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Your account already has a PIN set, so there is nothing to do. While the requirement stands it can no longer be disabled.</p>`;
+  }
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">${featureTitle} is now required${scope === 'all' ? ' for all admins' : ''}</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">${lead}</p>
+          ${action}
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">If you think this requirement was made in error, contact the administrator named above.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(params.to, subject, html);
 }
 
 export async function testSmtpConnection(config: SmtpConfig): Promise<{ success: boolean; error?: string }> {

@@ -9,6 +9,7 @@ import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passw
 import { deleteRecoveryCodes } from '../lib/recoveryCodes';
 import { clearOtp } from '../lib/twoFactor';
 import { clearPinAttempts, requirePinApproval } from '../lib/securityPin';
+import { notifyTwoFactorRequired, notifyTwoFactorRequiredForAll, notifyPinRequired, notifyPinRequiredForAll, actorNameOf } from '../lib/requirementNotices';
 
 type AdminEnv = {
   Variables: {
@@ -591,16 +592,21 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
     const targetEmail = user.email;
     if (wasEnrolled && targetEmail) {
       // The owner did not turn this off themselves: tell them, so a
-      // covert removal cannot go unnoticed. Resolve who acted for the
-      // wording; fire-and-forget so a slow or dead mail server never
-      // stalls or fails the administrative action.
-      void prisma.user
-        .findUnique({ where: { id: actor.userId }, select: { email: true } })
-        .then((actorUser) => sendTwoFactorNoticeEmail(targetEmail, actorUser?.email ?? null))
+      // covert removal cannot go unnoticed. Resolve who acted — by
+      // account NAME, matching the requirement notices — fire-and-forget
+      // so a slow or dead mail server never stalls or fails the
+      // administrative action.
+      void actorNameOf(actor.userId)
+        .then((actorName) => sendTwoFactorNoticeEmail(targetEmail, actorName))
         .catch(() => {
           // Deliberately swallowed — see above.
         });
     }
+  } else if (!user.twoFactorEnforced && user.email) {
+    // The requirement went UP for this account: tell the holder (on the
+    // transition only). Queued through the batched notice queue — never
+    // inline — so it cannot stall or fail the update above.
+    notifyTwoFactorRequired({ email: user.email, enrolled: user.twoFactorEnabled }, actor.userId);
   }
 
   await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR' : 'DISABLE_TWO_FACTOR', 'user', id, {}, c);
@@ -636,11 +642,23 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
     if (pinGate) return pinGate;
   }
 
+  // Only the OFF->ON transition notifies: re-issuing a policy that is
+  // already standing would re-spam every non-compliant admin.
+  const previousPolicy = await prisma.setting.findUnique({ where: { key: 'twoFactorPolicy' } });
+  const wasRequired = Boolean((previousPolicy?.value as any)?.requireTwoFactor);
+
   await prisma.setting.upsert({
     where: { key: 'twoFactorPolicy' },
     update: { value: { requireTwoFactor: required } as any },
     create: { key: 'twoFactorPolicy', value: { requireTwoFactor: required } as any },
   });
+
+  if (required && !wasRequired) {
+    // Email every admin still without 2FA — and only those (the enrolled
+    // have nothing to do). The recipient query runs after the write
+    // above, detached and batched through the notice queue.
+    notifyTwoFactorRequiredForAll(actor.userId);
+  }
 
   await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_ALL' : 'CLEAR_TWO_FACTOR_POLICY', 'setting', undefined, { required }, c);
   return c.json({ success: true, data: { required } });
@@ -714,7 +732,13 @@ admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ requir
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Admin not found' } }, 404);
   }
 
+  // Only the OFF->ON transition notifies — re-issuing an already-standing
+  // requirement says nothing new. Queued + batched, never inline.
+  const wasRequired = user.adminUser.pinRequired;
   await prisma.adminUser.update({ where: { id: user.adminUser.id }, data: { pinRequired: required } });
+  if (required && !wasRequired && user.email) {
+    notifyPinRequired({ email: user.email, pinSet: Boolean(user.adminUser.pinHash) }, actor.userId);
+  }
   await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN' : 'CLEAR_SECURITY_PIN_REQUIREMENT', 'user', id, {}, c);
   return c.json({ success: true, data: { required } });
 });
@@ -737,11 +761,21 @@ admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean(
   const pinGate = await requirePinApproval(c);
   if (pinGate) return pinGate;
 
+  // Only the OFF->ON transition notifies (see the two-factor policy).
+  const previousPolicy = await prisma.setting.findUnique({ where: { key: 'pinPolicy' } });
+  const wasRequired = Boolean((previousPolicy?.value as any)?.requirePin);
+
   await prisma.setting.upsert({
     where: { key: 'pinPolicy' },
     update: { value: { requirePin: required } as any },
     create: { key: 'pinPolicy', value: { requirePin: required } as any },
   });
+
+  if (required && !wasRequired) {
+    // Email every admin still without a PIN — and only those. Recipient
+    // query after the write above, detached and batched.
+    notifyPinRequiredForAll(actor.userId);
+  }
 
   await logAction(actor.userId, required ? 'REQUIRE_SECURITY_PIN_ALL' : 'CLEAR_SECURITY_PIN_POLICY', 'setting', undefined, { required }, c);
   return c.json({ success: true, data: { required } });

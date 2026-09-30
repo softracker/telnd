@@ -174,11 +174,11 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
             Activity Logs, Settings and the screen lock (§14.44) side by
             side. Icon-only cells — four icon+label pairs need ~340px and
             the expanded rail only gives ~233px of content — so every cell
-            carries aria-label + title instead. One horizontal line in the
-            250px rail; a line of four 16px icons cannot fit the 60px
-            collapsed rail (64px > 59px), so there the row wraps 2×2 —
-            where the labels would be hidden by the rail's rules anyway.
-            Sticky, so it stays visible while the nav scrolls under it. */}
+            carries aria-label + title instead. One horizontal line of four
+            in the 250px rail; when collapsed the row turns into a column —
+            ONE button per line (the user's wording), each cell full rail
+            width with its normal 16px icon. Sticky, so it stays visible
+            while the nav scrolls under it. */}
         <div
           style={{
             position: 'sticky',
@@ -190,7 +190,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
             padding: collapsed ? '0.4rem 0.3rem' : '0.5rem',
           }}
         >
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
+          <div style={{ display: 'flex', flexDirection: collapsed ? 'column' : 'row', gap: '2px' }}>
             {utilityItems.map((item) => (
               <Link
                 key={item.href}
@@ -200,7 +200,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
                 aria-label={item.label}
                 title={item.label}
                 style={{
-                  flex: collapsed ? '1 1 calc(50% - 1px)' : '1 1 0',
+                  flex: collapsed ? '0 0 auto' : '1 1 0',
                   minWidth: 0,
                   justifyContent: 'center',
                   padding: '0.6rem 0',
@@ -217,7 +217,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, onLock }
               title={`${t('screenLock.lockButton')} (Ctrl+Shift+L)`}
               className="sidebar-item"
               style={{
-                flex: collapsed ? '1 1 calc(50% - 1px)' : '1 1 0',
+                flex: collapsed ? '0 0 auto' : '1 1 0',
                 minWidth: 0,
                 justifyContent: 'center',
                 padding: '0.6rem 0',

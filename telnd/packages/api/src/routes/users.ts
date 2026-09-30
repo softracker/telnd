@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { appendFileSync } from 'node:fs';
 import { prisma } from '@telnd/database';
 import { authMiddleware, requireAdmin, hasPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -376,17 +375,6 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
     isSmtpConfigured(),
     unusedRecoveryCodeCount(userId),
   ]);
-
-  // TEMPORARY DIAGNOSTIC: exactly what this request read and replied, so a
-  // stale-UI report can be checked against what the browser actually got.
-  try {
-    appendFileSync(
-      '/tmp/opencode/telnd_2fa_get.log',
-      `${new Date().toISOString()} user=${userId.slice(0, 8)} dbEnabled=${user.twoFactorEnabled} replied=${user.twoFactorEnabled} ua=${(c.req.header('user-agent') || '-').slice(0, 40)}\n`,
-    );
-  } catch {
-    // Never let diagnostics break the endpoint.
-  }
 
   return c.json({
     success: true,
