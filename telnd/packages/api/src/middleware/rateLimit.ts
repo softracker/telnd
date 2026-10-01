@@ -37,10 +37,14 @@ setInterval(() => {
 
 export function rateLimit(options: { windowMs: number; max: number }) {
   return async (c: Context, next: Next) => {
-    const ip = getIp(c);
+    // Key by the authenticated account when there is one — a session id
+    // can't be forged, so authenticated limits are immune to any IP
+    // manipulation (and don't collide across users behind one address) —
+    // falling back to the peer IP for anonymous traffic (#10).
+    const who = (c.get('userId') as string | undefined) || getIp(c);
     // Keyed per request path: sharing one bucket per IP meant a burst on any
     // rate-limited route (e.g. reset-password) starved the others (login).
-    const key = `ratelimit:${new URL(c.req.url).pathname}:${ip}`;
+    const key = `ratelimit:${new URL(c.req.url).pathname}:${who}`;
 
     try {
       const { redis } = await import('@telnd/database');

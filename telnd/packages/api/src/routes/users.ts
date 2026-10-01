@@ -4,7 +4,7 @@ import { prisma } from '@telnd/database';
 import { authMiddleware, requireAdmin, hasPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
-import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFactorDisableSchema } from '@telnd/validation';
+import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFactorDisableSchema, twoFactorRecoveryRotateSchema } from '@telnd/validation';
 import { sendPasswordResetEmail, isSmtpConfigured } from '../lib/email';
 import { deleteRecoveryCodes, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
@@ -62,14 +62,65 @@ userRoutes.get('/me', authMiddleware, async (c) => {
 
 // Own-account management: change name / email / phone (password changes are
 // intentionally not handled here). The phone number is what SMS 2FA codes
-// are delivered to — empty string clears it.
-userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c) => {
+// are delivered to — empty string clears it. Email and phone are the
+// sign-in identifiers, so touching either additionally demands the account
+// password in the same body (#6) — see the re-auth gate below.
+// Profile update — also the re-auth gate for email/phone changes (#6), so
+// the bucket counts password guesses: a stolen session can't brute-force
+// currentPassword past the same 5/min the other credential checks use.
+userRoutes.patch('/me', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), validate(updateAccountSchema), async (c) => {
   const userId = c.get('userId') as string;
   const body = c.get('validatedData');
 
   const current = await prisma.user.findUnique({ where: { id: userId } });
   if (!current) {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  // Would this request move a sign-in identifier? Both comparisons run
+  // against the STORED values with the same normalization the write below
+  // applies, so an unchanged field (or a phone "change" to the number it
+  // already has) never trips the password gate. Clearing the phone counts
+  // as a change — a hijacked session must not be able to silently drop the
+  // number SMS 2FA codes are delivered to either.
+  const nextPhone =
+    body.phone !== undefined && typeof body.phone === 'string' && body.phone.trim()
+      ? body.phone.trim()
+      : null;
+  const emailChanging = body.email !== undefined && body.email !== current.email;
+  const phoneChanging = body.phone !== undefined && nextPhone !== current.phone;
+
+  // Re-auth gate (#6): without it a stolen session could swap the email to
+  // an attacker-controlled address, request a password reset there and take
+  // the account over — or repoint `phone` so the SMS 2FA codes arrive on
+  // the attacker's handset. Both identifiers therefore require the current
+  // password, bcrypt-verified server-side. 401 (not 403/400) so the client
+  // can tell "prove yourself again" apart from a plain validation error and
+  // re-prompt. An invite that was never accepted has no passwordHash, so
+  // there is nothing to verify against — same rejection, fail closed.
+  // Name/avatar-only edits never reach this branch.
+  if (emailChanging || phoneChanging) {
+    const provided = body.currentPassword as string | undefined;
+    if (!provided || !current.passwordHash) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'REAUTH_REQUIRED',
+          message: 'Enter your current password to change your sign-in email or phone.',
+        },
+      }, 401);
+    }
+    const bcrypt = await import('bcryptjs');
+    const valid = await bcrypt.compare(provided, current.passwordHash);
+    if (!valid) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'REAUTH_REQUIRED',
+          message: 'Enter your current password to change your sign-in email or phone.',
+        },
+      }, 401);
+    }
   }
 
   if (body.email) {
@@ -87,12 +138,18 @@ userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c)
   const data: Record<string, unknown> = {};
   if (body.firstName !== undefined) data.firstName = body.firstName;
   if (body.lastName !== undefined) data.lastName = body.lastName;
-  if (body.email !== undefined) data.email = body.email;
+  if (body.email !== undefined) {
+    data.email = body.email;
+    // A moved address is an unconfirmed address: keep the fresh inbox from
+    // inheriting the old one's "verified" badge until the new one proves it
+    // receives mail at that destination (#6).
+    if (emailChanging) data.isEmailVerified = false;
+  }
   // Empty string is normalized to null so "remove photo" and "already empty"
   // end up in the same stored state.
   if (body.avatar !== undefined) data.avatar = body.avatar || null;
   if (body.phone !== undefined) {
-    const phone = typeof body.phone === 'string' && body.phone.trim() ? body.phone.trim() : null;
+    const phone = nextPhone;
     if (phone) {
       const existing = await prisma.user.findFirst({
         where: { phone, NOT: { id: userId } },
@@ -110,6 +167,9 @@ userRoutes.patch('/me', authMiddleware, validate(updateAccountSchema), async (c)
   }
 
   const user = await prisma.user.update({ where: { id: userId }, data });
+  // Any reset link still pointing at the OLD address dies with the change,
+  // so it can't be redeemed against the new identity (#6).
+  if (emailChanging) await discardPasswordToken(userId, 'reset');
   // passwordHash and the TOTP secret never round-trip to the client.
   const { passwordHash, twoFactorSecret, ...safeUser } = user;
 
@@ -409,12 +469,14 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
 // `pinPolicy` Setting).
 userRoutes.get('/me/pin', authMiddleware, async (c) => {
   const userId = c.get('userId') as string;
-  const [row, policy] = await Promise.all([
+  const token = c.get('token') as string;
+  const [row, policy, session] = await Promise.all([
     prisma.adminUser.findUnique({
       where: { userId },
       select: { pinHash: true, pinRequired: true, role: { select: { permissions: true } } },
     }),
     pinPolicyRequired(),
+    prisma.session.findUnique({ where: { token }, select: { lockedAt: true } }),
   ]);
   return c.json({
     success: true,
@@ -423,6 +485,10 @@ userRoutes.get('/me/pin', authMiddleware, async (c) => {
       enforcedByAdmin: Boolean(row?.pinRequired),
       policyRequired: policy,
       canManagePolicy: hasPermission(row?.role, '*'),
+      // Whether the session row is frozen right now (#33): the layout's
+      // teardown reads it so a cleared storage flag cannot walk in — not
+      // even for a frame before the first API call trips the guard.
+      screenLocked: Boolean(session?.lockedAt),
     },
   });
 });
@@ -471,9 +537,9 @@ userRoutes.post(
 
     await prisma.adminUser.update({
       where: { id: row.id },
-      data: { pinHash: hashPin(userId, pin), pinSetAt: new Date() },
+      data: { pinHash: await hashPin(pin), pinSetAt: new Date(), pinAttempts: 0, pinWindowStart: null },
     });
-    clearPinAttempts(userId);
+    await clearPinAttempts(userId);
     await logSelfService(c, user, 'SECURITY_PIN_SET');
     return c.json({ success: true, data: { pinSet: true } });
   },
@@ -528,9 +594,9 @@ userRoutes.delete(
 
     await prisma.adminUser.update({
       where: { id: row.id },
-      data: { pinHash: null, pinSetAt: null },
+      data: { pinHash: null, pinSetAt: null, pinAttempts: 0, pinWindowStart: null },
     });
-    clearPinAttempts(userId);
+    await clearPinAttempts(userId);
     await logSelfService(c, user, 'SECURITY_PIN_CLEARED');
     return c.json({ success: true, data: { pinSet: false } });
   },
@@ -659,7 +725,7 @@ userRoutes.post(
       }
       ok = verifyTotp(user.twoFactorSecret, body.code);
     } else {
-      const result = verifyOtp(userId, body.code);
+      const result = verifyOtp(userId, body.code, 'setup');
       ok = result.ok;
       if (!result.ok) otpReason = result.reason;
     }
@@ -694,14 +760,21 @@ userRoutes.post(
 // Regenerate the recovery-code set: every previously saved code is deleted
 // in the process, which is what makes this a revocation as well as a
 // refill. The plaintext appears only in this response. Available whenever
-// 2FA is on; 3/min so a refresh loop can't churn out sets.
+// 2FA is on; 3/min so a refresh loop can't churn out sets. Because it burns
+// the victim's backups, it also demands a live code from the enrolled
+// factor (#19) — a stolen session alone cannot destroy the old set.
 userRoutes.post(
   '/me/2fa/recovery-codes',
   authMiddleware,
   rateLimit({ windowMs: 60000, max: 3 }),
+  validate(twoFactorRecoveryRotateSchema),
   async (c) => {
     const userId = c.get('userId') as string;
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { twoFactorEnabled: true } });
+    const body = c.get('validatedData') as { code: string };
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { twoFactorEnabled: true, twoFactorMethod: true, twoFactorSecret: true },
+    });
     if (!user) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
     }
@@ -711,16 +784,36 @@ userRoutes.post(
         error: { code: 'TWO_FACTOR_NOT_ENABLED', message: 'Turn on two-factor authentication first.' },
       }, 400);
     }
+
+    // Proof of the factor itself: TOTP against the stored secret, or the
+    // OTP the Security page sent with purpose 'verify' for an already
+    // enabled account (see POST /me/2fa/send) for sms/email. Anything else
+    // — missing, wrong, or a method with no verifiable material — fails
+    // closed on the same error the disable route uses.
+    let verified = false;
+    if (user.twoFactorMethod === 'totp' && user.twoFactorSecret) {
+      verified = verifyTotp(user.twoFactorSecret, body.code);
+    } else if (user.twoFactorMethod === 'sms' || user.twoFactorMethod === 'email') {
+      verified = verifyOtp(userId, body.code, 'verify').ok;
+    }
+    if (!verified) {
+      return c.json({
+        success: false,
+        error: { code: 'VERIFICATION_FAILED', message: 'Enter the verification code from your two-factor method.' },
+      }, 400);
+    }
+
     const recoveryCodes = await rotateRecoveryCodes(userId);
     await logSelfService(c, c.get('user'), 'TWO_FACTOR_RECOVERY_CODES_REGENERATED', {});
     return c.json({ success: true, data: { recoveryCodes } });
   },
 );
 
-// Turn 2FA off: a live code for the current factor OR the account password
-// proves possession (whichever the operator still has in hand). Disabled
-// means wiped — re-enrolling starts from a fresh secret. Blocked while a
-// super admin's per-account demand or the global policy is in force.
+// Turn 2FA off: a LIVE code for the enrolled factor is the only proof —
+// the account password alone must not do it (#37), or a session + password
+// attacker could switch off the very barrier standing in their way.
+// Disabled means wiped — re-enrolling starts from a fresh secret. Blocked
+// while a super admin's per-account demand or the global policy is in force.
 userRoutes.post(
   '/me/2fa/disable',
   authMiddleware,
@@ -728,7 +821,7 @@ userRoutes.post(
   validate(twoFactorDisableSchema),
   async (c) => {
     const userId = c.get('userId') as string;
-    const body = c.get('validatedData') as { code?: string; password?: string };
+    const body = c.get('validatedData') as { code: string };
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
@@ -753,22 +846,20 @@ userRoutes.post(
       }, 403);
     }
 
+    // Proof of the enrolled factor ONLY (#37): TOTP against the stored
+    // secret, or the OTP stamped with purpose 'verify' by /me/2fa/send for
+    // an already-enabled account. No password fallback — possession of the
+    // session and the sign-in password is exactly what 2FA must outlast.
     let verified = false;
-    if (body.code) {
-      if (user.twoFactorMethod === 'totp' && user.twoFactorSecret) {
-        verified = verifyTotp(user.twoFactorSecret, body.code);
-      } else if (user.twoFactorMethod === 'sms' || user.twoFactorMethod === 'email') {
-        verified = verifyOtp(userId, body.code).ok;
-      }
-    }
-    if (!verified && body.password && user.passwordHash) {
-      const bcrypt = await import('bcryptjs');
-      verified = await bcrypt.compare(body.password, user.passwordHash);
+    if (user.twoFactorMethod === 'totp' && user.twoFactorSecret) {
+      verified = verifyTotp(user.twoFactorSecret, body.code);
+    } else if (user.twoFactorMethod === 'sms' || user.twoFactorMethod === 'email') {
+      verified = verifyOtp(userId, body.code, 'verify').ok;
     }
     if (!verified) {
       return c.json({
         success: false,
-        error: { code: 'VERIFICATION_FAILED', message: 'The verification code or password is incorrect.' },
+        error: { code: 'VERIFICATION_FAILED', message: 'Enter the verification code from your two-factor method.' },
       }, 400);
     }
 

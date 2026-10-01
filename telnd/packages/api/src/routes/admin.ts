@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@telnd/database';
 import { authMiddleware, roleGuard, requireAdmin, requirePermission, requireAnyPermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
+import { rateLimit } from '../middleware/rateLimit';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
 import { sendAdminInviteEmail, sendTwoFactorNoticeEmail } from '../lib/email';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
@@ -11,6 +12,7 @@ import { clearOtp } from '../lib/twoFactor';
 import { clearPinAttempts, requirePinApproval } from '../lib/securityPin';
 import { notifyTwoFactorRequired, notifyTwoFactorRequiredForAll, notifyPinRequired, notifyPinRequiredForAll, actorNameOf } from '../lib/requirementNotices';
 import { ACTIVITY_TYPES, activityCategory, activityWhere, isActivityType } from '../lib/activityFeed';
+import { getIp } from '../lib/getIp';
 
 type AdminEnv = {
   Variables: {
@@ -46,6 +48,25 @@ function clampPage(value: string | undefined): number {
 const isSuper = (permissions: unknown): boolean =>
   Array.isArray(permissions) && permissions.includes('*');
 
+// Escalation guard for role grants and role assignments (#4, #5): holding
+// roles.create/roles.edit or admins.create says you may operate on the
+// entity, not that you may hand out power you don't have. Two rules: the
+// "*" wildcard (super) only ever moves between super admins, and a
+// non-super actor may only grant permissions their own role already holds —
+// otherwise a limited admin could mint (or assign) a stronger role and
+// walk out of their own permission set. Returns the denial message when the
+// grant is NOT allowed, null when it is; super passes everything.
+const grantDenied = (actorPermissions: unknown, granted: unknown): string | null => {
+  const actorPerms: unknown[] = Array.isArray(actorPermissions) ? actorPermissions : [];
+  if (isSuper(actorPerms)) return null;
+  const grantedPerms: unknown[] = Array.isArray(granted) ? granted : [];
+  if (grantedPerms.includes('*')) {
+    return 'Only a super admin can grant or assign the "*" (super admin) permission.';
+  }
+  const missing = grantedPerms.filter((p) => !actorPerms.includes(p));
+  return missing.length > 0 ? `You cannot grant permissions you do not hold: ${missing.join(', ')}` : null;
+};
+
 // Log admin action
 const logAction = async (adminId: string, action: string, targetType: string, targetId?: string, details?: any, c?: any) => {
   await prisma.adminAction.create({
@@ -55,7 +76,10 @@ const logAction = async (adminId: string, action: string, targetType: string, ta
       targetType,
       targetId,
       details,
-      ipAddress: c?.req.header('x-forwarded-for') || c?.req.header('x-real-ip'),
+      // Same trust model as rate limiting (#28): the client-written
+      // forwarding headers are not evidence of anything — record the
+      // peer address (or the stamped one when TRUST_PROXY is set).
+      ipAddress: c && getIp(c) !== 'unknown' ? getIp(c) : undefined,
       userAgent: c?.req.header('user-agent'),
     },
   });
@@ -151,7 +175,12 @@ admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c)
   return c.json(safeUser);
 });
 
-admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), async (c) => {
+admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+  // Suspension revokes a live account — a sensitive action like delete,
+  // so it carries the same PIN approval (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const body = c.get('validatedData');
   const reason = body.reason;
@@ -180,10 +209,16 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
   await prisma.refreshToken.deleteMany({ where: { userId: id } });
 
   await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason, ...targetIdentity(user) }, c);
-  return c.json(updated);
+  // Never echo the full row: it carries passwordHash + twoFactorSecret (#3).
+  const { passwordHash, twoFactorSecret, ...safeUser } = updated;
+  return c.json(safeUser);
 });
 
-admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), async (c) => {
+admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+  // Restoring access is the mirror sensitive action (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const adminUser = c.get('admin');
 
@@ -206,7 +241,9 @@ admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edi
   });
 
   await logAction(adminUser.userId, 'ACTIVATE_USER', 'user', id, { ...targetIdentity(user) }, c);
-  return c.json(user);
+  // Never echo the full row: it carries passwordHash + twoFactorSecret (#3).
+  const { passwordHash, twoFactorSecret, ...safeUser } = user;
+  return c.json(safeUser);
 });
 
 // ============================================
@@ -297,7 +334,7 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
   });
 });
 
-admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate(createAdminSchema), async (c) => {
+admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate(createAdminSchema), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   // Sensitive: creating an admin grants panel access — approve with PIN.
   const pinGate = await requirePinApproval(c);
   if (pinGate) return pinGate;
@@ -312,6 +349,14 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
   const role = await prisma.adminRole.findUnique({ where: { id: body.roleId } });
   if (!role) {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Role not found' } }, 404);
+  }
+  // Assigning a role hands over everything it holds, so the target role's
+  // permissions must pass the same escalation guard as a grant (#5): the
+  // "*" role only goes to a super admin, and a non-super creator can only
+  // assign roles made of permissions they already hold themselves.
+  const deniedGrant = grantDenied(adminUser?.role?.permissions, role.permissions);
+  if (deniedGrant) {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: deniedGrant } }, 403);
   }
 
   // Nobody types a password: the account is created WITHOUT one and a
@@ -376,7 +421,12 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
   }, 201);
 });
 
-admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), validate(updateAdminSchema), async (c) => {
+admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), validate(updateAdminSchema), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+  // Editing an admin — including a role change — is escalation-adjacent:
+  // approve with PIN like the delete beside it (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const body = c.get('validatedData');
   const adminUser = c.get('admin');
@@ -409,6 +459,14 @@ admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), valid
     const role = await prisma.adminRole.findUnique({ where: { id: body.roleId } });
     if (!role) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Role not found' } }, 404);
+    }
+    // Reassigning a role hands over everything it holds — same escalation
+    // guard as create (#5): the "*" role only goes to a super admin, and a
+    // non-super actor can only assign roles made of permissions they hold
+    // themselves. (Changing your own role is already blocked above.)
+    const deniedGrant = grantDenied(adminUser?.role?.permissions, role.permissions);
+    if (deniedGrant) {
+      return c.json({ success: false, error: { code: 'FORBIDDEN', message: deniedGrant } }, 403);
     }
   }
 
@@ -498,7 +556,7 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
 // admin only, since it starts sign-in recovery for any account. The link is
 // emailed first; a failed send discards it, so a failed request leaves the
 // current password untouched. Nothing changes until the link is used.
-admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
+admin.post('/admins/:id/regenerate-password', requireAdmin, rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   const id = c.req.param('id');
   const actor = c.get('admin');
   const actorPerms: unknown[] = Array.isArray(actor?.role?.permissions) ? actor.role.permissions : [];
@@ -508,6 +566,12 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
       error: { code: 'FORBIDDEN', message: 'Super admin access is required to regenerate passwords.' },
     }, 403);
   }
+
+  // Starting sign-in recovery for another account is sensitive — approve
+  // with PIN (#9). After the super check on purpose: a non-super caller
+  // gets its403 without a pointless PIN prompt.
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
 
   const user = await prisma.user.findUnique({
     where: { id },
@@ -562,7 +626,7 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, async (c) => {
 // setup screen at its next sign-in; an enrolled one starts challenging
 // immediately and can no longer be self-disabled. Releasing wipes the
 // enrollment entirely (fresh secret when it's turned back on).
-admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -598,6 +662,15 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
   const updated = await prisma.user.update({ where: { id }, data });
   // A code sent for the released enrollment must not linger either.
   clearOtp(user.id);
+
+  if (required && !user.twoFactorEnabled) {
+    // The requirement went up for an account that has not enrolled: its
+    // already-issued session would keep running for up to 7 days with no
+    // challenge at all (#17). Revoke sessions + refresh lineage so the
+    // next sign-in walks straight into the enrollment gate.
+    await prisma.session.deleteMany({ where: { userId: user.id } });
+    await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+  }
 
   if (!required) {
     // Recovery codes are part of the factor they belong to — they die with it.
@@ -637,7 +710,7 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
 // Stored under a Setting key that is deliberately NOT in KEY_PERMISSIONS,
 // so the generic settings PUT can never flip it: unknown keys resolve to
 // the "*" (super) permission on both read and write.
-admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -671,6 +744,21 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
     // have nothing to do). The recipient query runs after the write
     // above, detached and batched through the notice queue.
     notifyTwoFactorRequiredForAll(actor.userId);
+
+    // Sessions of admins that have not enrolled would otherwise run up to
+    // 7 days unchallenged under the new policy (#17) — revoke those
+    // sessions and their refresh lineage so everyone re-signs in: the
+    // unenrolled meet the enrollment gate, the enrolled (whose sessions
+    // already passed a challenge) are left alone.
+    const unenrolled = await prisma.user.findMany({
+      where: { role: 'ADMIN', isActive: true, twoFactorEnabled: false },
+      select: { id: true },
+    });
+    if (unenrolled.length > 0) {
+      const ids = unenrolled.map((u) => u.id);
+      await prisma.session.deleteMany({ where: { userId: { in: ids } } });
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: ids } } });
+    }
   }
 
   await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_ALL' : 'CLEAR_TWO_FACTOR_POLICY', 'setting', undefined, { required }, c);
@@ -686,7 +774,7 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
 // a lost one needs a permission-enabled admin to clear it here). The
 // requirement survives the reset, so a demanded account must immediately
 // choose a fresh one at its next PIN challenge.
-admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit'), async (c) => {
+admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit'), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   // Approving a PIN change with the PIN being changed would defeat it —
   // this gate checks the ACTING admin's own PIN.
   const pinGate = await requirePinApproval(c);
@@ -709,10 +797,10 @@ admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit
 
   await prisma.adminUser.update({
     where: { id: user.adminUser.id },
-    data: { pinHash: null, pinSetAt: null },
+    data: { pinHash: null, pinSetAt: null, pinAttempts: 0, pinWindowStart: null },
   });
   // The cleared PIN must not inherit the old one's lockout either.
-  clearPinAttempts(user.id);
+  await clearPinAttempts(user.id);
 
   await logAction(actor.userId, 'SECURITY_PIN_RESET', 'user', id, { ...targetIdentity(user) }, c);
   return c.json({ success: true, data: { pinSet: false } });
@@ -722,7 +810,7 @@ admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit
 // provisions nothing — the account must set a PIN at its next PIN
 // challenge (lock screen or first sensitive action) and can no longer
 // leave the panel without one.
-admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -760,7 +848,13 @@ admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ requir
 // policy, stored the same reserved way (Setting key `pinPolicy`: not in
 // KEY_PERMISSIONS, so only super '*' can touch it through the generic
 // settings routes).
-admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean() })), async (c) => {
+//
+// Unlike the 2FA policy, turning this ON deliberately revokes no
+// sessions: the PIN is not a sign-in factor, so there is no "unchallenged
+// session" gap to close (#17) — every sensitive call re-reads the policy
+// server-side through requirePinApproval, which applies to sessions
+// issued months ago exactly as it does to new ones (and fails closed).
+admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -869,7 +963,22 @@ admin.get('/reports', requireAdmin, requirePermission('reports.view'), async (c)
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: 'desc' },
-      include: { reporter: true },
+      // Only identity fields the reports list shows. A raw `reporter: true`
+      // would hand a reports.view admin every user's full row, including
+      // passwordHash + twoFactorSecret (#3).
+      include: {
+        reporter: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            avatar: true,
+            role: true,
+            isActive: true,
+          },
+        },
+      },
     }),
     prisma.report.count({ where }),
   ]);
@@ -1056,32 +1165,6 @@ admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) 
 });
 
 // ============================================
-// Audit Log
-// ============================================
-admin.get('/audit-log', requireAdmin, requirePermission('audit.view'), async (c) => {
-  const page = clampPage(c.req.query('page'));
-  const limit = clampLimit(c.req.query('limit'), 50);
-  const action = c.req.query('action');
-  const targetType = c.req.query('targetType');
-
-  const where: any = {};
-  if (action) where.action = action;
-  if (targetType) where.targetType = targetType;
-
-  const [logs, total] = await Promise.all([
-    prisma.auditLog.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-    }),
-    prisma.auditLog.count({ where }),
-  ]);
-
-  return c.json({ logs, total, page, limit, totalPages: Math.ceil(total / limit) });
-});
-
-// ============================================
 // Roles (permission sets for the role-based system)
 // ============================================
 admin.get('/roles', requireAdmin, requirePermission('roles.view'), async (c) => {
@@ -1092,9 +1175,23 @@ admin.get('/roles', requireAdmin, requirePermission('roles.view'), async (c) => 
   return c.json(roles);
 });
 
-admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(adminRoleSchema), async (c) => {
+admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(adminRoleSchema), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+  // Creating a role can mint "*" — approval with PIN before anything else
+  // (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const body = c.get('validatedData');
   const adminUser = c.get('admin');
+
+  // Escalation guard beyond roles.create (#4): minting a "*" role is
+  // super-only, and every permission in the new role must already be held
+  // by the actor — checked before anything else so a rejected grant never
+  // reaches the duplicate check or the write.
+  const deniedGrant = grantDenied(adminUser?.role?.permissions, body.permissions);
+  if (deniedGrant) {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: deniedGrant } }, 403);
+  }
 
   const duplicate = await prisma.adminRole.findUnique({ where: { name: body.name } });
   if (duplicate) {
@@ -1109,7 +1206,12 @@ admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(a
   return c.json(role, 201);
 });
 
-admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(adminRoleSchema), async (c) => {
+admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(adminRoleSchema), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+  // Editing a role's grants is the classic escalation path — approve with
+  // PIN first (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const body = c.get('validatedData');
   const adminUser = c.get('admin');
@@ -1117,6 +1219,21 @@ admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(
   const role = await prisma.adminRole.findUnique({ where: { id } });
   if (!role) {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Role not found' } }, 404);
+  }
+  // Escalation guards beyond roles.edit (#4): touching a role that
+  // CURRENTLY holds "*" is super-only (even a downgrade of it), and the
+  // incoming permission list obeys the same "cannot grant beyond what you
+  // hold" rule as create. Checked before the duplicate lookup or write, so
+  // a rejected grant never mutates anything.
+  if (isSuper(role.permissions) && !isSuper(adminUser?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Only a super admin can edit a role with the "*" (super admin) permission.' },
+    }, 403);
+  }
+  const deniedGrant = grantDenied(adminUser?.role?.permissions, body.permissions);
+  if (deniedGrant) {
+    return c.json({ success: false, error: { code: 'FORBIDDEN', message: deniedGrant } }, 403);
   }
   if (role.name !== body.name) {
     const duplicate = await prisma.adminRole.findUnique({ where: { name: body.name } });
@@ -1139,7 +1256,11 @@ admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(
   return c.json(updated);
 });
 
-admin.delete('/roles/:id', requireAdmin, requirePermission('roles.delete'), async (c) => {
+admin.delete('/roles/:id', requireAdmin, requirePermission('roles.delete'), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+  // Removing a role is destructive like every other delete here (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
   const id = c.req.param('id');
   const adminUser = c.get('admin');
 

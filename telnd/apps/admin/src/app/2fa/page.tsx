@@ -101,6 +101,37 @@ export default function TwoFactorPage() {
     return () => clearTimeout(timer);
   }, [resendIn]);
 
+  // #31: the pending TOTP secret must not outlive the screen showing it —
+  // five minutes after it appears (or if nobody touches it), the panel
+  // folds back to the choice row and the secret leaves memory. Restarting
+  // setup then issues a fresh draft on the server anyway.
+  useEffect(() => {
+    if (!setup) return;
+    const timer = setTimeout(() => {
+      setSetup(null);
+      setCode('');
+      setCopied(false);
+      setError('');
+      setMode(info?.requiresEnrollment ? 'choose' : 'challenge');
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [setup, info?.requiresEnrollment]);
+
+  // #31: a freshly rotated recovery-code set must not sit in state until
+  // someone remembers to acknowledge it — after five minutes the sign-in
+  // simply finishes. The codes were already rotated server-side; if they
+  // were never saved, rotate a new set from the Security page.
+  useEffect(() => {
+    if (!pendingComplete) return;
+    const timer = setTimeout(() => {
+      const user = pendingComplete.user;
+      setPendingComplete(null);
+      setCodesSavedOk(false);
+      completeLogin(user);
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [pendingComplete, completeLogin]);
+
   function failWith(err: unknown): void {
     if (err instanceof ApiError) {
       if (err.status === 401) {
@@ -643,6 +674,10 @@ export default function TwoFactorPage() {
             type="button"
             onClick={() => {
               setMode('choose');
+              // Leaving the setup screen takes the secret with it — it
+              // must not sit in state after the panel that showed it (#31).
+              setSetup(null);
+              setCopied(false);
               setCode('');
               setError('');
             }}

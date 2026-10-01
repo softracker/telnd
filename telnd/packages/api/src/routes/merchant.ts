@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
 import { validate } from '../middleware/validate';
 import { roleGuard } from '../middleware/auth';
+import { rateLimit } from '../middleware/rateLimit';
 import { merchantSchema, merchantStaffSchema, merchantCourseSchema, merchantAttendanceSchema, merchantExamSchema, merchantAnnouncementSchema, merchantFeeSchema, merchantRoutineSchema, merchantStudentSchema } from '@telnd/validation';
 
 type MerchantEnv = {
@@ -14,13 +15,60 @@ type MerchantEnv = {
 
 const merchant = new Hono<MerchantEnv>();
 
+// (#27) page/limit went straight from parseInt into skip/take: 'abc'
+// became NaN and 999999999 an unbounded read, so one request could pull
+// (or crash on) the whole merchant directory. Same clamp the admin router
+// uses.
+function clampLimit(value: string | undefined, max = 100): number {
+  const parsed = parseInt(value || '20');
+  if (isNaN(parsed) || parsed < 1) return 20;
+  return Math.min(parsed, max);
+}
+
+function clampPage(value: string | undefined): number {
+  const parsed = parseInt(value || '1');
+  if (isNaN(parsed) || parsed < 1) return 1;
+  return parsed;
+}
+
+// (#3) Display-only projection of a User nested under staff/student rows.
+// The raw row carries passwordHash and the twoFactor* material, so nested
+// `user: true` includes are never safe; phone is omitted because no screen
+// rendering these payloads shows it (grep of apps/ finds no caller of these
+// endpoints at all).
+const displayUserSelect = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  avatar: true,
+  role: true,
+  isActive: true,
+} as const;
+
+// (#7) Every /:id/... route resolves its merchant from the path, so the
+// resolved row must belong to the caller before any read OR write runs —
+// otherwise any signed-in user could read or mutate another tenant's data
+// by guessing ids. The caller gets the same 404 message the write routes
+// already use, so a wrong id and someone else's id are indistinguishable.
+// Returns { deny } (return it straight from the handler) or { merchant }.
+async function requireOwnedMerchant(c: any, id: string) {
+  const user = c.get('user');
+  if (!user) return { deny: c.json({ error: 'Unauthorized' }, 401) };
+  const existing = await prisma.merchant.findUnique({ where: { id } });
+  if (!existing || existing.ownerId !== user.id) {
+    return { deny: c.json({ error: 'Not found or unauthorized' }, 404) };
+  }
+  return { merchant: existing };
+}
+
 // ============================================
 // List Merchants (Public)
 // ============================================
 merchant.get('/', async (c) => {
-  const { type, city, page = '1', limit = '20' } = c.req.query();
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
+  const { type, city } = c.req.query();
+  const pageNum = clampPage(c.req.query('page'));
+  const limitNum = clampLimit(c.req.query('limit'));
 
   const where: any = { isActive: true };
   if (type) where.type = type;
@@ -47,7 +95,9 @@ merchant.get('/:slug', async (c) => {
   const merchant_ = await prisma.merchant.findUnique({
     where: { slug },
     include: {
-      staff: { include: { user: true } },
+      // (#3) Public profile: staff display identity only — the raw user
+      // row would ship passwordHash + twoFactor* material to anyone.
+      staff: { include: { user: { select: displayUserSelect } } },
       courses: { where: { isActive: true } },
       _count: { select: { students: true, courses: true } },
     },
@@ -60,7 +110,12 @@ merchant.get('/:slug', async (c) => {
 // ============================================
 // Create Merchant
 // ============================================
-merchant.post('/', validate(merchantSchema), async (c) => {
+// (#16) Merchant creation stays self-service — no apps/ caller exists yet,
+// and the row is owned by whoever creates it (ownerId is forced to the
+// caller below and can never be spoofed from the body) — so the guard
+// against merchant factories is a hard cap: 10 new merchants per owner per
+// hour (bucketed on the authenticated id, not the IP).
+merchant.post('/', rateLimit({ windowMs: 3600000, max: 10 }), validate(merchantSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
@@ -70,6 +125,7 @@ merchant.post('/', validate(merchantSchema), async (c) => {
   const existing = await prisma.merchant.findUnique({ where: { slug: body.slug } });
   if (existing) return c.json({ error: 'Slug already taken' }, 400);
 
+  // (#16) ownerId comes from the session, never the body.
   const merchant_ = await prisma.merchant.create({
     data: { ...body, ownerId: user.id },
   });
@@ -127,9 +183,15 @@ merchant.patch('/:id', validate(merchantSchema.partial()), async (c) => {
 // ============================================
 merchant.get('/:id/staff', async (c) => {
   const id = c.req.param('id');
+  // (#7) Staff rows belong to the merchant, so the merchant must belong to
+  // the caller — this read had no ownership check at all before.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const staff = await prisma.merchantStaff.findMany({
     where: { merchantId: id },
-    include: { user: true },
+    // (#3) Display projection only — never the raw user row.
+    include: { user: { select: displayUserSelect } },
   });
   return c.json(staff);
 });
@@ -165,7 +227,15 @@ merchant.delete('/:id/staff/:staffId', async (c) => {
     return c.json({ error: 'Not found or unauthorized' }, 404);
   }
 
-  await prisma.merchantStaff.delete({ where: { id: staffId } });
+  // (#7) Scope the delete by BOTH merchant id and staff row: deleting by
+  // bare staffId let merchant A's owner remove merchant B's staff (the
+  // ownership check above only proved A owned *some* merchant).
+  const deleted = await prisma.merchantStaff.deleteMany({
+    where: { id: staffId, merchantId: id },
+  });
+  if (deleted.count === 0) {
+    return c.json({ error: 'Staff member not found' }, 404);
+  }
   return c.json({ success: true });
 });
 
@@ -174,9 +244,14 @@ merchant.delete('/:id/staff/:staffId', async (c) => {
 // ============================================
 merchant.get('/:id/students', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff — this read was unowned too.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const students = await prisma.merchantStudent.findMany({
     where: { merchantId: id },
-    include: { user: true, course: true },
+    // (#3) Display projection for the nested user — never the raw row.
+    include: { user: { select: displayUserSelect }, course: true },
   });
   return c.json(students);
 });
@@ -205,6 +280,10 @@ merchant.post('/:id/students', validate(merchantStudentSchema), async (c) => {
 // ============================================
 merchant.get('/:id/courses', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const courses = await prisma.merchantCourse.findMany({
     where: { merchantId: id },
     include: { _count: { select: { students: true } } },
@@ -257,6 +336,11 @@ merchant.post('/:id/attendance', validate(merchantAttendanceSchema), async (c) =
 
 merchant.get('/:id/attendance', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff — attendance was readable
+  // cross-tenant by any signed-in user.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const { date, studentId } = c.req.query();
 
   const where: any = { merchantId: id };
@@ -296,6 +380,11 @@ merchant.post('/:id/exams', validate(merchantExamSchema), async (c) => {
 
 merchant.get('/:id/exams', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff — exams were readable
+  // cross-tenant by any signed-in user.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const exams = await prisma.merchantExam.findMany({
     where: { merchantId: id },
     include: { student: true, course: true },
@@ -310,6 +399,10 @@ merchant.get('/:id/exams', async (c) => {
 // ============================================
 merchant.get('/:id/announcements', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const announcements = await prisma.merchantAnnouncement.findMany({
     where: { merchantId: id },
     orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
@@ -361,6 +454,11 @@ merchant.post('/:id/fees', validate(merchantFeeSchema), async (c) => {
 
 merchant.get('/:id/fees', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff — fee records were readable
+  // cross-tenant by any signed-in user.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const { status, studentId } = c.req.query();
 
   const where: any = { merchantId: id };
@@ -381,6 +479,10 @@ merchant.get('/:id/fees', async (c) => {
 // ============================================
 merchant.get('/:id/routine', async (c) => {
   const id = c.req.param('id');
+  // (#7) Ownership check as on GET /:id/staff.
+  const gate = await requireOwnedMerchant(c, id);
+  if ('deny' in gate) return gate.deny;
+
   const routine = await prisma.merchantRoutine.findMany({
     where: { merchantId: id, isActive: true },
     orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],

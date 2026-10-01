@@ -48,6 +48,20 @@ packages.post('/subscribe', validate(subscriptionSchema), async (c) => {
   const pkg = await prisma.package.findUnique({ where: { id: packageId } });
   if (!pkg) return c.json({ error: 'Package not found' }, 404);
 
+  // (#16a) No payment integration exists yet, so a paid package must never
+  // self-activate: without this gate, POST /subscribe would mint an
+  // ACTIVE (or TRIAL) subscription for a price > 0 package without charging
+  // anyone. Free packages (price 0) keep subscribing instantly as before.
+  if (!pkg.price.equals(0)) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'PAYMENT_REQUIRED',
+        message: `Package '${pkg.name}' is paid — payment is required before a subscription can be activated`,
+      },
+    }, 402);
+  }
+
   const now = new Date();
   const trialEndsAt = pkg.trialDays ? new Date(now.getTime() + pkg.trialDays * 24 * 60 * 60 * 1000) : null;
   const endDate = pkg.billingCycle === 'MONTHLY' ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) :
@@ -213,9 +227,14 @@ packages.post('/coupons/apply', validate(couponApplySchema), async (c) => {
 
   const { code, packageId, amount } = c.get('validatedData');
 
+  // (#16a) Mirror every validity check POST /coupons/validate enforces, but at
+  // write time: apply previously only checked the active flag and the total
+  // usage counter, so an expired (or not-yet-valid) coupon, one this user had
+  // already redeemed, or one scoped to other packages could still record a
+  // usage here.
   const coupon = await prisma.coupon.findUnique({ where: { code } });
   if (!coupon || !coupon.isActive) {
-    return c.json({ error: 'Invalid coupon code' }, 400);
+    return c.json({ success: false, error: { code: 'INVALID_COUPON', message: 'Invalid coupon code' } }, 400);
   }
 
   // Use transaction to prevent race condition (coupon usage limit bypass)
@@ -226,8 +245,28 @@ packages.post('/coupons/apply', validate(couponApplySchema), async (c) => {
         throw new Error('INVALID_COUPON');
       }
 
+      // Validity window — same rule as the validate path.
+      const checkedAt = new Date();
+      if (checkedAt < freshCoupon.validFrom || checkedAt > freshCoupon.validUntil) {
+        throw new Error('COUPON_EXPIRED');
+      }
+
+      // Package scoping: an empty applicablePackages list means "all packages".
+      if (freshCoupon.applicablePackages.length > 0 && !freshCoupon.applicablePackages.includes(packageId)) {
+        throw new Error('COUPON_NOT_APPLICABLE');
+      }
+
       if (freshCoupon.usageLimit && freshCoupon.usageCount >= freshCoupon.usageLimit) {
         throw new Error('USAGE_LIMIT');
+      }
+
+      // Per-user redemption cap, counted inside the transaction so two
+      // concurrent applies can't both slip past the limit.
+      const userUsage = await tx.couponUsage.count({
+        where: { couponId: freshCoupon.id, userId: user.id },
+      });
+      if (freshCoupon.perUserLimit && userUsage >= freshCoupon.perUserLimit) {
+        throw new Error('COUPON_USER_LIMIT');
       }
 
       // Record usage
@@ -242,11 +281,22 @@ packages.post('/coupons/apply', validate(couponApplySchema), async (c) => {
       });
     });
   } catch (e: any) {
+    // 400 = the coupon is not valid for this request; 409 = the coupon is
+    // real but its redemption limits are already spent (conflict with state).
     if (e?.message === 'INVALID_COUPON') {
-      return c.json({ error: 'Invalid coupon code' }, 400);
+      return c.json({ success: false, error: { code: 'INVALID_COUPON', message: 'Invalid coupon code' } }, 400);
+    }
+    if (e?.message === 'COUPON_EXPIRED') {
+      return c.json({ success: false, error: { code: 'COUPON_EXPIRED', message: 'Coupon has expired' } }, 400);
+    }
+    if (e?.message === 'COUPON_NOT_APPLICABLE') {
+      return c.json({ success: false, error: { code: 'COUPON_NOT_APPLICABLE', message: 'Coupon is not applicable to this package' } }, 400);
     }
     if (e?.message === 'USAGE_LIMIT') {
-      return c.json({ error: 'Coupon usage limit reached' }, 400);
+      return c.json({ success: false, error: { code: 'COUPON_USAGE_LIMIT', message: 'Coupon usage limit reached' } }, 409);
+    }
+    if (e?.message === 'COUPON_USER_LIMIT') {
+      return c.json({ success: false, error: { code: 'COUPON_USER_LIMIT', message: 'You have already used this coupon' } }, 409);
     }
     throw e;
   }

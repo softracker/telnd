@@ -72,6 +72,48 @@ function requireKeyView(key: string) {
   };
 }
 
+// (#18) Settings sections hold live credentials (SMTP password, R2 secret,
+// SMS API key, …). A caller holding only the VIEW grant must never receive
+// them in plaintext: masking costs them nothing because the PUT path below
+// requires the matching EDIT grant for every key (unknown keys need "*"), so
+// they cannot write the mask back — while an edit-holder gets the real value,
+// which they could overwrite anyway. Only true secrets are masked; display /
+// non-secret fields (host, port, logos, names, accessKeyId, siteKey, storeId,
+// usernames) pass through untouched.
+const SECRET_FIELDS: Record<string, string[][]> = {
+  // `pass` is the field lib/email.ts actually reads (val.pass); `password` is
+  // masked too in case a client stores the password under that name.
+  smtp: [['pass'], ['password']],
+  r2: [['secretAccessKey']], // NOT accessKeyId — that is an identifier, not a secret
+  captcha: [['secretKey']], // NOT siteKey — the site key is public by design
+  gateway: [
+    ['sms', 'alphaNet', 'apiKey'],
+    // The gateway section also stores the SSLCommerz credentials.
+    ['payment', 'sslcommerz', 'storePassword'],
+  ],
+};
+
+const SECRET_MASK = '••••••';
+
+function maskSecrets(key: string, value: unknown): unknown {
+  const paths = SECRET_FIELDS[key];
+  if (!paths || value === null || typeof value !== 'object') return value;
+  // JSON round-trip deep-clones: stored settings values are JSON, and we must
+  // not mutate the row we are only reading.
+  const clone: any = JSON.parse(JSON.stringify(value));
+  for (const path of paths) {
+    let ref: any = clone;
+    for (let i = 0; i < path.length - 1; i++) {
+      ref = ref?.[path[i]];
+    }
+    const leaf = path[path.length - 1];
+    if (ref && typeof ref === 'object' && typeof ref[leaf] === 'string' && ref[leaf] !== '') {
+      ref[leaf] = SECRET_MASK;
+    }
+  }
+  return clone;
+}
+
 // Server-side search + pagination for the Our Team list (DataTables-style).
 // Members live in one settings JSON row, so filtering/slicing happens here
 // and the client only ever renders one page of results.
@@ -114,18 +156,28 @@ settings.get('/', async (c) => {
   const result: Record<string, unknown> = {};
   for (const row of rows) {
     if (canViewKey(admin, row.key)) {
-      result[row.key] = row.value;
+      // (#18) View-only callers get this section's secrets masked; holders of
+      // the edit grant see the real values (they can change them anyway).
+      result[row.key] = canEditKey(admin, row.key) ? row.value : maskSecrets(row.key, row.value);
     }
   }
   return c.json({ success: true, data: result });
 });
 
 settings.put('/', async (c) => {
-  const body = await c.req.json();
+  // (#27) The raw body was awaited without a catch (malformed JSON threw a
+  // 500) and only checked "is an object" — arrays passed, and size was
+  // unbounded. Parse defensively, require a plain object, and cap the
+  // serialized payload at 64KB before anything is written.
+  const body = await c.req.json().catch(() => null);
   const admin = c.get('admin');
 
-  if (!body || typeof body !== 'object') {
-    return c.json({ success: false, error: { code: 'INVALID_BODY', message: 'Request body must be a JSON object' } }, 400);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be a JSON object' } }, 400);
+  }
+
+  if (JSON.stringify(body).length > 64 * 1024) {
+    return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be 64KB or smaller' } }, 400);
   }
 
   const entries = Object.entries(body);
@@ -145,6 +197,20 @@ settings.put('/', async (c) => {
             : 'Missing permission: super admin access required for this setting key',
         },
       }, 403);
+    }
+  }
+
+  // (#21) Settings values are stored verbatim and rendered back into admin
+  // and public pages, so a `javascript:` / `vbscript:` / `data:text/html`
+  // string anywhere in the payload would be a persistent XSS vector. Scan
+  // deep before writing: one bad string rejects the whole PUT. (`data:image/…`
+  // embeds stay allowed.)
+  for (const [key, value] of entries) {
+    if (containsUnsafeUrl(value)) {
+      return c.json({
+        success: false,
+        error: { code: 'UNSAFE_URL', message: `Setting '${key}' contains an unsafe URL scheme (javascript:/vbscript:/data:text/html)` },
+      }, 400);
     }
   }
 
@@ -248,7 +314,35 @@ settings.get('/:key', async (c) => {
   }
   const row = await prisma.setting.findUnique({ where: { key } });
   if (!row) return c.json({ success: false, error: { code: 'NOT_FOUND', message: `Setting '${key}' not found` } }, 404);
-  return c.json({ success: true, data: { [row.key]: row.value } });
+  // (#18) Same rule as GET /: view-only callers receive masked secrets, edit
+  // grant holders receive the real values.
+  const value = canEditKey(c.get('admin'), key) ? row.value : maskSecrets(key, row.value);
+  return c.json({ success: true, data: { [row.key]: value } });
 });
+
+// (#21) Deep scan for script-bearing URL schemes anywhere in an incoming
+// settings value. Stored settings are rendered back into the admin panel and
+// public pages, so a `javascript:` / `vbscript:` / `data:text/html` string is
+// a stored-XSS vector; anything matching rejects the entire PUT. Other
+// schemes (https:, mailto:, tel:, `data:image/…` base64 embeds) are allowed.
+const UNSAFE_URL_PATTERN = /^\s*(?:javascript|vbscript):/i;
+const UNSAFE_DATA_HTML_PATTERN = /^\s*data:text\/html/i;
+
+function containsUnsafeUrl(value: unknown): boolean {
+  // Iterative walk with an explicit stack — a deeply nested payload can't
+  // blow the call stack the way naive recursion would.
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === 'string') {
+      if (UNSAFE_URL_PATTERN.test(current) || UNSAFE_DATA_HTML_PATTERN.test(current)) return true;
+    } else if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+    } else if (current !== null && typeof current === 'object') {
+      for (const item of Object.values(current as Record<string, unknown>)) stack.push(item);
+    }
+  }
+  return false;
+}
 
 export default settings;

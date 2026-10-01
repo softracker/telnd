@@ -4,7 +4,7 @@
 // is blocked as mixed content, refused by CORS, and its SameSite=Lax
 // cookie never crosses sites). Server → direct to the API; server-side
 // fetches run on this machine, so localhost works behind any tunnel.
-import { requestPinPrompt } from './security-pin';
+import { requestPinPrompt, raiseScreenLockLocally } from './security-pin';
 
 const API_BASE_URL =
   typeof window === 'undefined'
@@ -67,18 +67,30 @@ export async function apiRequest<T>(
     // Setup/verify are excluded: there the check IS the request (the lock
     // screen would loop forever otherwise). The self-service disable —
     // DELETE /users/me/pin — is a sensitive action like any other and
-    // deliberately stays inside the flow.
+    // deliberately stays inside the flow. FormData bodies are re-sendable
+    // (the fetch serializes the same fields on each attempt), so uploads
+    // get the approval retry too — excluding them silently dropped PIN
+    // approval on every multipart mutation (#32).
     const code = data?.error?.code;
+    // The session is frozen server-side (#33) — almost always because
+    // someone cleared the storage flags to walk past the lock screen.
+    // This request fails either way; re-raise the lock locally so the
+    // app stops talking to a session the server refuses.
+    if (code === 'SESSION_LOCKED' && typeof window !== 'undefined') {
+      raiseScreenLockLocally();
+    }
     const isPinChallenge = code === 'PIN_REQUIRED' || code === 'PIN_INVALID';
     const isPinSelfCheck =
       endpoint.endsWith('/users/me/pin/verify') ||
+      // The lock screen's own thaw: it renders its own PIN row and error
+      // handling, so the approval modal must not sit on top of it (#33).
+      endpoint.endsWith('/auth/session/unlock') ||
       (endpoint.endsWith('/users/me/pin') && fetchOptions.method !== 'DELETE');
     if (
       isPinChallenge &&
       !isPinSelfCheck &&
       options.pin === undefined &&
-      typeof window !== 'undefined' &&
-      !(fetchOptions.body instanceof FormData)
+      typeof window !== 'undefined'
     ) {
       const approved = await requestPinPrompt(code === 'PIN_INVALID' ? 'invalid' : 'required');
       if (approved !== null) {

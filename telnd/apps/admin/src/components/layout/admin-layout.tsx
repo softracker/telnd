@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
-import { setPinPromptHandler, type PinPromptReason, SCREEN_LOCK_KEY, SESSION_TRUST_KEY, markSessionTrusted } from '@/lib/security-pin';
+import { setPinPromptHandler, type PinPromptReason, SCREEN_LOCK_KEY, SESSION_TRUST_KEY, SESSION_LOCK_EVENT, markSessionTrusted } from '@/lib/security-pin';
 import Sidebar from './sidebar';
 import Header from './header';
 import LockScreen from './lock-screen';
@@ -18,7 +18,7 @@ import PinApproveModal from './pin-approve-modal';
 // that marks a fresh sign-in trusted.
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 
-type PinInfo = { pinSet: boolean; pinRequired: boolean };
+type PinInfo = { pinSet: boolean; pinRequired: boolean; locked: boolean };
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -58,11 +58,14 @@ export default function AdminLayout({
     try {
       const res = await api.get<{
         success: boolean;
-        data: { pinSet: boolean; enforcedByAdmin: boolean; policyRequired: boolean };
+        data: { pinSet: boolean; enforcedByAdmin: boolean; policyRequired: boolean; screenLocked?: boolean };
       }>('/api/users/me/pin');
       return {
         pinSet: res.data.pinSet,
         pinRequired: res.data.enforcedByAdmin || res.data.policyRequired,
+        // Server-side freeze state (#33) — default false so an older
+        // answer without the field never fabricates a lock.
+        locked: res.data.screenLocked === true,
       };
     } catch {
       return null;
@@ -70,10 +73,10 @@ export default function AdminLayout({
   }, []);
 
   // Store the answer. Used on every raise: one that can't read fails
-  // closed — assume a PIN is on file, so the lock screen verifies instead
-  // of offering a setup the server may reject.
+  // closed — assume a PIN is on file (and the row frozen), so the lock
+  // screen verifies instead of offering a setup the server may reject.
   const loadPinInfo = useCallback(async (): Promise<PinInfo> => {
-    const next = (await fetchPinInfo()) ?? { pinSet: true, pinRequired: true };
+    const next = (await fetchPinInfo()) ?? { pinSet: true, pinRequired: true, locked: true };
     setPinInfo(next);
     return next;
   }, [fetchPinInfo]);
@@ -90,6 +93,11 @@ export default function AdminLayout({
       // A locked tab must prove itself again — drop the trust so a refresh
       // (and certainly a closed browser) comes back locked.
       sessionStorage.removeItem(SESSION_TRUST_KEY);
+      // The local flag is only the UI's opinion; the session row is the
+      // authority (#33). Freeze it server-side too — best-effort, because
+      // raising the lock while the API is unreachable must still lock the
+      // tab (a later raise retries the freeze).
+      void api.post('/api/auth/session/lock', {}).catch(() => {});
       setPinInfo(fresh);
       setScreenLock('locked');
       if (!fresh) void loadPinInfo();
@@ -109,9 +117,11 @@ export default function AdminLayout({
   }, []);
 
   // Resolve the persisted lock + trust state once we're actually in the app.
-  // Trusted and not found locked → straight in. Otherwise decide on a fresh
-  // read: lock only when there is something to ask (a PIN on file or one
-  // required), so reopening a browser without a PIN walks in instead of
+  // The server's own freeze state is asked FIRST (#33): a cleared
+  // SCREEN_LOCK_KEY with its trust intact used to walk straight in — now
+  // nothing local can overrule a frozen session row. Otherwise decide on a
+  // fresh read: lock only when there is something to ask (a PIN on file or
+  // one required), so reopening a browser without a PIN walks in instead of
   // dropping into a setup nobody started — an unaskable server fails
   // closed. The flag is deliberately NOT cleared on public pages any more:
   // only a completed sign-in (auth-context, via markSessionTrusted) may
@@ -121,13 +131,22 @@ export default function AdminLayout({
     if (isLoading || isPublicPage || !isAuthenticated) return;
     const trusted = sessionStorage.getItem(SESSION_TRUST_KEY) === '1';
     const lockedAtTearDown = localStorage.getItem(SCREEN_LOCK_KEY) === '1';
-    if (trusted && !lockedAtTearDown) {
-      setScreenLock('unlocked');
-      void loadPinInfo();
-      return;
-    }
     void (async () => {
       const fresh = await fetchPinInfo();
+      // Server says the row is frozen — raise, whatever the flags claim.
+      if (fresh?.locked) {
+        raiseLock(fresh);
+        return;
+      }
+      // Trusted and not found locked → straight in (the storage decision,
+      // unchanged — with a server that could be asked confirming the row
+      // is thawed).
+      if (trusted && !lockedAtTearDown) {
+        if (fresh) setPinInfo(fresh);
+        else void loadPinInfo();
+        setScreenLock('unlocked');
+        return;
+      }
       if (fresh && !(fresh.pinSet || fresh.pinRequired)) {
         // Nothing to ask — walk in and trust this session from here on.
         markSessionTrusted();
@@ -185,13 +204,20 @@ export default function AdminLayout({
   // Locking in one tab locks the others too (the storage event only fires
   // cross-tab, so this tab never reacts to itself). Raised through the
   // same fresh-read path — the other tab may well have changed the PIN on
-  // its way to the lock.
+  // its way to the lock. The custom event is this tab's own way in: the
+  // API raises it when the server answers SESSION_LOCKED (#33), which is
+  // what happens after a cleared storage flag.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === SCREEN_LOCK_KEY && e.newValue === '1') lockScreenNow();
     };
+    const onLockEvent = () => lockScreenNow();
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(SESSION_LOCK_EVENT, onLockEvent);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(SESSION_LOCK_EVENT, onLockEvent);
+    };
   }, [lockScreenNow]);
 
   // Keyboard lock: Ctrl+Shift+L anywhere in the panel. The bare Ctrl+L is
@@ -316,6 +342,20 @@ export default function AdminLayout({
     );
   }
 
+  // While locked the app is not rendered AT ALL (#33): no blurred copy of
+  // the DOM left to inspect, no live component tree behind the veil — the
+  // lock screen is the page. The server enforces the same freeze on every
+  // API call, so a cleared storage flag cannot bring this tree back.
+  if (screenLock === 'locked') {
+    return (
+      <LockScreen
+        pinSet={pinInfo?.pinSet ?? null}
+        onPinSet={() => void loadPinInfo()}
+        onUnlocked={unlockScreen}
+      />
+    );
+  }
+
   return (
     <div className="admin-body">
       <Header
@@ -345,15 +385,8 @@ export default function AdminLayout({
           onCancel={() => closePinPrompt(null)}
         />
       )}
-
-      {/* The lock itself sits above everything, including the modals. */}
-      {screenLock === 'locked' && (
-        <LockScreen
-          pinSet={pinInfo?.pinSet ?? null}
-          onPinSet={() => void loadPinInfo()}
-          onUnlocked={unlockScreen}
-        />
-      )}
+      {/* No lock overlay here any more: a locked tab returns only the
+          LockScreen above, children unmounted (#33). */}
     </div>
   );
 }

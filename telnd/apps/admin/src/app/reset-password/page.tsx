@@ -19,6 +19,20 @@ type DeadVerdict = 'expired' | 'invalid';
 const DEAD_LINK_KEY = 'telnd_reset_dead:';
 
 /**
+ * Storage key for a dead-link verdict: a hash of the token, never the
+ * token itself (#30). Web storage is readable by any script running on
+ * this origin, so the raw secret must not appear there — while the lookup
+ * still has to survive reloads. The reset token is 256 bits of randomness,
+ * so this fast hash has no practical preimage (the only way to produce it
+ * is to already hold the token).
+ */
+function deadLinkKey(token: string): string {
+  let hash = 5381;
+  for (let i = 0; i < token.length; i++) hash = ((hash << 5) + hash + token.charCodeAt(i)) >>> 0;
+  return `${DEAD_LINK_KEY}${hash.toString(36)}:${token.length}`;
+}
+
+/**
  * Tab-local memory of a dead link. Refreshing must never flip a link that
  * already failed back into the input form: once this tab has a verdict it
  * is reused on every reload with no request at all — so a refresh loop can
@@ -29,7 +43,7 @@ const DEAD_LINK_KEY = 'telnd_reset_dead:';
  */
 function readDeadLink(token: string): DeadVerdict | null {
   try {
-    const value = sessionStorage.getItem(DEAD_LINK_KEY + token);
+    const value = sessionStorage.getItem(deadLinkKey(token));
     return value === 'expired' || value === 'invalid' ? value : null;
   } catch {
     return null; // storage unavailable — verify against the API instead
@@ -38,7 +52,7 @@ function readDeadLink(token: string): DeadVerdict | null {
 
 function rememberDeadLink(token: string, verdict: DeadVerdict): void {
   try {
-    sessionStorage.setItem(DEAD_LINK_KEY + token, verdict);
+    sessionStorage.setItem(deadLinkKey(token), verdict);
   } catch {
     // Storage unavailable — this load is still guarded by the live check.
   }
@@ -53,7 +67,18 @@ function rememberDeadLink(token: string, verdict: DeadVerdict): void {
 function ResetPasswordForm() {
   const { t } = useLanguage();
   const searchParams = useSearchParams();
-  const token = searchParams.get('token') || '';
+  // Captured once into state BEFORE the URL is scrubbed below: the token
+  // is a secret, and it must not sit in the address bar, the history
+  // entry, or any URL a referrer could carry (#30).
+  const [token] = useState(() => searchParams.get('token') || '');
+
+  useEffect(() => {
+    if (!token || typeof window === 'undefined') return;
+    // Replace this history entry's URL with the bare path (keeping
+    // Next's history state so back/forward keeps working). Everything
+    // below reads the token from state, so the form flow is unaffected.
+    window.history.replaceState(window.history.state, '', window.location.pathname);
+  }, [token]);
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');

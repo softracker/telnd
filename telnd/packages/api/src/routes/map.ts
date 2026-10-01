@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
 import { validate } from '../middleware/validate';
-import { roleGuard } from '../middleware/auth';
+import { roleGuard, requireAdmin } from '../middleware/auth';
 import { mapPinSchema, mapBookmarkSchema } from '@telnd/validation';
 
 type MapEnv = {
@@ -67,7 +67,10 @@ map.get('/pins/:id', async (c) => {
   return c.json(pin);
 });
 
-map.post('/pins', roleGuard('ADMIN'), validate(mapPinSchema), async (c) => {
+// (#15) roleGuard alone only checks User.role — requireAdmin additionally
+// demands an ACTIVE AdminUser row, so pin writes can't be done by a bare
+// User.role='ADMIN' account with no (or a deactivated) panel login.
+map.post('/pins', roleGuard('ADMIN'), requireAdmin, validate(mapPinSchema), async (c) => {
   const body = c.get('validatedData');
   
   const pin = await prisma.mapPin.upsert({
@@ -79,7 +82,7 @@ map.post('/pins', roleGuard('ADMIN'), validate(mapPinSchema), async (c) => {
   return c.json(pin, 201);
 });
 
-map.delete('/pins/:id', roleGuard('ADMIN'), async (c) => {
+map.delete('/pins/:id', roleGuard('ADMIN'), requireAdmin, async (c) => {
   const id = c.req.param('id');
   await prisma.mapPin.delete({ where: { id } });
   return c.json({ success: true });

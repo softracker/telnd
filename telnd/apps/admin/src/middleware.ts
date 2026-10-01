@@ -35,9 +35,12 @@ export async function middleware(request: NextRequest) {
     const body = (await res.json()) as { data?: { adminRole?: { permissions?: unknown } | null } | null };
     permissions = body?.data?.adminRole?.permissions ?? null;
   } catch {
-    // API unreachable (restart, deploy): fail open — the section's own API
-    // guards still protect the data, while a lie here would 404 for everyone.
-    return NextResponse.next();
+    // Fail CLOSED (#29): a guard that passes when it cannot verify is not
+    // a guard. When /api/auth/me is unreachable the panel's data is
+    // unreachable with it, so denying here costs nothing operationally —
+    // while the old fail-open let the section load (route existence, page
+    // chrome) for anyone at exactly the moment verification was broken.
+    return NextResponse.rewrite(new URL('/settings/denied', request.url), { status: 404 });
   }
 
   const grants = Array.isArray(permissions)

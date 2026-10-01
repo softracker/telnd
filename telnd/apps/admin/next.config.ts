@@ -28,6 +28,20 @@ const nextConfig: NextConfig = {
     const api = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     return [{ source: '/api/:path*', destination: `${api}/api/:path*` }];
   },
+
+  // No referrer leaves the panel at all (#34). Document URLs here carry
+  // secrets in the query string (`/reset-password?token=…`, `/2fa?…`), and
+  // a single external link, image, or fetch would hand the full URL to a
+  // third party via the Referer header. `no-referrer` is the blunt,
+  // correct answer for an admin app with no external resources.
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

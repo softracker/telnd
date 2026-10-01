@@ -81,9 +81,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [permissions],
   );
 
+  // Storage holds DISPLAY metadata only (#20): the role and its grants
+  // are stripped before every write and re-derived exclusively from
+  // /auth/me on every load, so a tampered telnd_admin_user can never
+  // fake a permission — not even for the instant before the background
+  // refresh lands.
   const persistUser = useCallback((next: User) => {
     setUser(next);
-    localStorage.setItem(USER_KEY, JSON.stringify(next));
+    localStorage.setItem(USER_KEY, JSON.stringify({ ...next, adminRole: null }));
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -110,9 +115,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (storedUser) {
       try {
-        setUser(JSON.parse(storedUser));
-        // Refresh in the background so name/email/role stay current.
-        void refreshUser();
+        const parsed = JSON.parse(storedUser) as User;
+        // Rehydrate the identity for display WITHOUT its grants (#20) —
+        // adminRole only ever arrives from the server, below.
+        setUser({ ...parsed, adminRole: null });
+        // The loading gate holds until /auth/me has answered (or 8s, so a
+        // dead API can't pin the preloader forever), so the first render
+        // shows the real, server-confirmed permissions — never a
+        // storage-derived half-trust state.
+        void Promise.race([
+          refreshUser(),
+          new Promise((resolve) => setTimeout(resolve, 8000)),
+        ]).finally(() => setIsLoading(false));
+        return;
       } catch {
         localStorage.removeItem(USER_KEY);
       }
@@ -139,8 +154,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!userData) return;
 
     // Token and refresh token are set as HttpOnly cookies by the server
-    // Store only user metadata in localStorage for UI display
-    localStorage.setItem(USER_KEY, JSON.stringify(userData));
+    // Store only user metadata in localStorage for UI display — the grants
+    // are never written to storage (#20).
+    localStorage.setItem(USER_KEY, JSON.stringify({ ...userData, adminRole: null }));
 
     setUser(userData);
     // Fresh sign-in: this browser session may enter without a PIN, and any
@@ -151,7 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const completeLogin = useCallback((nextUser: User) => {
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    localStorage.setItem(USER_KEY, JSON.stringify({ ...nextUser, adminRole: null }));
     setUser(nextUser);
     // The two-factor gate just completed — a full sign-in, same trust as
     // a password-only login.

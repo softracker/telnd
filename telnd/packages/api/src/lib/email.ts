@@ -203,14 +203,16 @@ export async function isSmtpConfigured(): Promise<boolean> {
 /**
  * The lead sentence of the OTP email depends on why the code was sent —
  * a sign-in challenge, an enrollment from the Security page or the login
- * gate, or a neutral fallback. Pure so it can be checked without SMTP.
+ * gate, a phone-number sign-in, or a neutral fallback. Pure so it can be
+ * checked without SMTP.
  */
-export type OtpEmailContext = 'signin' | 'setup' | 'verify';
+export type OtpEmailContext = 'signin' | 'setup' | 'verify' | 'login';
 
 export function twoFactorEmailLead(context: OtpEmailContext, appName: string): string {
   const name = escapeHtml(appName);
   if (context === 'signin') return `Enter this code to finish signing in to ${name}:`;
   if (context === 'setup') return `Enter this code to finish setting up two-factor authentication for ${name}:`;
+  if (context === 'login') return `Enter this code to sign in to ${name}:`;
   return `Enter this code to continue in ${name}:`;
 }
 

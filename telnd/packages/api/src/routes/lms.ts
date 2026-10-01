@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
 import { validate } from '../middleware/validate';
+import { roleGuard, requireAdmin } from '../middleware/auth';
 import { lmsCourseSchema, lmsModuleSchema, lmsLessonSchema, lmsQuizSchema, lmsAssignmentSchema, lmsDiscussionSchema, lmsEnrollSchema, lmsProgressSchema } from '@telnd/validation';
 
 type LmsEnv = {
@@ -13,13 +14,45 @@ type LmsEnv = {
 
 const lms = new Hono<LmsEnv>();
 
+// (#27) page/limit came straight from parseInt into skip/take: 'abc'
+// became NaN and 999999999 an unbounded read, so one request could pull
+// (or crash on) the whole course catalogue. Same clamp the admin router
+// uses.
+function clampLimit(value: string | undefined, max = 100): number {
+  const parsed = parseInt(value || '20');
+  if (isNaN(parsed) || parsed < 1) return 20;
+  return Math.min(parsed, max);
+}
+
+function clampPage(value: string | undefined): number {
+  const parsed = parseInt(value || '1');
+  if (isNaN(parsed) || parsed < 1) return 1;
+  return parsed;
+}
+
+// (#3) Display-only projection of a User nested in course and discussion
+// payloads (the instructor / the discussion author). The raw row carries
+// passwordHash and the twoFactor* material, so `instructor: true` and
+// `user: true` are never safe here; phone is omitted because no screen
+// rendering these payloads shows it (grep of apps/ finds no caller of
+// these endpoints at all).
+const displayUserSelect = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  avatar: true,
+  role: true,
+  isActive: true,
+} as const;
+
 // ============================================
 // List Courses (Public)
 // ============================================
 lms.get('/courses', async (c) => {
-  const { category, level, language, page = '1', limit = '20' } = c.req.query();
-  const pageNum = parseInt(page);
-  const limitNum = parseInt(limit);
+  const { category, level, language } = c.req.query();
+  const pageNum = clampPage(c.req.query('page'));
+  const limitNum = clampLimit(c.req.query('limit'));
 
   const where: any = { isPublished: true };
   if (category) where.category = category;
@@ -32,7 +65,7 @@ lms.get('/courses', async (c) => {
       skip: (pageNum - 1) * limitNum,
       take: limitNum,
       orderBy: { createdAt: 'desc' },
-      include: { instructor: true },
+      include: { instructor: { select: displayUserSelect } },
     }),
     prisma.lMSCourse.count({ where }),
   ]);
@@ -48,7 +81,7 @@ lms.get('/courses/:slug', async (c) => {
   const course = await prisma.lMSCourse.findUnique({
     where: { slug },
     include: {
-      instructor: true,
+      instructor: { select: displayUserSelect },
       modules: {
         include: { lessons: true },
         orderBy: { order: 'asc' },
@@ -64,7 +97,16 @@ lms.get('/courses/:slug', async (c) => {
 // ============================================
 // Create Course
 // ============================================
-lms.post('/courses', validate(lmsCourseSchema), async (c) => {
+// (#16) Course creation is gated to an admin session. Evidence for that
+// choice: grep across apps/web, apps/admin and apps/mobile finds no caller
+// of POST /lms/courses (there is no "create course" UI anywhere), and the
+// data model has no instructor flag to grant creation to ordinary users —
+// UserRole has no INSTRUCTOR value; "instructor" is derived purely from
+// course.instructorId. Since instructorId is the ownership key every other
+// LMS mutation below checks, creation is the single trust point and can't
+// stay open to any authenticated user. instructorId is still forced to the
+// caller so a spoofed body can never hand ownership to someone else.
+lms.post('/courses', roleGuard('ADMIN'), requireAdmin, validate(lmsCourseSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
@@ -312,7 +354,9 @@ lms.get('/courses/:courseId/discussions', async (c) => {
   const courseId = c.req.param('courseId');
   const discussions = await prisma.lMSDiscussion.findMany({
     where: { courseId, parentId: null },
-    include: { user: true, replies: { include: { user: true } } },
+    // (#3) Discussion authors are nested users — display projection only,
+    // never the raw row (passwordHash / twoFactor* material).
+    include: { user: { select: displayUserSelect }, replies: { include: { user: { select: displayUserSelect } } } },
     orderBy: { createdAt: 'desc' },
   });
 

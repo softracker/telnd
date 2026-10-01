@@ -69,7 +69,10 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
     setBusy(true);
     setError(null);
     try {
-      await api.post('/api/users/me/pin/verify', { pin: value });
+      // One call proves the PIN and thaws the session row (#33): the
+      // server-side freeze is what actually keeps the app locked, and
+      // only this answer can clear it.
+      await api.post('/api/auth/session/unlock', { pin: value });
       onUnlocked();
     } catch (err) {
       const code = errCode(err);
@@ -112,6 +115,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
     setError(null);
     try {
       await api.post('/api/users/me/pin', { pin: value });
+      // The PIN exists now — thaw the session row with it (#33), then
+      // walk in like any other unlock.
+      await api.post('/api/auth/session/unlock', { pin: value });
       // Tell the rest of the app — the Security card under this overlay
       // must not keep reading "No PIN set" until someone hits refresh.
       announcePinChange();
@@ -155,26 +161,26 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
   };
 
   return (
-    <div
-      className="lock-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label={mode === 'setup' ? t('screenLock.setupTitle') : t('screenLock.verifyTitle')}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 3000,
-        // Frosted glass, per request: the veil + blur live in
-        // `.lock-backdrop` (style tag at the bottom of this overlay) — the
-        // app shows through, but blurred past legibility and dimmed by a
-        // translucent card tint, so the page still can't be read and the
-        // lock card keeps its contrast against it.
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1.5rem',
-      }}
-    >
+    <>
+      <div
+        className="lock-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === 'setup' ? t('screenLock.setupTitle') : t('screenLock.verifyTitle')}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 3000,
+          // Solid, opaque cover — deliberately no blur and nothing
+          // behind it: while locked the app is unmounted (#33), so
+          // there is no page left to frosted-glass over, and an opaque
+          // sheet guarantees no outline of it could ever show through.
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1.5rem',
+        }}
+      >
       <div
         style={{
           width: '100%',
@@ -336,8 +342,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
       {/* Local keyframes: `spin` for the buttons' spinner (neither this
           overlay nor its parents guarantee it), `shake` for the card's
           wrong-entry jolt. */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }\n.lock-backdrop {\n  /* Two background declarations on purpose: the plain veil parses\n     everywhere (last resort), the theme-aware card tint wins in any\n     browser that understands color-mix() — white in light, the dark\n     card colour in dark. */\n  background-color: rgba(0, 0, 0, 0.45);\n  background-color: color-mix(in srgb, var(--card-bg) 62%, transparent);\n  -webkit-backdrop-filter: blur(12px);\n  backdrop-filter: blur(12px);\n}`}</style>
-    </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }\n.lock-backdrop {\n  /* Fully opaque sheet: the app is unmounted while locked (#33), so\n     there is nothing behind this overlay by design. No blur and no\n     translucency — the theme's card colour simply covers the viewport\n     (white in light mode, the dark card colour in dark mode), and no\n     outline of the page can show through. */\n  background-color: var(--card-bg);\n}}`}</style>
+      </div>
+    </>
   );
 }
 

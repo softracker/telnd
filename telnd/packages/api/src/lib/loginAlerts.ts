@@ -5,9 +5,13 @@
 // account is being opened somewhere it never has before — that is the one
 // moment the owner gets an email. Everything after just moves lastSeenAt.
 //
-// - deviceKey is family-level ("chrome|windows|desktop"), the same
-//   reading the Security page's describeDevice does: a Chrome version
-//   bump must not re-announce itself as a new device every few weeks.
+// - deviceKey stays family-level ("chrome|windows|desktop") so the
+//   Security page can label rows, but "known device" is decided by the
+//   FULL stored User-Agent string, not the family (#24): a family key
+//   alone is spoofable — an attacker who forges "Chrome|windows|desktop"
+//   silences the alert from the account it is supposed to protect. Each
+//   exact browser binary announces itself at most once (a genuine
+//   Chrome upgrade counts as new — that is the honest reading).
 // - Signup registers its device silently, so a fresh account is never
 //   emailed moments after creation, and the very next sign-in from that
 //   same browser is (correctly) not "new".

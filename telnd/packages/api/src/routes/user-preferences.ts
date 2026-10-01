@@ -10,6 +10,13 @@ type UserPreferencesEnv = {
 
 const userPreferences = new Hono<UserPreferencesEnv>();
 
+// (#27) Preferences are just a language + a theme, so the body is capped at
+// 16KB, and these keys are rejected at any depth: JSON.parse keeps them as
+// own properties, and a later merge/spread of a stored value could turn them
+// into real prototype pollution.
+const MAX_BODY_BYTES = 16 * 1024;
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 userPreferences.get('/', async (c) => {
   const userId = c.get('userId');
   const rows = await prisma.userPreference.findMany({
@@ -24,10 +31,24 @@ userPreferences.get('/', async (c) => {
 
 userPreferences.put('/', async (c) => {
   const userId = c.get('userId');
-  const body = await c.req.json();
+  // (#27) Malformed JSON previously threw a 500; parse defensively, require a
+  // plain object, cap the size, and reject prototype-pollution keys before
+  // anything touches the database.
+  const body = await c.req.json().catch(() => null);
 
-  if (!body || typeof body !== 'object') {
-    return c.json({ success: false, error: { code: 'INVALID_BODY', message: 'Request body must be a JSON object' } }, 400);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be a JSON object' } }, 400);
+  }
+
+  if (JSON.stringify(body).length > MAX_BODY_BYTES) {
+    return c.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Request body must be 16KB or smaller' } }, 400);
+  }
+
+  if (containsForbiddenKeys(body)) {
+    return c.json({
+      success: false,
+      error: { code: 'INVALID_REQUEST', message: `Prototype pollution keys are not allowed: ${[...FORBIDDEN_KEYS].join(', ')}` },
+    }, 400);
   }
 
   const allowedKeys = ['language', 'theme'];
@@ -57,5 +78,23 @@ userPreferences.delete('/:key', async (c) => {
   await prisma.userPreference.deleteMany({ where: { userId, key } });
   return c.json({ success: true });
 });
+
+// (#27) Iterative walk of the whole parsed body: returns true if
+// `__proto__`, `constructor` or `prototype` appears as any key at any depth.
+function containsForbiddenKeys(value: unknown): boolean {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+    } else if (current !== null && typeof current === 'object') {
+      for (const key of Object.keys(current)) {
+        if (FORBIDDEN_KEYS.has(key)) return true;
+      }
+      for (const item of Object.values(current as Record<string, unknown>)) stack.push(item);
+    }
+  }
+  return false;
+}
 
 export default userPreferences;

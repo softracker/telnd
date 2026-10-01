@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { roleGuard } from '../middleware/auth';
+import { roleGuard, requireAdmin } from '../middleware/auth';
 
 type AnalyticsEnv = {
   Variables: {
@@ -14,7 +14,12 @@ const analytics = new Hono<AnalyticsEnv>();
 // ============================================
 // Admin Analytics
 // ============================================
-analytics.get('/admin/overview', roleGuard('ADMIN'), async (c) => {
+// (#15) roleGuard alone only checks User.role — anyone with a raw 'ADMIN' role
+// (no AdminUser row, or a deactivated panel account) would pass. requireAdmin
+// additionally demands an ACTIVE AdminUser row, so all three admin analytics
+// endpoints below are gated on the panel account actually existing and being
+// enabled.
+analytics.get('/admin/overview', roleGuard('ADMIN'), requireAdmin, async (c) => {
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -40,7 +45,7 @@ analytics.get('/admin/overview', roleGuard('ADMIN'), async (c) => {
   });
 });
 
-analytics.get('/admin/users', roleGuard('ADMIN'), async (c) => {
+analytics.get('/admin/users', roleGuard('ADMIN'), requireAdmin, async (c) => {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -54,7 +59,7 @@ analytics.get('/admin/users', roleGuard('ADMIN'), async (c) => {
   return c.json({ total, active, newThisWeek, newThisMonth });
 });
 
-analytics.get('/admin/jobs', roleGuard('ADMIN'), async (c) => {
+analytics.get('/admin/jobs', roleGuard('ADMIN'), requireAdmin, async (c) => {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 

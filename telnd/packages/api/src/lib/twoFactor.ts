@@ -2,7 +2,8 @@
 // page's self-service endpoints and the super-admin controls:
 //
 // - SMS OTP store: hashed, single-use, 5-minute expiry, 5 wrong tries
-//   burns the code, 45s minimum between sends (in-memory — single API
+//   burns the code, 45s minimum between sends, purpose-bound (a code can
+//   only be spent by the flow that requested it — in-memory, single API
 //   instance, restart just means "request a new code").
 // - Phone normalization to the 8801… form api.sms.net.bd expects, plus
 //   masking for display (the raw number is never echoed back).
@@ -164,6 +165,10 @@ export async function sendOtpToUser(
     expiresAt: Date.now() + OTP_TTL_MS,
     attempts: 0,
     sentAt: Date.now(),
+    // Purpose binding (#38): the code may only be spent by the flow that
+    // requested it — a sign-in challenge code can't clear a Security-page
+    // enable, a login OTP can't pass a 2FA challenge, and so on.
+    purpose: context,
   });
   pruneOtpStore();
   return { ok: true };
@@ -225,6 +230,8 @@ interface OtpEntry {
   expiresAt: number;
   attempts: number;
   sentAt: number;
+  /** Which flow requested the code (`sendOtpToUser`'s context). */
+  purpose: OtpEmailContext;
 }
 
 const otpStore = new Map<string, OtpEntry>();
@@ -246,12 +253,19 @@ export function clearOtp(userId: string): void {
   otpStore.delete(userId);
 }
 
+/**
+ * Spends a code. `purpose` must match the flow that requested it — a code
+ * minted for one door does not open another (#38); a mismatch answers
+ * NO_OTP so no oracle distinguishes "wrong door" from "no code".
+ */
 export function verifyOtp(
   userId: string,
   code: string,
+  purpose: OtpEmailContext,
 ): { ok: true } | { ok: false; reason: 'NO_OTP' | 'INVALID' | 'EXPIRED' | 'TOO_MANY_ATTEMPTS' } {
   const entry = otpStore.get(userId);
   if (!entry) return { ok: false, reason: 'NO_OTP' };
+  if (entry.purpose !== purpose) return { ok: false, reason: 'NO_OTP' };
   if (entry.expiresAt <= Date.now()) {
     otpStore.delete(userId);
     return { ok: false, reason: 'EXPIRED' };

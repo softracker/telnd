@@ -70,13 +70,18 @@ export const twoFactorEnableSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
 });
 
-// Turning it off: either a live 2FA code or the account password — the
-// Security page offers whichever the operator still has in hand.
+// Turning it off: proof must be a live code from the ENROLLED factor — the
+// account password alone must not switch 2FA off (#37), or a session +
+// password attacker could drop the very barrier standing in their way.
 export const twoFactorDisableSchema = z.object({
-  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits').optional(),
-  password: z.string().min(1).max(200).optional(),
-}).refine((d) => Boolean(d.code || d.password), {
-  message: 'A verification code or your password is required',
+  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+});
+
+// Regenerating the recovery codes deletes the current set (a revocation as
+// well as a refill), so a stolen session must not be able to do it on its
+// own (#19): the caller proves the enrolled factor with a live 6-digit code.
+export const twoFactorRecoveryRotateSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -89,3 +94,4 @@ export type CheckResetTokenInput = z.infer<typeof checkResetTokenSchema>;
 export type TwoFactorVerifyInput = z.infer<typeof twoFactorVerifySchema>;
 export type TwoFactorEnableInput = z.infer<typeof twoFactorEnableSchema>;
 export type TwoFactorDisableInput = z.infer<typeof twoFactorDisableSchema>;
+export type TwoFactorRecoveryRotateInput = z.infer<typeof twoFactorRecoveryRotateSchema>;

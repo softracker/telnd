@@ -315,7 +315,15 @@ export default function SecuritySettingsPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [resendIn, setResendIn] = useState(0);
   const [disableOpen, setDisableOpen] = useState(false);
-  const [disableCredential, setDisableCredential] = useState('');
+  // Live verification code for disabling 2FA — the server accepts a code
+  // from the enrolled factor and nothing else (#37).
+  const [disableCode, setDisableCode] = useState('');
+  // Same for rotating the recovery codes (#19): a stolen session alone
+  // cannot burn the backup set.
+  const [rotateCode, setRotateCode] = useState('');
+  // One verify-purpose send countdown covers both flows above: they share
+  // the same channel, and the server spaces resends by 45s anyway.
+  const [verifyIn, setVerifyIn] = useState(0);
   // The global "require 2FA for all admins" switch arms like every other
   // destructive toggle on this panel: first click confirms, second acts.
   const [policyArmed, setPolicyArmed] = useState(false);
@@ -413,6 +421,34 @@ export default function SecuritySettingsPage() {
     return () => clearTimeout(timer);
   }, [resendIn]);
 
+  // Same tick for the verify-purpose countdown (disable / rotate).
+  useEffect(() => {
+    if (verifyIn <= 0) return;
+    const timer = setTimeout(() => setVerifyIn((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [verifyIn]);
+
+  // #31: the raw TOTP secret and a freshly issued recovery-code set must
+  // not sit in React state until someone remembers to dismiss them —
+  // five minutes after they appear they are dropped from memory either
+  // way. Nothing is lost that matters: the enrollment restarts from the
+  // choice row, and the codes panel closes (the server keeps only hashes;
+  // rotate again if the set was never saved).
+  useEffect(() => {
+    if (!setup && !savedCodes) return;
+    const timer = setTimeout(() => {
+      setSetup(null);
+      setSetupPanel(null);
+      setTwoFaCode('');
+      setCodeSent(false);
+      setResendIn(0);
+      setSavedCodes(null);
+      setCodesSavedOk(false);
+      setCodesCopied(false);
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [setup, savedCodes]);
+
   function closeSetupPanel() {
     setSetupPanel(null);
     setSetup(null);
@@ -448,6 +484,25 @@ export default function SecuritySettingsPage() {
       setCodeSent(true);
       setResendIn(45);
       showToast('success', t('twoFactor.sentToast'));
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  // Send a verification-purpose code for an already-enabled account —
+  // the input for both the disable form and the recovery-code rotation,
+  // which now demand a live code from the enrolled factor (#37, #19).
+  // No method in the body: the server derives the channel from what is
+  // stored on the account.
+  async function handleSendVerify() {
+    if (twoFaBusy || verifyIn > 0) return;
+    setTwoFaBusy('send');
+    try {
+      await api.post('/api/users/me/2fa/send', {});
+      showToast('success', t('twoFactor.sentToast'));
+      setVerifyIn(45);
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
@@ -507,24 +562,26 @@ export default function SecuritySettingsPage() {
 
   async function handleDisable(e: FormEvent) {
     e.preventDefault();
-    const value = disableCredential.trim();
-    if (!value || twoFaBusy) return;
-    // A six-digit value is a live verification code; passwords are at least
-    // 8 characters, so the two shapes can never collide.
-    const body = /^\d{6}$/.test(value) ? { code: value } : { password: value };
+    const code = disableCode.trim();
+    // The server takes a live code from the enrolled factor and nothing
+    // else (#37) — a session + password attacker must not be able to
+    // disarm the very barrier standing in their way.
+    if (!/^\d{6}$/.test(code) || twoFaBusy) return;
     setTwoFaBusy('disable');
     try {
-      await api.post('/api/users/me/2fa/disable', body);
+      await api.post('/api/users/me/2fa/disable', { code });
       // The server deleted the codes with the factor they belonged to —
       // drop any panel still showing the old set.
       setSavedCodes(null);
       setCodesArmed(false);
+      setRotateCode('');
+      setVerifyIn(0);
       setTwoFa((prev) =>
         prev ? { ...prev, enabled: false, method: null, pendingSetup: false, canDisable: false } : prev,
       );
       showToast('success', t('twoFactor.disabledToast'));
       setDisableOpen(false);
-      setDisableCredential('');
+      setDisableCode('');
       await loadTwoFa();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
@@ -535,21 +592,27 @@ export default function SecuritySettingsPage() {
   }
 
   // Rotate the recovery-code set. Two-click like every other revoking
-  // action on this panel: the first press warns (the old codes die), the
-  // second performs it and shows the new set once.
+  // action on this panel: the first press warns and opens the code check
+  // (the old codes die, so the server demands a live code from the
+  // enrolled factor — #19), the second performs it once six digits are
+  // in and shows the new set once.
   async function handleRegenerateCodes() {
     if (!twoFa || twoFaBusy) return;
     if (!codesArmed) {
       setCodesArmed(true);
       return;
     }
+    const code = rotateCode.trim();
+    if (!/^\d{6}$/.test(code)) return;
     setCodesArmed(false);
     setTwoFaBusy('codes');
     try {
       const res = await api.post<{ success: boolean; data: { recoveryCodes: string[] } }>(
         '/api/users/me/2fa/recovery-codes',
-        {},
+        { code },
       );
+      setRotateCode('');
+      setVerifyIn(0);
       setSavedCodes(res.data.recoveryCodes);
       setCodesSavedOk(false);
       setCodesCopied(false);
@@ -911,43 +974,115 @@ export default function SecuritySettingsPage() {
 
                 {/* Recovery codes: how many are unused, plus the two-click
                     regenerate (which revokes every previously saved code).
-                    While a fresh set is being shown, the save panel below
-                    takes this spot over instead. */}
+                    The second click also needs a live code from the
+                    enrolled factor (#19) — the armed state opens the
+                    check below. While a fresh set is being shown, the
+                    save panel takes this spot over instead. */}
                 {twoFa.enabled && !savedCodes && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
-                    <span
-                      style={{
-                        fontSize: '0.75rem',
-                        color: twoFa.recoveryCodesRemaining > 0 ? 'var(--text-muted)' : 'var(--accent)',
-                      }}
-                    >
-                      {twoFa.recoveryCodesRemaining > 0
-                        ? t('twoFactor.codesRemaining', { n: twoFa.recoveryCodesRemaining })
-                        : t('twoFactor.codesNone')}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleRegenerateCodes}
-                      disabled={twoFaBusy !== null}
-                      style={{
-                        ...tfBtnStyle,
-                        padding: '0.375rem 0.75rem',
-                        fontSize: '0.75rem',
-                        backgroundColor: codesArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
-                        color: codesArmed ? 'var(--accent)' : 'var(--text-main)',
-                        border: codesArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
-                        opacity: twoFaBusy ? 0.7 : 1,
-                        cursor: twoFaBusy ? 'not-allowed' : 'pointer',
-                      }}
-                    >
-                      {twoFaBusy === 'codes' && <Spinner size={14} />}
-                      {twoFaBusy === 'codes'
-                        ? t('twoFactor.generating')
-                        : codesArmed
-                          ? t('common.confirm')
-                          : t('twoFactor.generateCodes')}
-                    </button>
-                  </div>
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.875rem' }}>
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          color: twoFa.recoveryCodesRemaining > 0 ? 'var(--text-muted)' : 'var(--accent)',
+                        }}
+                      >
+                        {twoFa.recoveryCodesRemaining > 0
+                          ? t('twoFactor.codesRemaining', { n: twoFa.recoveryCodesRemaining })
+                          : t('twoFactor.codesNone')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleRegenerateCodes}
+                        disabled={twoFaBusy !== null || (codesArmed && rotateCode.length !== 6)}
+                        style={{
+                          ...tfBtnStyle,
+                          padding: '0.375rem 0.75rem',
+                          fontSize: '0.75rem',
+                          backgroundColor: codesArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                          color: codesArmed ? 'var(--accent)' : 'var(--text-main)',
+                          border: codesArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          opacity: twoFaBusy || (codesArmed && rotateCode.length !== 6) ? 0.7 : 1,
+                          cursor: twoFaBusy || (codesArmed && rotateCode.length !== 6) ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {twoFaBusy === 'codes' && <Spinner size={14} />}
+                        {twoFaBusy === 'codes'
+                          ? t('twoFactor.generating')
+                          : codesArmed
+                            ? t('common.confirm')
+                            : t('twoFactor.generateCodes')}
+                      </button>
+                    </div>
+
+                    {codesArmed && (
+                      <div
+                        style={{
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '10px',
+                          padding: '1rem',
+                          marginBottom: '0.875rem',
+                        }}
+                      >
+                        <label
+                          style={{
+                            display: 'block',
+                            fontSize: '0.8125rem',
+                            fontWeight: 500,
+                            color: 'var(--label-text)',
+                            marginBottom: '0.375rem',
+                          }}
+                        >
+                          {t('twoFactor.codeLabel')}
+                        </label>
+                        <OtpInput
+                          value={rotateCode}
+                          onChange={setRotateCode}
+                          ariaLabel={t('twoFactor.codeLabel')}
+                          style={{
+                            height: '40px',
+                            fontSize: '0.9375rem',
+                            borderWidth: '1px',
+                            borderStyle: 'solid',
+                            borderColor: 'var(--input-border)',
+                            backgroundColor: 'var(--input-bg)',
+                            color: 'var(--text-main)',
+                          }}
+                          focusStyle={{ borderColor: 'var(--accent)' }}
+                        />
+                        <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.875rem', alignItems: 'center' }}>
+                          {twoFa.method !== 'totp' && (
+                            <button
+                              type="button"
+                              onClick={handleSendVerify}
+                              disabled={twoFaBusy !== null || verifyIn > 0}
+                              style={{
+                                ...tfBtnStyle,
+                                opacity: twoFaBusy || verifyIn > 0 ? 0.7 : 1,
+                                cursor: twoFaBusy || verifyIn > 0 ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {twoFaBusy === 'send'
+                                ? t('twoFactor.sending')
+                                : verifyIn > 0
+                                  ? t('twoFactor.resendIn', { sec: verifyIn })
+                                  : t('twoFactor.sendCode')}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCodesArmed(false);
+                              setRotateCode('');
+                            }}
+                            style={tfBtnStyle}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* The one showing of a fresh set: plaintext exists only
@@ -1383,25 +1518,83 @@ export default function SecuritySettingsPage() {
                 ) : twoFa.canDisable ? (
                   <div>
                     {!disableOpen ? (
-                      <button type="button" onClick={() => setDisableOpen(true)} style={tfBtnStyle}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDisableOpen(true);
+                          setDisableCode('');
+                        }}
+                        style={tfBtnStyle}
+                      >
                         {t('twoFactor.disable')}
                       </button>
                     ) : (
                       <form onSubmit={handleDisable} style={{ maxWidth: '420px' }}>
-                        <PasswordInput
-                          label={t('twoFactor.disableLabel')}
-                          value={disableCredential}
-                          onChange={setDisableCredential}
-                          required
-                          autoComplete="current-password"
-                          helperText={t('twoFactor.disableHint')}
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '0.75rem',
+                            marginBottom: '0.375rem',
+                          }}
+                        >
+                          <label
+                            style={{
+                              display: 'block',
+                              fontSize: '0.8125rem',
+                              fontWeight: 500,
+                              color: 'var(--label-text)',
+                            }}
+                          >
+                            {t('twoFactor.codeLabel')}
+                          </label>
+                          {/* SMS and email methods need a live code from
+                              the channel; authenticator users read it off
+                              the app. The server verifies the enrolled
+                              factor and nothing else (#37). */}
+                          {twoFa.method !== 'totp' && (
+                            <button
+                              type="button"
+                              onClick={handleSendVerify}
+                              disabled={twoFaBusy !== null || verifyIn > 0}
+                              style={{
+                                ...tfBtnStyle,
+                                padding: '0.375rem 0.75rem',
+                                fontSize: '0.75rem',
+                                opacity: twoFaBusy || verifyIn > 0 ? 0.7 : 1,
+                                cursor: twoFaBusy || verifyIn > 0 ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {twoFaBusy === 'send'
+                                ? t('twoFactor.sending')
+                                : verifyIn > 0
+                                  ? t('twoFactor.resendIn', { sec: verifyIn })
+                                  : t('twoFactor.sendCode')}
+                            </button>
+                          )}
+                        </div>
+                        <OtpInput
+                          value={disableCode}
+                          onChange={setDisableCode}
+                          ariaLabel={t('twoFactor.codeLabel')}
+                          style={{
+                            height: '40px',
+                            fontSize: '0.9375rem',
+                            borderWidth: '1px',
+                            borderStyle: 'solid',
+                            borderColor: 'var(--input-border)',
+                            backgroundColor: 'var(--input-bg)',
+                            color: 'var(--text-main)',
+                          }}
+                          focusStyle={{ borderColor: 'var(--accent)' }}
                         />
-                        <div style={{ display: 'flex', gap: '0.625rem' }}>
+                        <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.875rem' }}>
                           <button
                             type="button"
                             onClick={() => {
                               setDisableOpen(false);
-                              setDisableCredential('');
+                              setDisableCode('');
                             }}
                             style={tfBtnStyle}
                           >
@@ -1409,14 +1602,14 @@ export default function SecuritySettingsPage() {
                           </button>
                           <button
                             type="submit"
-                            disabled={!disableCredential.trim() || twoFaBusy !== null}
+                            disabled={disableCode.length !== 6 || twoFaBusy !== null}
                             style={{
                               ...tfBtnStyle,
                               backgroundColor: 'var(--error-bg)',
                               color: 'var(--error-text)',
                               border: '1px solid var(--error-text)',
-                              opacity: !disableCredential.trim() || twoFaBusy ? 0.7 : 1,
-                              cursor: !disableCredential.trim() || twoFaBusy ? 'not-allowed' : 'pointer',
+                              opacity: disableCode.length !== 6 || twoFaBusy ? 0.7 : 1,
+                              cursor: disableCode.length !== 6 || twoFaBusy ? 'not-allowed' : 'pointer',
                             }}
                           >
                             {twoFaBusy === 'disable' && <Spinner size={14} />}

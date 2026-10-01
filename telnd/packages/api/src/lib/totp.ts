@@ -71,12 +71,26 @@ function codeAt(secret: string, timeStepIndex: bigint): string | null {
  * Accepts the previous / current / next step (±30s of clock skew, the
  * usual authenticator-app tolerance). Comparison is constant-time and a
  * malformed code simply fails.
+ *
+ * Per-code burn (#25): the same digits cannot be spent twice inside their
+ * validity span — a successful verify records the code, and any replay of
+ * it within 2 minutes is rejected outright. Without this, a code lifted
+ * from a shoulder-surfed screen or a logged request could clear the gate
+ * again for as long as its window (±30s) kept matching. Keyed by the
+ * secret (one entry per enrolled account) and held in memory, consistent
+ * with every other auth ephemeral here — a restart can only shorten the
+ * replay span to the code's own remaining window.
  */
+const BURN_SPAN_MS = 2 * 60 * 1000;
+const burnedCodes = new Map<string, { code: string; at: number }>();
+
 export function verifyTotp(secret: string, code: string, atMs: number = Date.now()): boolean {
   if (!/^\d{6}$/.test(code) || !secret) return false;
   const step = BigInt(Math.floor(atMs / 1000 / 30));
   const candidates = [step - 1n, step, step + 1n];
   const presented = Buffer.from(code, 'utf8');
+  const burned = burnedCodes.get(secret);
+  if (burned && burned.code === code && atMs - burned.at < BURN_SPAN_MS) return false;
   let ok = false;
   for (const c of candidates) {
     const expected = codeAt(secret, c);
@@ -85,6 +99,7 @@ export function verifyTotp(secret: string, code: string, atMs: number = Date.now
     // same compare (no timing leak on which window matched).
     if (timingSafeEqual(Buffer.from(expected, 'utf8'), presented)) ok = true;
   }
+  if (ok) burnedCodes.set(secret, { code, at: atMs });
   return ok;
 }
 

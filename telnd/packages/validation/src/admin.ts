@@ -59,6 +59,12 @@ export const updateAccountSchema = z.object({
     .nullable()
     .optional()
     .or(z.literal('')),
+  // Re-auth for the sign-in identifiers only (#6): the handler demands this
+  // and verifies it against the stored hash when — and only when — the body
+  // actually changes `email` or `phone`; name/avatar-only edits never need
+  // it. Kept optional here so those ordinary profile updates keep working
+  // with the payload they already send.
+  currentPassword: z.string().min(1).max(200).optional(),
 });
 
 // Self-service password change: the current password proves possession of the

@@ -52,3 +52,17 @@ export function markSessionTrusted(): void {
   localStorage.removeItem(SCREEN_LOCK_KEY);
   sessionStorage.setItem(SESSION_TRUST_KEY, '1');
 }
+
+// Raised in THIS tab when the server answers SESSION_LOCKED (#33): the
+// frozen session row is the authority now, and the local flags (most
+// likely cleared to walk past the overlay) are re-set on the way up.
+// Other tabs notice through the SCREEN_LOCK_KEY storage event as they
+// always did; this tab has no storage event for itself, hence the name.
+export const SESSION_LOCK_EVENT = 'telnd:screen-lock-raised';
+
+export function raiseScreenLockLocally(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(SCREEN_LOCK_KEY, '1');
+  sessionStorage.removeItem(SESSION_TRUST_KEY);
+  window.dispatchEvent(new Event(SESSION_LOCK_EVENT));
+}

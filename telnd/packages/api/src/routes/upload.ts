@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { roleGuard } from '../middleware/auth.js';
+import { z } from 'zod';
+import { roleGuard, requireAdmin } from '../middleware/auth.js';
 import {
   initR2Client,
   convertToWebP,
@@ -13,6 +14,17 @@ import {
 import { prisma } from '@telnd/database';
 
 const upload = new Hono();
+
+// (#27) DELETE /image previously cast the raw JSON body straight to
+// { key?, url? } — malformed JSON threw a 500 and wrong-typed fields leaked
+// into the key-derivation logic. This schema mirrors exactly what the handler
+// reads (either a direct object key or the public URL to derive it from);
+// both stay optional because the handler answers its own "No key provided"
+// error when neither is usable, and zod strips every unknown key.
+const deleteImageSchema = z.object({
+  key: z.string().max(1024).optional(),
+  url: z.string().max(4096).optional(),
+});
 
 async function loadR2Config(): Promise<R2Config | null> {
   try {
@@ -43,7 +55,10 @@ async function ensureR2() {
   return config;
 }
 
-upload.post('/image', roleGuard('ADMIN'), async (c) => {
+// (#15) roleGuard alone only checks User.role — requireAdmin additionally
+// demands an ACTIVE AdminUser row, so R2 uploads aren't reachable by a bare
+// User.role='ADMIN' account with no (or a deactivated) panel login.
+upload.post('/image', roleGuard('ADMIN'), requireAdmin, async (c) => {
   try {
     await ensureR2();
   } catch (e: any) {
@@ -98,7 +113,7 @@ upload.post('/image', roleGuard('ADMIN'), async (c) => {
   }
 });
 
-upload.delete('/image', roleGuard('ADMIN'), async (c) => {
+upload.delete('/image', roleGuard('ADMIN'), requireAdmin, async (c) => {
   let config: R2Config;
   try {
     config = await ensureR2();
@@ -107,8 +122,18 @@ upload.delete('/image', roleGuard('ADMIN'), async (c) => {
   }
 
   try {
-    const body = await c.req.json();
-    const { key, url } = body as { key?: string; url?: string };
+    // (#27) Parse defensively (.catch → null) and run the body through zod —
+    // only key/url survive, unknown keys are stripped, and anything that
+    // isn't a string is rejected before it can reach the derive logic below.
+    const body = await c.req.json().catch(() => null);
+    const parsed = deleteImageSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid request data', details: parsed.error.flatten().fieldErrors },
+      }, 400);
+    }
+    const { key, url } = parsed.data;
 
     // The admin UI stores public URLs in settings, not object keys — derive the
     // key back from the URL using the configured public base URL.

@@ -120,6 +120,12 @@ model Session {
   countryCode  String?
   expiresAt    DateTime
   createdAt    DateTime @default(now())
+  // Screen lock (§14.44), enforced server-side (#33): while set, the
+  // session stays valid (refresh, identity, logout and the lock screen's
+  // own endpoints still work) but every other route answers
+  // SESSION_LOCKED until /auth/session/unlock clears it with the PIN.
+  // Clearing a browser flag cannot unfreeze a frozen row.
+  lockedAt     DateTime?
 
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -197,11 +203,21 @@ model RefreshToken {
   token     String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+  // Rotation bookkeeping (security audit #14): after a rotation the old
+  // row is kept as a tombstone (`usedAt`) so a replay of it is
+  // recognisable and can revoke the whole lineage (`familyId` — every
+  // refresh token and session descended from one sign-in). `sessionId`
+  // links the row to the access session it minted, so refresh rotates
+  // that session's token in place instead of accumulating sessions.
+  usedAt    DateTime?
+  familyId  String?
+  sessionId String?
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([token])
+  @@index([familyId])
 }
 
 // ============================================
@@ -2053,14 +2069,20 @@ model AdminUser {
   roleId    String
   isActive  Boolean  @default(true)
   // Security PIN (§14.44): a 4-digit credential that unlocks the screen
-  // lock and approves sensitive admin actions. Kept only as
-  // sha256(userId + ':' + pin) — same scheme as passwords/OTP/recovery
-  // codes — so the raw PIN exists nowhere server-side. pinRequired is the
-  // super-admin's per-account demand to have one set (the global demand
-  // lives in the Setting key `pinPolicy`).
-  pinHash     String?
-  pinSetAt    DateTime?
-  pinRequired Boolean  @default(false)
+  // lock and approves sensitive admin actions. Stored as bcrypt (cost 12)
+  // from this audit round on; legacy sha256(userId + ':' + pin) hashes
+  // still verify through a compatibility path and are upgraded in place
+  // on first successful use — a leaked dump can no longer brute-force the
+  // 4-digit space instantly (#26). pinRequired is the super-admin's
+  // per-account demand to have one set (the global demand lives in the
+  // Setting key `pinPolicy`). pinAttempts/pinWindowStart back the
+  // 5-wrong-tries-per-15-minutes cap durably: restarts no longer clear
+  // the counter and every instance shares it (#26).
+  pinHash        String?
+  pinSetAt       DateTime?
+  pinRequired    Boolean   @default(false)
+  pinAttempts    Int       @default(0)
+  pinWindowStart DateTime?
   metadata  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

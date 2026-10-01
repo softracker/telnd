@@ -121,6 +121,12 @@ export default function TeamAccountSettingsPage() {
   // lands, so the profile is never persisted mid-upload.
   const [profileUploading, setProfileUploading] = useState(false);
 
+  // Raised when the server refuses to move the sign-in email or phone
+  // without a fresh password (#6): the form then reveals a
+  // current-password field and the retry carries it.
+  const [reauthNeeded, setReauthNeeded] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState('');
+
   // Last persisted photo. Tells a fresh upload (pending — must be swept if
   // the edit is abandoned) apart from the saved one (survives until replaced).
   const savedAvatarRef = useRef<string | null>(null);
@@ -191,6 +197,8 @@ export default function TeamAccountSettingsPage() {
       });
     }
     setProfileEditing(false);
+    setReauthNeeded(false);
+    setReauthPassword('');
   }
 
   async function handleProfileSave(e: FormEvent) {
@@ -205,6 +213,9 @@ export default function TeamAccountSettingsPage() {
         avatar: profile.avatar,
         // Empty input clears the number (the API treats "" as null).
         phone: profile.phone.trim(),
+        // Present only after the server has asked for it: moving the
+        // sign-in email or phone re-proves the account password (#6).
+        ...(reauthPassword ? { currentPassword: reauthPassword } : {}),
       });
       // Photo lifecycle on success: the new upload graduates from pending; a
       // replaced or cleared saved photo is now unreferenced — remove it.
@@ -216,7 +227,19 @@ export default function TeamAccountSettingsPage() {
       await refreshUser();
       showToast('success', t('account.profileSaved'));
       setProfileEditing(false);
+      setReauthNeeded(false);
+      setReauthPassword('');
     } catch (err) {
+      const code =
+        err instanceof ApiError
+          ? (err.data as { error?: { code?: string } | null } | null)?.error?.code
+          : undefined;
+      if (code === 'REAUTH_REQUIRED') {
+        // The identifiers moved — reveal the password field for the retry
+        // and drop any wrong attempt so a fresh one is typed.
+        setReauthNeeded(true);
+        setReauthPassword('');
+      }
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
     } finally {
       setSavingProfile(false);
@@ -623,6 +646,19 @@ export default function TeamAccountSettingsPage() {
                   placeholder="01712345678"
                   helperText={t('account.phoneHelp')}
                 />
+                {/* A moved sign-in email or phone is re-confirmed with the
+                    account password (#6) — the server asks by refusing the
+                    save, and this field carries the retry. */}
+                {reauthNeeded && (
+                  <Input
+                    label={t('security.currentPassword')}
+                    value={reauthPassword}
+                    onChange={setReauthPassword}
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                  />
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
                   <button
                     type="button"
@@ -1320,6 +1356,7 @@ function Input({
   helperText,
   disabled = false,
   error,
+  autoComplete,
 }: {
   label: string;
   value: string;
@@ -1330,6 +1367,7 @@ function Input({
   helperText?: string;
   disabled?: boolean;
   error?: string;
+  autoComplete?: string;
 }) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
@@ -1343,6 +1381,7 @@ function Input({
         placeholder={placeholder}
         required={required}
         disabled={disabled}
+        autoComplete={autoComplete}
         style={{
           width: '100%',
           height: '40px',

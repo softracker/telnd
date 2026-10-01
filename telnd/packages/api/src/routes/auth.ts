@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema } from '@telnd/validation';
+import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema, requestOtpSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
@@ -14,6 +14,7 @@ import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordToke
 import { isSmtpConfigured } from '../lib/email';
 import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
+import { normalizePin, verifySecurityPin } from '../lib/securityPin';
 import {
   countVerifyAttempt,
   clearVerifyAttempts,
@@ -32,6 +33,8 @@ type AuthEnv = {
     validatedData: any;
     user: any;
     jwtPayload: unknown;
+    userId: string;
+    token: string;
   };
 };
 
@@ -61,6 +64,14 @@ const signRefresh = (userId: string) =>
 function setAuthCookie(c: any, name: string, value: string, maxAgeSeconds: number) {
   const isSecure = process.env.NODE_ENV === 'production';
   c.header('Set-Cookie', `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax; HttpOnly${isSecure ? '; Secure' : ''}`, { append: true });
+}
+
+// Clearing must match setting exactly — flags that differ between the two
+// directions (notably a missing Secure in production) let the browser keep
+// the old cookie when a delete is meant to remove it (#22).
+function clearAuthCookie(c: any, name: string) {
+  const isSecure = process.env.NODE_ENV === 'production';
+  c.header('Set-Cookie', `${name}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${isSecure ? '; Secure' : ''}`, { append: true });
 }
 
 /**
@@ -122,6 +133,12 @@ async function issueSession(c: any, user: any, ip: string) {
       userId: user.id,
       token: refreshToken,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      // Rotation bookkeeping (#14): the row names the session it minted so
+      // /refresh rotates THAT session's access token instead of piling up
+      // new rows, and joins a per-sign-in family so a replayed (stale)
+      // token can revoke the whole lineage at once.
+      sessionId: session.id,
+      familyId: randomUUID(),
     },
   });
 
@@ -191,7 +208,12 @@ authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(sign
       phone: data.phone,
       firstName: data.firstName,
       lastName: data.lastName,
-      role: data.role,
+      // The schema's lowercase enum ('candidate' | 'employer') never
+      // matched UserRole's uppercase values — every signup died on
+      // P2003/invalid-enum with a 500 (#35). Map explicitly; anything
+      // unexpected falls back to the default rather than the database
+      // deciding.
+      role: data.role === 'employer' ? 'EMPLOYER' : 'CANDIDATE',
       passwordHash,
     },
   });
@@ -221,6 +243,9 @@ authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(sign
       userId: user.id,
       token: refreshToken,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      // Same linkage as issueSession — see the #14 comment there.
+      sessionId: session.id,
+      familyId: randomUUID(),
     },
   });
 
@@ -340,8 +365,13 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
     }, 403);
   }
 
-  // Step 5: Verify credentials
-  if (data.password) {
+  // Step 5: Verify credentials. loginSchema refines to exactly two shapes
+  // — email+password or phone+otp — and BOTH are now verified here. The
+  // defensive else-branch matters: before phone-OTP verification existed,
+  // a phone+otp request skipped this step entirely (no password to check)
+  // and walked straight into a session — the passwordless login bypass.
+  // Anything that is not a proven credential is rejected, never ignored.
+  if (data.password && data.email) {
     if (!user.passwordHash) {
       await recordFailedAttempt(identifier, ip);
       return c.json({
@@ -358,6 +388,28 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
         error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
       }, 401);
     }
+  } else if (data.phone && data.otp) {
+    // Phone sign-in: the code was delivered by /auth/otp/request and is
+    // single-use, 5-minute, purpose-bound to 'login'. Every failure mode
+    // (unknown phone above, wrong/expired/spent code, wrong purpose)
+    // answers with the same generic 401 so responses never disclose
+    // whether a phone number is registered.
+    const otpResult = verifyOtp(user.id, data.otp, 'login');
+    if (!otpResult.ok) {
+      await recordFailedAttempt(identifier, ip);
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+      }, 401);
+    }
+  } else {
+    // Unreachable while the schema refine holds — belt and braces so no
+    // future schema loosening can ever re-open the unauthenticated path.
+    await recordFailedAttempt(identifier, ip);
+    return c.json({
+      success: false,
+      error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+    }, 401);
   }
 
   // Step 6: Success — reset lockout completely
@@ -404,7 +456,22 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
 // Sign-in above stops at the gate and leaves `telnd_2fa_pending`; these
 // routes run entirely on that cookie — no session exists yet.
 
-async function readPendingTwoFactor(c: any): Promise<{ userId: string; purpose: '2fa' | '2fa-enroll' } | null> {
+// A consumed pending token's jti — a verified challenge's cookie must not
+// be replayable for the rest of its 10-minute life from another client
+// (#13). Kept in memory like every other auth ephemeral (single API
+// instance; a restart can only shorten this window to the cookie's own
+// remaining TTL, never extend it).
+const consumedPendingJtis = new Map<string, number>(); // jti → expiry (ms)
+
+function consumePendingJti(jti: string, expSec?: number): void {
+  const now = Date.now();
+  for (const [k, exp] of consumedPendingJtis) if (exp <= now) consumedPendingJtis.delete(k);
+  consumedPendingJtis.set(jti, (expSec ?? Math.floor(now / 1000) + 600) * 1000);
+}
+
+async function readPendingTwoFactor(
+  c: any,
+): Promise<{ userId: string; purpose: '2fa' | '2fa-enroll'; jti: string } | null> {
   const cookieHeader: string = c.req.header('Cookie') || '';
   const pending = cookieHeader
     .split(';')
@@ -417,17 +484,22 @@ async function readPendingTwoFactor(c: any): Promise<{ userId: string; purpose: 
   try {
     const payload = await verify(pending, getJwtSecret(), 'HS256');
     if (!payload || !payload.sub || payload.type !== '2fa-pending') return null;
+    if (payload.jti && consumedPendingJtis.has(payload.jti as string)) return null;
     const user = await prisma.user.findUnique({ where: { id: payload.sub as string } });
     // A suspended or deleted account loses its challenge mid-flight.
     if (!user || !user.isActive) return null;
-    return { userId: user.id, purpose: payload.purpose === '2fa-enroll' ? '2fa-enroll' : '2fa' };
+    return {
+      userId: user.id,
+      purpose: payload.purpose === '2fa-enroll' ? '2fa-enroll' : '2fa',
+      jti: payload.jti as string,
+    };
   } catch {
     return null;
   }
 }
 
 function clearPendingCookie(c: any) {
-  c.header('Set-Cookie', 'telnd_2fa_pending=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly', { append: true });
+  clearAuthCookie(c, 'telnd_2fa_pending');
 }
 
 function challengeExpired(c: any) {
@@ -533,10 +605,14 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
   if (!user) return challengeExpired(c);
 
-  // Brute-force cap per account (5 wrong tries → restart the sign-in),
-  // layered on top of the per-IP rate limit above.
+  // Brute-force cap per account (5 wrong tries → locked out for the rest
+  // of the 15-minute window), layered on top of the per-IP rate limit
+  // above. The counter deliberately survives the block: clearing it the
+  // moment it triggered reset the cap on every hit and reduced this to a
+  // plain rate limit — unlimited TOTP guessing at speed (#12). The sign-in
+  // restarts (cookie cleared), but the account stays locked until the
+  // window expires; only a correct code resets it below.
   if (countVerifyAttempt(user.id).blocked) {
-    clearVerifyAttempts(user.id);
     clearPendingCookie(c);
     c.header('Retry-After', '900');
     return c.json({
@@ -575,12 +651,14 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
     method = 'recovery';
     ok = true;
   } else if (pending.purpose === '2fa') {
-    // Already enrolled: the stored method decides what counts.
+    // Already enrolled: the stored method decides what counts. An OTP
+    // only passes if it was sent for THIS challenge ('signin'), not for
+    // the Security page or a phone sign-in (#38).
     method = user.twoFactorMethod || '';
     if (method === 'totp') {
       ok = Boolean(user.twoFactorSecret) && verifyTotp(user.twoFactorSecret!, body.code);
     } else if (method === 'sms' || method === 'email') {
-      const result = verifyOtp(user.id, body.code);
+      const result = verifyOtp(user.id, body.code, 'signin');
       ok = result.ok;
       if (!result.ok) otpReason = result.reason;
     } else {
@@ -601,7 +679,9 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
       }
       ok = verifyTotp(user.twoFactorSecret, body.code);
     } else if (method === 'sms' || method === 'email') {
-      const result = verifyOtp(user.id, body.code);
+      // Enrollment half: only the code this setup screen sent ('setup')
+      // can finish it (#38).
+      const result = verifyOtp(user.id, body.code, 'setup');
       ok = result.ok;
       if (!result.ok) otpReason = result.reason;
     } else {
@@ -623,6 +703,9 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
   }
 
   clearVerifyAttempts(user.id);
+  // The challenge is spent: its pending jti is burned so a copied cookie
+  // cannot replay the rest of its 10-minute life from anywhere else (#13).
+  consumePendingJti(pending.jti, Math.floor(Date.now() / 1000) + 10 * 60);
 
   // A fresh set of recovery codes exists from the moment 2FA turns on —
   // this response is the only time they appear in plaintext, so the screen
@@ -762,6 +845,36 @@ authRoutes.post('/reset-password', rateLimit({ windowMs: 60000, max: 5 }), valid
   return c.json({ success: true, data: {} });
 });
 
+/**
+ * Kill a refresh lineage after a replayed (already-used) token shows up:
+ * every refresh row of the family goes, and with them every session any
+ * row in it minted. With no family recorded (pre-fix rows) there is
+ * nothing to attribute — revoke the account's tokens wholesale instead.
+ * Best-effort: the caller's 401 is the security-relevant answer.
+ */
+async function revokeRefreshFamily(row: { userId: string; familyId: string | null; sessionId: string | null }) {
+  try {
+    if (row.familyId) {
+      const family = await prisma.refreshToken.findMany({
+        where: { familyId: row.familyId },
+        select: { sessionId: true },
+      });
+      const sessionIds = family
+        .map((f) => f.sessionId)
+        .filter((id): id is string => Boolean(id));
+      await prisma.refreshToken.deleteMany({ where: { familyId: row.familyId } });
+      if (sessionIds.length > 0) {
+        await prisma.session.deleteMany({ where: { id: { in: sessionIds } } });
+      }
+    } else {
+      await prisma.refreshToken.deleteMany({ where: { userId: row.userId } });
+      await prisma.session.deleteMany({ where: { userId: row.userId } });
+    }
+  } catch {
+    // Best effort — the 401 below is what stops the replay.
+  }
+}
+
 authRoutes.post('/refresh', rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
   // Try cookie first, then body
   const cookieHeader = c.req.header('Cookie') || '';
@@ -805,33 +918,72 @@ authRoutes.post('/refresh', rateLimit({ windowMs: 60000, max: 10 }), async (c) =
       }, 401);
     }
 
-    // Rotate: delete old, issue new
-    await prisma.refreshToken.delete({ where: { id: storedRefresh.id } });
+    // Reuse detection (#14): a row already spent. Either the token was
+    // stolen and replayed or two requests raced the rotation — both get
+    // the same verdict: the whole family dies (every descendant refresh
+    // token and every session any of them issued), so neither copy keeps
+    // working and the legitimate user just signs in again. Pre-fix rows
+    // carry no family — fall back to revoking the account's tokens
+    // wholesale rather than letting an unattributable replay pass.
+    if (storedRefresh.usedAt) {
+      await revokeRefreshFamily(storedRefresh);
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_TOKEN', message: 'Refresh token already used' },
+      }, 401);
+    }
+
+    // Rotate in place: the old row stays behind as a tombstone (usedAt)
+    // so a replay of it is recognisable above; the new row continues the
+    // same family and keeps the session linkage.
+    await prisma.refreshToken.update({ where: { id: storedRefresh.id }, data: { usedAt: new Date() } });
 
     const newToken = await signAccess(storedRefresh.user.id, storedRefresh.user.role);
     const newRefreshToken = await signRefresh(storedRefresh.user.id);
 
-    await prisma.session.update({
-      where: { token: refreshToken },
-      data: { token: newToken, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
-    }).catch(async () => {
-      // If session with old token doesn't exist, create new one
-      await prisma.session.create({
+    // Rotate the linked session's access token instead of minting another
+    // session: middleware matches Session.token, so the old access token
+    // dies the moment this lands and the session count stays flat — the
+    // old code's `update where token === refreshToken` could never match,
+    // which is why every refresh silently accumulated a fresh session
+    // (#14/#39).
+    let sessionId = storedRefresh.sessionId;
+    if (sessionId) {
+      const rotated = await prisma.session.updateMany({
+        where: { id: sessionId },
+        data: { token: newToken, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+      });
+      // Session deleted since (logout/reset elsewhere) — recreate below.
+      if (rotated.count === 0) sessionId = null;
+    }
+    if (!sessionId) {
+      const created = await prisma.session.create({
         data: {
           userId: storedRefresh.user.id,
           token: newToken,
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          ipAddress: getIp(c) === 'unknown' ? null : getIp(c),
+          userAgent: c.req.header('user-agent') || null,
         },
       });
-    });
+      sessionId = created.id;
+    }
 
     await prisma.refreshToken.create({
       data: {
         userId: storedRefresh.user.id,
         token: newRefreshToken,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        sessionId,
+        familyId: storedRefresh.familyId ?? randomUUID(),
       },
     });
+
+    // Tombstones only matter while their token is still live; sweep the
+    // expired ones opportunistically so the table doesn't grow forever.
+    void prisma.refreshToken
+      .deleteMany({ where: { usedAt: { not: null }, expiresAt: { lt: new Date() } } })
+      .catch(() => {});
 
     setAuthCookie(c, 'telnd_admin_token', newToken, 7 * 24 * 60 * 60);
     setAuthCookie(c, 'telnd_admin_refresh_token', newRefreshToken, 30 * 24 * 60 * 60);
@@ -887,25 +1039,37 @@ authRoutes.post('/logout', async (c) => {
     await prisma.refreshToken.deleteMany({ where: { token: refreshTokenFromCookie } }).catch(() => {});
   }
 
-  // Clear both cookies
-  c.header('Set-Cookie', 'telnd_admin_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly', { append: true });
-  c.header('Set-Cookie', 'telnd_admin_refresh_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly', { append: true });
+  // Clear both cookies — same flags they were set with, Secure included
+  // in production (#22).
+  clearAuthCookie(c, 'telnd_admin_token');
+  clearAuthCookie(c, 'telnd_admin_refresh_token');
 
   return c.json({ success: true, data: { message: 'Logged out' } });
 });
 
-authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), async (c) => {
-  return c.json({
-    success: true,
-    data: { message: 'OTP sent' },
+// Phone sign-in, half one: deliver a real login OTP. The code is minted
+// with purpose 'login' (only Step 5 of /login can spend it), single-use,
+// 5-minute, 45-send gap per account. The response is deliberately
+// identical for registered and unregistered numbers — a request must
+// never disclose whether a phone has an account — and delivery problems
+// are logged server-side instead of echoed, for the same reason.
+authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate(requestOtpSchema), async (c) => {
+  const body = c.get('validatedData') as { phone: string };
+  const user = await prisma.user.findFirst({
+    where: { phone: body.phone },
+    select: { id: true, isActive: true },
   });
-});
-
-authRoutes.post('/otp/verify', rateLimit({ windowMs: 60000, max: 5 }), async (c) => {
-  return c.json({
-    success: true,
-    data: { message: 'OTP verified' },
-  });
+  if (user?.isActive) {
+    const result = await sendOtpToUser(user.id, 'sms', 'login');
+    if (!result.ok) {
+      // Re-send gap is normal (a fast double-click) and needs no answer;
+      // real delivery failures are an operator problem, not the caller's.
+      if (result.reason !== 'RESEND_SOON') {
+        console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
+      }
+    }
+  }
+  return c.json({ success: true, data: { message: 'OTP sent' } });
 });
 
 // Current authenticated user, including admin role + permissions for the admin UI.
@@ -934,3 +1098,67 @@ authRoutes.get('/me', authMiddleware, async (c) => {
     },
   });
 });
+
+// ── Screen lock, server side (§14.44, audit #33) ──────────────────────────
+// The lock used to be a browser overlay with a localStorage flag — clear
+// the flag and the app was yours. The flag now lives on the session row:
+// /session/lock freezes it, authMiddleware refuses everything outside the
+// lock's own endpoints while it is frozen, and /session/unlock is the only
+// way to thaw it — with the PIN, never with the session alone.
+
+authRoutes.post(
+  '/session/lock',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 30 }),
+  async (c) => {
+    const token = c.get('token') as string;
+    // Idempotent: the idle timer, the rail button, other tabs and the
+    // SESSION_LOCKED recovery path all race to set it.
+    await prisma.session.updateMany({ where: { token }, data: { lockedAt: new Date() } });
+    return c.json({ success: true, data: { locked: true } });
+  },
+);
+
+authRoutes.post(
+  '/session/unlock',
+  authMiddleware,
+  rateLimit({ windowMs: 60000, max: 12 }),
+  async (c) => {
+    const token = c.get('token') as string;
+    const userId = c.get('userId') as string;
+    const body = await c.req.json().catch(() => null);
+    const pin = normalizePin(body && typeof body === 'object' ? (body as { pin?: unknown }).pin : undefined);
+    if (!pin) {
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'A security PIN must be exactly 4 digits.' },
+      }, 400);
+    }
+
+    // Same proof, same errors, same durable attempt cap as the lock
+    // screen's old /users/me/pin/verify — this call replaces it, so a
+    // stolen session still cannot thaw a lock it cannot answer for.
+    const result = await verifySecurityPin(userId, pin);
+    if (!result.ok) {
+      if (result.reason === 'NOT_SET') {
+        return c.json({
+          success: false,
+          error: { code: 'PIN_NOT_SET', message: 'No security PIN is set for this account.' },
+        }, 404);
+      }
+      if (result.reason === 'LOCKED') {
+        return c.json({
+          success: false,
+          error: { code: 'PIN_LOCKED', message: 'Too many wrong PIN attempts. Try again in 15 minutes.' },
+        }, 429);
+      }
+      return c.json({
+        success: false,
+        error: { code: 'PIN_INVALID', message: 'Your security PIN is incorrect.' },
+      }, 403);
+    }
+
+    await prisma.session.updateMany({ where: { token }, data: { lockedAt: null } });
+    return c.json({ success: true, data: { locked: false } });
+  },
+);

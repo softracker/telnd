@@ -77,6 +77,31 @@ export async function authMiddleware(c: Context, next: Next) {
       }, 403);
     }
 
+    // Screen lock, enforced HERE and not in any overlay (#33): a locked
+    // session row stays valid — it may refresh its tokens, identify
+    // itself (/auth/me, which the Next middleware also reads), log out,
+    // and drive the lock screen's own endpoints (PIN info/setup/verify
+    // and the lock/unlock pair) — but every other route answers
+    // SESSION_LOCKED until /auth/session/unlock proves the PIN. Clearing
+    // the browser's storage flags cannot unfreeze this row.
+    if (session.lockedAt) {
+      const path = c.req.path;
+      const lockSafe =
+        path.endsWith('/auth/session/lock') ||
+        path.endsWith('/auth/session/unlock') ||
+        path.endsWith('/auth/me') ||
+        path.includes('/users/me/pin');
+      if (!lockSafe) {
+        return c.json({
+          success: false,
+          error: {
+            code: 'SESSION_LOCKED',
+            message: 'This session is screen-locked. Unlock it to continue.',
+          },
+        }, 403);
+      }
+    }
+
     c.set('user', session.user);
     c.set('userId', session.user.id);
     // Raw session token — lets routes identify the caller's own session row
