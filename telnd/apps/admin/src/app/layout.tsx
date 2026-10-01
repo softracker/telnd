@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { AuthProvider } from '@/lib/auth-context';
+import { GeneralSettingsProvider } from '@/lib/general-settings';
 import { ThemeProvider } from '@/components/theme-provider';
 import { LanguageProvider } from '@/components/language-provider';
 import AdminLayout from '@/components/layout/admin-layout';
@@ -12,11 +13,14 @@ interface GeneralSettings {
   favicon?: string;
   primaryLogoLight?: string;
   primaryLogoDark?: string;
+  bunnyImage?: string;
 }
 
 /**
- * General settings (public endpoint). Used for the tab favicon and the header
- * logos; any failure (API down, nothing configured) falls back to defaults.
+ * General settings (public endpoint). Used for the tab favicon, the header
+ * logos, and the sign-in page's logo/mascot (via GeneralSettingsProvider, so
+ * those are on the first paint rather than swapped in after a client fetch);
+ * any failure (API down, nothing configured) falls back to defaults.
  * Identical calls in generateMetadata and the layout body are request-memoized.
  */
 async function getGeneral(): Promise<GeneralSettings> {
@@ -60,7 +64,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { primaryLogoLight, primaryLogoDark } = await getGeneral();
+  const { primaryLogoLight, primaryLogoDark, bunnyImage } = await getGeneral();
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -70,12 +74,17 @@ export default async function RootLayout({
         <AuthProvider>
           <ThemeProvider>
             <LanguageProvider>
-              <AdminLayout
-                primaryLogoLight={primaryLogoLight}
-                primaryLogoDark={primaryLogoDark}
+              <GeneralSettingsProvider
+                primaryLogoLight={primaryLogoLight ?? ''}
+                bunnyImage={bunnyImage ?? ''}
               >
-                {children}
-              </AdminLayout>
+                <AdminLayout
+                  primaryLogoLight={primaryLogoLight}
+                  primaryLogoDark={primaryLogoDark}
+                >
+                  {children}
+                </AdminLayout>
+              </GeneralSettingsProvider>
             </LanguageProvider>
           </ThemeProvider>
         </AuthProvider>

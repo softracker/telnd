@@ -145,7 +145,7 @@ model PasswordToken {
   id        String    @id @default(cuid())
   userId    String
   tokenHash String    @unique
-  kind      String // 'reset' | 'invite'
+  kind      String // 'reset' | 'invite' | 'login'
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())

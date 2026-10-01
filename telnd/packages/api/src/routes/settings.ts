@@ -86,6 +86,13 @@ const SECRET_FIELDS: Record<string, string[][]> = {
   smtp: [['pass'], ['password']],
   r2: [['secretAccessKey']], // NOT accessKeyId — that is an identifier, not a secret
   captcha: [['secretKey']], // NOT siteKey — the site key is public by design
+  // OAuth sign-in providers: the client secret is the secret; the client ID
+  // is a public identifier, like R2's accessKeyId / captcha's siteKey.
+  loginProviders: [
+    ['google', 'clientSecret'],
+    ['facebook', 'clientSecret'],
+    ['linkedin', 'clientSecret'],
+  ],
   gateway: [
     ['sms', 'alphaNet', 'apiKey'],
     // The gateway section also stores the SSLCommerz credentials.
@@ -112,6 +119,65 @@ function maskSecrets(key: string, value: unknown): unknown {
     }
   }
   return clone;
+}
+
+// ── Login methods for the USER sign-in page (§ next: user-facing auth) ───
+// Email and phone are built-in methods — a switch, nothing to configure —
+// while the three OAuth providers carry stored credentials. Admin sign-in
+// never reads this section. The shape is validated and whitelisted here
+// rather than trusted: only the known methods, only known fields, trimmed
+// strings, sane length caps — and an OAuth provider's `enabled` can never
+// be saved without the credentials that provider's token exchange needs
+// (fail closed, like every other gate in this file).
+const LOGIN_PROVIDERS = ['email', 'emailLink', 'phone', 'google', 'facebook', 'linkedin'] as const;
+const OAUTH_PROVIDERS = ['google', 'facebook', 'linkedin'] as const;
+
+type SanitizedProviders =
+  | { value: Record<string, unknown>; error?: undefined; code?: undefined }
+  | { error: string; code: string; value?: undefined };
+
+function sanitizeLoginProviders(raw: unknown): SanitizedProviders {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: 'loginProviders must be an object', code: 'INVALID_LOGIN_PROVIDERS' };
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(LOGIN_PROVIDERS as readonly string[]).includes(key)) {
+      return { error: `Unknown login provider '${key}'`, code: 'INVALID_LOGIN_PROVIDERS' };
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { error: `loginProviders.${key} must be an object`, code: 'INVALID_LOGIN_PROVIDERS' };
+    }
+    const src = entry as Record<string, unknown>;
+    if ('enabled' in src && typeof src.enabled !== 'boolean') {
+      return { error: `loginProviders.${key}.enabled must be a boolean`, code: 'INVALID_LOGIN_PROVIDERS' };
+    }
+    if (!(OAUTH_PROVIDERS as readonly string[]).includes(key)) {
+      // Built-in method (email / phone): a switch and nothing else — any
+      // credential-shaped field sent along is dropped by the whitelist.
+      out[key] = { enabled: src.enabled === true };
+      continue;
+    }
+    for (const field of ['clientId', 'clientSecret'] as const) {
+      if (field in src && typeof src[field] !== 'string') {
+        return { error: `loginProviders.${key}.${field} must be a string`, code: 'INVALID_LOGIN_PROVIDERS' };
+      }
+    }
+    const enabled = src.enabled === true;
+    const clientId = typeof src.clientId === 'string' ? src.clientId.trim() : '';
+    const clientSecret = typeof src.clientSecret === 'string' ? src.clientSecret.trim() : '';
+    if (clientId.length > 512 || clientSecret.length > 1024) {
+      return { error: `loginProviders.${key} credentials are too long`, code: 'INVALID_LOGIN_PROVIDERS' };
+    }
+    if (enabled && (!clientId || !clientSecret)) {
+      return {
+        error: `loginProviders.${key}: Client ID and Client Secret are required to enable this provider`,
+        code: 'CREDENTIALS_REQUIRED',
+      };
+    }
+    out[key] = { enabled, clientId, clientSecret };
+  }
+  return { value: out };
 }
 
 // Server-side search + pagination for the Our Team list (DataTables-style).
@@ -212,6 +278,20 @@ settings.put('/', async (c) => {
         error: { code: 'UNSAFE_URL', message: `Setting '${key}' contains an unsafe URL scheme (javascript:/vbscript:/data:text/html)` },
       }, 400);
     }
+  }
+
+  // Validate + whitelist the OAuth provider section before anything is
+  // written: unknown providers/fields are rejected, values are trimmed to
+  // the exact shape the sign-in flow will read, and enabling without
+  // credentials answers 400 CREDENTIALS_REQUIRED instead of landing a
+  // switch that could never work.
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i][0] !== 'loginProviders') continue;
+    const sanitized = sanitizeLoginProviders(entries[i][1]);
+    if (sanitized.error) {
+      return c.json({ success: false, error: { code: sanitized.code, message: sanitized.error } }, 400);
+    }
+    entries[i][1] = sanitized.value;
   }
 
   const updated: Record<string, unknown> = {};

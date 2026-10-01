@@ -1,12 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@telnd/database';
 
-export type PasswordTokenKind = 'reset' | 'invite';
+export type PasswordTokenKind = 'reset' | 'invite' | 'login';
 
 // Self-service recovery links are short-lived; an admin invitation gets
-// days, because it sits unsolicited in an inbox until it is noticed.
+// days, because it sits unsolicited in an inbox until it is noticed. A
+// magic sign-in link is shorter-lived still — it IS the credential (whoever
+// holds it walks straight into the session), so 15 minutes is plenty for
+// "check your inbox and click".
 export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 60 minutes
 export const INVITE_TOKEN_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
+export const LOGIN_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 function hashToken(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
@@ -15,6 +19,11 @@ function hashToken(raw: string): string {
 /** Absolute URL inside the admin panel (ADMIN_URL defaults to local dev). */
 export function adminUrl(path: string): string {
   return `${(process.env.ADMIN_URL || 'http://localhost:3002').replace(/\/+$/, '')}${path}`;
+}
+
+/** Absolute URL inside the public portal (NEXT_PUBLIC_APP_URL, port 3000). */
+export function portalUrl(path: string): string {
+  return `${(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/+$/, '')}${path}`;
 }
 
 /**
@@ -26,7 +35,8 @@ export function adminUrl(path: string): string {
  */
 export async function issuePasswordToken(userId: string, kind: PasswordTokenKind): Promise<string> {
   const raw = randomBytes(32).toString('base64url'); // 256 bits
-  const ttl = kind === 'invite' ? INVITE_TOKEN_TTL_MS : RESET_TOKEN_TTL_MS;
+  const ttl =
+    kind === 'invite' ? INVITE_TOKEN_TTL_MS : kind === 'login' ? LOGIN_TOKEN_TTL_MS : RESET_TOKEN_TTL_MS;
   // Create FIRST, then sweep everything except the fresh row. The obvious
   // delete-then-insert order lets two concurrent issuances both delete the
   // old row and both insert — two live links, so a re-send would fail to

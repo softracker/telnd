@@ -293,6 +293,20 @@ export default function AdminLayout({
     setMobileOpen(false);
   }, []);
 
+  // Login and the set-password page render just the children (no sidebar/
+  // header); both work without a session — and they render ABOVE the
+  // loading gate: they never wait on /auth/me, so refreshing one paints
+  // the real screen (logo and all) instead of a spinner → content flash.
+  // The useEffect above handles redirect to / when authenticated on the
+  // login page.
+  if (isPublicPage) {
+    // Signed-in visitors get routed home by that same effect — the login
+    // form and the two-factor challenge only make sense mid-sign-in. Paint
+    // nothing until the navigation lands, or the screen flashes first.
+    if (isAuthenticated && (isLoginPage || pathname === '/2fa')) return null;
+    return <>{children}</>;
+  }
+
   if (isLoading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
@@ -308,17 +322,6 @@ export default function AdminLayout({
         <style>{`@keyframes dt-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
-  }
-
-  // Login and the set-password page render just the children (no sidebar/
-  // header); both work without a session. The useEffect above handles
-  // redirect to / when authenticated on the login page.
-  if (isPublicPage) {
-    // Signed-in visitors get routed home by that same effect — the login
-    // form and the two-factor challenge only make sense mid-sign-in. Paint
-    // nothing until the navigation lands, or the screen flashes first.
-    if (isAuthenticated && (isLoginPage || pathname === '/2fa')) return null;
-    return <>{children}</>;
   }
 
   if (!isAuthenticated) return null;

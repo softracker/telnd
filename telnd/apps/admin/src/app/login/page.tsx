@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { ApiError } from '@/lib/api';
+import { useGeneralSettings } from '@/lib/general-settings';
 import { useLanguage } from '@/components/language-provider';
 
 export default function LoginPage() {
@@ -16,10 +17,13 @@ export default function LoginPage() {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
-  // Bunny mascot from Settings -> General; empty until the public fetch
-  // returns one (or if none was ever uploaded) — then the bundled
-  // /images/bunny.png shows instead.
-  const [bunnyImage, setBunnyImage] = useState('');
+  // Settings -> General (mascot + primary logo) arrives WITH the server
+  // render via the root layout's provider — the first paint already shows
+  // the real assets, so a refresh can't flash the app-name text first and
+  // swap the image in a frame later. A dead logo URL falls back to the text.
+  const { primaryLogoLight, bunnyImage } = useGeneralSettings();
+  const [logoFailed, setLogoFailed] = useState(false);
+  const logoImage = logoFailed ? '' : primaryLogoLight;
   const turnstileRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
 
@@ -43,27 +47,6 @@ export default function LoginPage() {
       }
     }
     loadSiteKey();
-  }, []);
-
-  // Bunny mascot from Settings -> General (public endpoint, same
-  // relative-URL reason as the captcha config below). Until it returns
-  // an uploaded one, the bundled /images/bunny.png stays visible.
-  useEffect(() => {
-    async function loadBunny() {
-      try {
-        // Relative on purpose: same-origin through the /api rewrite proxy.
-        const res = await fetch('/api/settings/general');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && typeof data.data?.bunnyImage === 'string' && data.data.bunnyImage) {
-            setBunnyImage(data.data.bunnyImage);
-          }
-        }
-      } catch {
-        // ignore — the static bunny stays
-      }
-    }
-    loadBunny();
   }, []);
 
   // Render Turnstile widget when captcha becomes required
@@ -145,7 +128,9 @@ export default function LoginPage() {
       {/* Left 60% - Branding */}
       <div style={{
         flex: '0 0 60%',
-        background: 'linear-gradient(160deg, #d4efed 0%, #b8e6e2 40%, #9fddd8 100%)',
+        // The light wash the portal welcome uses — the teal gradient came
+        // off there first, and this page follows it now.
+        background: '#E6F6F5',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -241,22 +226,31 @@ export default function LoginPage() {
         padding: '3rem 2.5rem',
         background: '#ffffff',
       }}>
-        <div style={{ width: '100%', maxWidth: '360px' }}>
-          {/* Logo on mobile/compact */}
+        <div style={{ width: '100%', maxWidth: '400px' }}>
+          {/* Logo + sign-in heading — the logo is Settings -> General's
+              primary upload (the same source as the admin header's); a
+              dead URL or nothing configured falls back to the app name. */}
           <div style={{ marginBottom: '2rem' }}>
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#034548',
-              marginBottom: '1rem',
-            }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
+            <div style={{ marginBottom: '1.5rem' }}>
+              {logoImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoImage}
+                  alt="TELND"
+                  onError={() => setLogoFailed(true)}
+                  style={{ height: '40px', width: 'auto', display: 'block' }}
+                />
+              ) : (
+                <div style={{
+                  fontSize: '1.25rem',
+                  fontWeight: 800,
+                  color: '#034548',
+                  letterSpacing: '0.04em',
+                  lineHeight: 1,
+                }}>
+                  {t('app.name')}
+                </div>
+              )}
             </div>
             <h2 style={{
               fontSize: '1.5rem',
@@ -298,33 +292,53 @@ export default function LoginPage() {
               }}>
                 {t('login.email')}
               </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@telnd.com"
-                required
-                autoComplete="email"
-                style={{
-                  width: '100%',
-                  height: '44px',
-                  borderRadius: '8px',
-                  border: '1px solid #d1d5db',
-                  padding: '0 0.75rem',
-                  fontSize: '0.875rem',
-                  outline: 'none',
-                  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = '#0d9488';
-                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(13, 148, 136, 0.15), 0 2px 8px rgba(3, 69, 72, 0.08)';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = '#d1d5db';
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              />
+              {/* The user login's filled field (AuthInput): 52px, radius 14,
+                  #F1F5F9 fill, border transparent → #034548 on focus, with a
+                  leading glyph — inline-styled to match the web app. */}
+              <div style={{ position: 'relative' }}>
+                <span style={{
+                  position: 'absolute',
+                  left: '14px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                  color: 'rgba(0, 0, 0, 0.38)',
+                  display: 'flex',
+                }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2 6L8.91302 9.91697C11.4616 11.361 12.5384 11.361 15.087 9.91697L22 6" />
+                    <path d="M2.01577 13.4756C2.08114 16.5412 2.11383 18.0739 3.24496 19.2094C4.37608 20.3448 5.95033 20.3843 9.09883 20.4634C11.0393 20.5122 12.9607 20.5122 14.9012 20.4634C18.0497 20.3843 19.6239 20.3448 20.7551 19.2094C21.8862 18.0739 21.9189 16.5412 21.9842 13.4756C22.0053 12.4899 22.0053 11.5101 21.9842 10.5244C21.9189 7.45886 21.8862 5.92609 20.7551 4.79066C19.6239 3.65523 18.0497 3.61568 14.9012 3.53657C12.9607 3.48781 11.0393 3.48781 9.09882 3.53656C5.95033 3.61566 4.37608 3.65521 3.24495 4.79065C2.11382 5.92608 2.08114 7.45885 2.01576 10.5244C1.99474 11.5101 1.99475 12.4899 2.01577 13.4756Z" />
+                  </svg>
+                </span>
+                <input
+                  id="email"
+                  type="email"
+                  className="auth-field"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@telnd.com"
+                  required
+                  autoComplete="email"
+                  style={{
+                    width: '100%',
+                    height: '52px',
+                    borderRadius: '14px',
+                    border: '1px solid transparent',
+                    backgroundColor: '#F1F5F9',
+                    padding: '0 14px 0 44px',
+                    fontSize: '15px',
+                    color: '#1F2937',
+                    outline: 'none',
+                    transition: 'border-color 0.2s ease',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = '#034548';
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = 'transparent';
+                  }}
+                />
+              </div>
             </div>
 
             <div>
@@ -338,9 +352,26 @@ export default function LoginPage() {
                 {t('login.password')}
               </label>
               <div style={{ position: 'relative' }}>
+                <span style={{
+                  position: 'absolute',
+                  left: '14px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                  color: 'rgba(0, 0, 0, 0.38)',
+                  display: 'flex',
+                }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M5 15C5 11.134 8.13401 8 12 8C15.866 8 19 11.134 19 15C19 18.866 15.866 22 12 22C8.13401 22 5 18.866 5 15Z" />
+                    <path d="M16.5 9.5V6.5C16.5 4.01472 14.4853 2 12 2C9.51472 2 7.5 4.01472 7.5 6.5V9.5" strokeLinecap="round" />
+                    <path d="M10.125 15H10M10.25 15C10.25 15.1381 10.1381 15.25 10 15.25C9.86193 15.25 9.75 15.1381 9.75 15C9.75 14.8619 9.86193 14.75 10 14.75C10.1381 14.75 10.25 14.8619 10.25 15Z" strokeLinecap="round" />
+                    <path d="M14.125 15H14M14.25 15C14.25 15.1381 14.1381 15.25 14 15.25C13.8619 15.25 13.75 15.1381 13.75 15C13.75 14.8619 13.8619 14.75 14 14.75C14.1381 14.75 14.25 14.8619 14.25 15Z" strokeLinecap="round" />
+                  </svg>
+                </span>
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
+                  className="auth-field"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
@@ -348,53 +379,57 @@ export default function LoginPage() {
                   autoComplete="current-password"
                   style={{
                     width: '100%',
-                    height: '44px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
-                    padding: '0 2.5rem 0 0.75rem',
-                    fontSize: '0.875rem',
+                    height: '52px',
+                    borderRadius: '14px',
+                    border: '1px solid transparent',
+                    backgroundColor: '#F1F5F9',
+                    padding: '0 48px 0 44px',
+                    fontSize: '15px',
+                    color: '#1F2937',
                     outline: 'none',
-                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                    transition: 'border-color 0.2s ease',
                   }}
                   onFocus={(e) => {
-                    e.currentTarget.style.borderColor = '#0d9488';
-                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(13, 148, 136, 0.15), 0 2px 8px rgba(3, 69, 72, 0.08)';
+                    e.currentTarget.style.borderColor = '#034548';
                   }}
                   onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = 'none';
+                    e.currentTarget.style.borderColor = 'transparent';
                   }}
                 />
+                {/* Portal-style suffix: 36px circle inside the field, hover
+                    tint via CSS, labelled for screen readers. */}
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  className="auth-field-eye"
                   style={{
                     position: 'absolute',
-                    right: '0.75rem',
+                    right: '12px',
                     top: '50%',
                     transform: 'translateY(-50%)',
-                    background: 'none',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
                     border: 'none',
+                    background: 'none',
+                    padding: 0,
                     cursor: 'pointer',
-                    padding: '4px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#9ca3af',
-                    transition: 'color 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#374151'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
                 >
                   {showPassword ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
-                      <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                      <path d="M14.12 14.12a3 3 0 11-4.24-4.24" />
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                      <path d="M1 1l22 22" />
                     </svg>
                   ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                       <circle cx="12" cy="12" r="3" />
                     </svg>
@@ -412,31 +447,34 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* The user login's PrimaryButton: 52px / radius 14 / 16px semibold,
+                brand fill with #023638 hover, opacity + arc spinner while busy. */}
             <button
               type="submit"
               disabled={isSubmitting}
               style={{
                 width: '100%',
-                height: '44px',
-                borderRadius: '8px',
-                backgroundColor: isSubmitting ? '#5aa6a4' : '#034548',
+                height: '52px',
+                borderRadius: '14px',
+                backgroundColor: '#034548',
                 color: '#ffffff',
-                fontSize: '0.875rem',
+                fontSize: '16px',
                 fontWeight: 600,
                 border: 'none',
-                cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                cursor: isSubmitting ? 'default' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '0.5rem',
-                transition: 'background-color 0.15s',
+                opacity: isSubmitting ? 0.9 : 1,
+                transition: 'background-color 0.15s ease',
               }}
               onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.backgroundColor = '#023638'; }}
               onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.backgroundColor = '#034548'; }}
             >
               {isSubmitting ? (
                 <>
-                  <svg style={{ animation: 'spin 0.7s linear infinite' }} width="16" height="16" viewBox="0 0 24 24">
+                  <svg style={{ animation: 'spin 1s linear infinite' }} width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25" />
                     <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
                   </svg>
@@ -461,6 +499,11 @@ export default function LoginPage() {
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        /* Portal AuthInput parity: placeholder + eye hover tint (the two
+           things inline styles can't reach). */
+        .auth-field::placeholder { color: rgba(0, 0, 0, 0.25); }
+        .auth-field-eye { color: rgba(0, 0, 0, 0.4); transition: color 0.15s ease; }
+        .auth-field-eye:hover { color: rgba(0, 0, 0, 0.7); }
         @media (max-width: 768px) {
           div[style*="flex: 0 0 60%"] { display: none !important; }
           div[style*="flex: 0 0 40%"] { flex: 1 1 100% !important; }

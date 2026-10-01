@@ -10,8 +10,9 @@ import { OtpInput, type OtpInputHandle } from '@/components/otp-input';
 
 function Spinner() {
   return (
-    <svg style={{ animation: 'spin 0.7s linear infinite' }} width="16" height="16" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="32" strokeDashoffset="10" strokeLinecap="round" />
+    <svg style={{ animation: 'spin 1s linear infinite' }} width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25" />
+      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
     </svg>
   );
 }
@@ -255,38 +256,45 @@ export default function TwoFactorPage() {
     }
   }
 
-  const primaryButton = {
+  // The user login's PrimaryButton, shared by every main action: brand fill
+  // when the form is ready, portal grey (#CBD5E1) while it isn't, opacity
+  // 0.9 + the spinner while the request runs. `ready` is the button's own
+  // input gate (six digits, the save checkbox, …) — never the busy flag.
+  const primaryButton = (ready = true) => ({
     width: '100%',
-    height: '44px',
-    borderRadius: '8px',
+    height: '52px',
+    borderRadius: '14px',
     border: 'none',
-    background: '#0d9488',
+    background: ready ? '#034548' : '#CBD5E1',
     color: '#ffffff',
-    fontSize: '0.875rem',
+    fontSize: '16px',
     fontWeight: 600,
-    cursor: busy ? 'default' : 'pointer',
-    opacity: busy ? 0.7 : 1,
+    cursor: ready && !busy ? 'pointer' : 'default',
+    opacity: busy ? 0.9 : 1,
     display: 'flex' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     gap: '0.5rem',
-  };
+    transition: 'background-color 0.15s ease',
+  });
 
+  // The outlined companion (Back / Copy / Download) — same 52px/14px
+  // silhouette as the primary so paired rows line up.
   const secondaryButton = {
     display: 'inline-flex' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     gap: '0.375rem',
-    height: '36px',
-    padding: '0 0.875rem',
-    borderRadius: '8px',
-    border: '1px solid #d1d5db',
+    height: '52px',
+    padding: '0 1.25rem',
+    borderRadius: '14px',
+    border: '1px solid #CBD5E1',
     background: '#ffffff',
-    color: '#374151',
-    fontSize: '0.8125rem',
+    color: '#1F2937',
+    fontSize: '15px',
     fontWeight: 600,
     cursor: busy ? 'default' : 'pointer',
-    opacity: busy ? 0.7 : 1,
+    opacity: busy ? 0.9 : 1,
   };
 
   function codeInput() {
@@ -399,10 +407,10 @@ export default function TwoFactorPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-          <button type="button" onClick={copyCodes} style={{ ...secondaryButton, flex: 1 }}>
+          <button type="button" className="auth-btn-secondary" onClick={copyCodes} style={{ ...secondaryButton, flex: 1 }}>
             {codesCopied ? t('twoFactor.codesCopied') : t('twoFactor.copyCodes')}
           </button>
-          <button type="button" onClick={downloadCodes} style={{ ...secondaryButton, flex: 1 }}>
+          <button type="button" className="auth-btn-secondary" onClick={downloadCodes} style={{ ...secondaryButton, flex: 1 }}>
             {t('twoFactor.downloadCodes')}
           </button>
         </div>
@@ -429,6 +437,7 @@ export default function TwoFactorPage() {
 
         <button
           type="button"
+          className="auth-btn-primary"
           disabled={!codesSavedOk}
           onClick={() => {
             const user = pendingComplete.user;
@@ -436,11 +445,7 @@ export default function TwoFactorPage() {
             setCodesSavedOk(false);
             completeLogin(user);
           }}
-          style={{
-            ...primaryButton,
-            cursor: codesSavedOk ? 'pointer' : 'not-allowed',
-            opacity: codesSavedOk ? 1 : 0.6,
-          }}
+          style={primaryButton(codesSavedOk)}
         >
           {t('twoFactor.codesDone')}
         </button>
@@ -655,6 +660,7 @@ export default function TwoFactorPage() {
                 );
               }}
               style={secondaryButton}
+              className="auth-btn-secondary"
             >
               {copied ? t('twoFactor.copied') : t('twoFactor.copy')}
             </button>
@@ -681,14 +687,16 @@ export default function TwoFactorPage() {
               setCode('');
               setError('');
             }}
-            style={{ ...secondaryButton, height: '44px' }}
+            style={secondaryButton}
+            className="auth-btn-secondary"
           >
             {t('twoFactor.back')}
           </button>
           <button
             type="submit"
+            className="auth-btn-primary"
             disabled={busy || code.length !== 6}
-            style={{ ...primaryButton, height: '44px' }}
+            style={primaryButton(code.length === 6)}
           >
             {busyKind === 'verify' ? <Spinner /> : null}
             {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
@@ -709,7 +717,7 @@ export default function TwoFactorPage() {
         </p>
 
         {!codeSent ? (
-          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton }}>
+          <button type="button" className="auth-btn-primary" onClick={sendCode} disabled={busy} style={primaryButton()}>
             {busyKind === 'send' ? <Spinner /> : null}
             {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
           </button>
@@ -724,8 +732,9 @@ export default function TwoFactorPage() {
             {codeInput()}
             <button
               type="submit"
+              className="auth-btn-primary"
               disabled={busy || code.length !== 6}
-              style={{ ...primaryButton, marginTop: '1rem' }}
+              style={{ ...primaryButton(code.length === 6), marginTop: '1rem' }}
             >
               {busyKind === 'verify' ? <Spinner /> : null}
               {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
@@ -734,11 +743,20 @@ export default function TwoFactorPage() {
               type="button"
               onClick={sendCode}
               disabled={busy || resendIn > 0}
+              className="auth-btn-text"
               style={{
-                ...secondaryButton,
+                display: 'block',
                 width: '100%',
-                height: '36px',
+                background: 'none',
+                border: 'none',
+                padding: 0,
                 marginTop: '0.625rem',
+                color: '#034548',
+                fontSize: '14px',
+                fontWeight: 600,
+                textAlign: 'center',
+                cursor: busy || resendIn > 0 ? 'default' : 'pointer',
+                opacity: busy || resendIn > 0 ? 0.6 : 1,
               }}
             >
               {resendIn > 0 ? t('twoFactor.resendIn', { sec: resendIn }) : t('twoFactor.resendCode')}
@@ -749,6 +767,7 @@ export default function TwoFactorPage() {
         <div style={{ marginTop: '1rem' }}>
           <button
             type="button"
+            className="auth-btn-secondary"
             onClick={() => {
               setMode('choose');
               setCode('');
@@ -776,7 +795,7 @@ export default function TwoFactorPage() {
         </p>
 
         {!codeSent ? (
-          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton }}>
+          <button type="button" className="auth-btn-primary" onClick={sendCode} disabled={busy} style={primaryButton()}>
             {busyKind === 'send' ? <Spinner /> : null}
             {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
           </button>
@@ -791,8 +810,9 @@ export default function TwoFactorPage() {
             {codeInput()}
             <button
               type="submit"
+              className="auth-btn-primary"
               disabled={busy || code.length !== 6}
-              style={{ ...primaryButton, marginTop: '1rem' }}
+              style={{ ...primaryButton(code.length === 6), marginTop: '1rem' }}
             >
               {busyKind === 'verify' ? <Spinner /> : null}
               {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
@@ -801,11 +821,20 @@ export default function TwoFactorPage() {
               type="button"
               onClick={sendCode}
               disabled={busy || resendIn > 0}
+              className="auth-btn-text"
               style={{
-                ...secondaryButton,
+                display: 'block',
                 width: '100%',
-                height: '36px',
+                background: 'none',
+                border: 'none',
+                padding: 0,
                 marginTop: '0.625rem',
+                color: '#034548',
+                fontSize: '14px',
+                fontWeight: 600,
+                textAlign: 'center',
+                cursor: busy || resendIn > 0 ? 'default' : 'pointer',
+                opacity: busy || resendIn > 0 ? 0.6 : 1,
               }}
             >
               {resendIn > 0 ? t('twoFactor.resendIn', { sec: resendIn }) : t('twoFactor.resendCode')}
@@ -816,6 +845,7 @@ export default function TwoFactorPage() {
         <div style={{ marginTop: '1rem' }}>
           <button
             type="button"
+            className="auth-btn-secondary"
             onClick={() => {
               setMode('choose');
               setCode('');
@@ -875,8 +905,9 @@ export default function TwoFactorPage() {
         />
         <button
           type="submit"
+          className="auth-btn-primary"
           disabled={busy || recoveryValue.replace(/\D/g, '').length !== 10}
-          style={{ ...primaryButton, marginTop: '1rem' }}
+          style={{ ...primaryButton(recoveryValue.replace(/\D/g, '').length === 10), marginTop: '1rem' }}
         >
           {busyKind === 'verify' ? <Spinner /> : null}
           {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
@@ -891,6 +922,7 @@ export default function TwoFactorPage() {
               setError('');
             }}
             disabled={busy}
+            className="auth-btn-secondary"
             style={secondaryButton}
           >
             {t('twoFactor.back')}
@@ -922,7 +954,7 @@ export default function TwoFactorPage() {
         </p>
 
         {channel && !codeSent && (
-          <button type="button" onClick={sendCode} disabled={busy} style={{ ...primaryButton, marginBottom: '1rem' }}>
+          <button type="button" className="auth-btn-primary" onClick={sendCode} disabled={busy} style={{ ...primaryButton(), marginBottom: '1rem' }}>
             {busyKind === 'send' ? <Spinner /> : null}
             {busyKind === 'send' ? t('twoFactor.sending') : t('twoFactor.sendCode')}
           </button>
@@ -939,8 +971,9 @@ export default function TwoFactorPage() {
             {codeInput()}
             <button
               type="submit"
+              className="auth-btn-primary"
               disabled={busy || code.length !== 6}
-              style={{ ...primaryButton, marginTop: '1rem' }}
+              style={{ ...primaryButton(code.length === 6), marginTop: '1rem' }}
             >
               {busyKind === 'verify' ? <Spinner /> : null}
               {busyKind === 'verify' ? t('twoFactor.verifying') : t('twoFactor.verify')}
@@ -950,7 +983,21 @@ export default function TwoFactorPage() {
                 type="button"
                 onClick={sendCode}
                 disabled={busy}
-                style={{ ...secondaryButton, width: '100%', height: '36px', marginTop: '0.625rem' }}
+                className="auth-btn-text"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  marginTop: '0.625rem',
+                  color: '#034548',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  textAlign: 'center',
+                  cursor: busy ? 'default' : 'pointer',
+                  opacity: busy ? 0.6 : 1,
+                }}
               >
                 {t('twoFactor.resendIn', { sec: resendIn })}
               </button>
@@ -1027,7 +1074,16 @@ export default function TwoFactorPage() {
       {/* Spinner keyframes: this screen renders its own <Spinner>, and no
           other stylesheet on /2fa defines `spin` — without it the icon
           sits frozen instead of rotating. */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {/* Spinner keyframes (as above) + the portal button hovers: the
+          filled/outline/text fills live inline, so the :hover needs
+          !important to beat them. */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }
+.auth-btn-primary { transition: background-color 0.15s ease; }
+.auth-btn-primary:hover:not(:disabled) { background: #023638 !important; }
+.auth-btn-secondary { transition: background-color 0.15s ease; }
+.auth-btn-secondary:hover:not(:disabled) { background: #F1F5F9 !important; }
+.auth-btn-text { transition: opacity 0.15s ease; }
+.auth-btn-text:hover:not(:disabled) { opacity: 0.8 !important; }`}</style>
     </div>
   );
 }

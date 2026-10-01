@@ -142,23 +142,28 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
     }
   }
 
-  const buttonStyle: React.CSSProperties = {
+  // The user login's PrimaryButton, themed: 52px/radius 14/16px semibold,
+  // var(--accent) is #034548 in light mode (dark keeps its own accent),
+  // portal grey #CBD5E1 until the PIN row is complete, 0.9 + spinner while
+  // the request runs. `ready` is the row's own gate — never the busy flag.
+  const buttonStyle = (ready: boolean): React.CSSProperties => ({
     width: '100%',
+    height: '52px',
+    padding: '0 1rem',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '0.5rem',
-    padding: '0.7rem 1rem',
-    borderRadius: '8px',
-    backgroundColor: 'var(--accent)',
+    borderRadius: '14px',
+    backgroundColor: busy || (ready && !lockedOut) ? 'var(--accent)' : '#CBD5E1',
     color: '#ffffff',
     border: 'none',
-    fontSize: '0.875rem',
+    fontSize: '16px',
     fontWeight: 600,
-    cursor: busy || lockedOut ? 'not-allowed' : 'pointer',
-    opacity: busy || lockedOut ? 0.7 : 1,
-    transition: 'opacity 0.15s',
-  };
+    cursor: ready && !busy && !lockedOut ? 'pointer' : 'default',
+    opacity: busy || lockedOut ? 0.9 : 1,
+    transition: 'background-color 0.15s ease, opacity 0.15s ease',
+  });
 
   return (
     <>
@@ -253,7 +258,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
                   {error}
                 </p>
               )}
-              <button type="submit" disabled={pin.length !== 4 || busy || lockedOut} style={{ ...buttonStyle, marginTop: '1.25rem' }}>
+              <button type="submit" className="lock-primary-btn" disabled={pin.length !== 4 || busy || lockedOut} style={{ ...buttonStyle(pin.length === 4), marginTop: '1.25rem' }}>
                 {busy ? <Spinner /> : null}
                 {busy ? t('screenLock.unlocking') : t('screenLock.unlock')}
               </button>
@@ -329,8 +334,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
               )}
               <button
                 type="submit"
+                className="lock-primary-btn"
                 disabled={pin.length !== 4 || confirm.length !== 4 || busy}
-                style={{ ...buttonStyle, marginTop: '1.25rem' }}
+                style={{ ...buttonStyle(pin.length === 4 && confirm.length === 4), marginTop: '1.25rem' }}
               >
                 {busy ? <Spinner /> : null}
                 {busy ? t('screenLock.creating') : t('screenLock.create')}
@@ -342,7 +348,7 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
       {/* Local keyframes: `spin` for the buttons' spinner (neither this
           overlay nor its parents guarantee it), `shake` for the card's
           wrong-entry jolt. */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }\n.lock-backdrop {\n  /* Fully opaque sheet: the app is unmounted while locked (#33), so\n     there is nothing behind this overlay by design. No blur and no\n     translucency — the theme's card colour simply covers the viewport\n     (white in light mode, the dark card colour in dark mode), and no\n     outline of the page can show through. */\n  background-color: var(--card-bg);\n}}`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }\n@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }\n.lock-backdrop {\n  /* Fully opaque sheet: the app is unmounted while locked (#33), so\n     there is nothing behind this overlay by design. No blur and no\n     translucency — the theme's card colour simply covers the viewport\n     (white in light mode, the dark card colour in dark mode), and no\n     outline of the page can show through. */\n  background-color: var(--card-bg);\n}\n.lock-primary-btn:hover:not(:disabled) { background-color: color-mix(in srgb, var(--accent) 86%, #000) !important; }`}</style>
       </div>
     </>
   );
@@ -350,9 +356,9 @@ export default function LockScreen({ pinSet, onPinSet, onUnlocked }: LockScreenP
 
 function Spinner() {
   return (
-    <svg style={{ animation: 'spin 0.7s linear infinite' }} width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" opacity="0.3" />
-      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.8" />
+    <svg style={{ animation: 'spin 1s linear infinite' }} width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25" />
+      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
     </svg>
   );
 }

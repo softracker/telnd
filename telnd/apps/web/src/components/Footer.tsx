@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 const FOOTER_LINKS = [
   { href: '/about-us', label: 'About Us' },
@@ -8,6 +11,11 @@ const FOOTER_LINKS = [
 ];
 
 export function Footer() {
+  // The sign-in flow is immersive in the app design — full-bleed background,
+  // no chrome below the fold — so the site footer steps aside there.
+  const pathname = usePathname();
+  if (pathname.startsWith('/auth')) return null;
+
   return (
     <footer className="border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-950/80">
       <div className="container flex flex-col items-center justify-between gap-4 py-6 sm:flex-row">

@@ -383,6 +383,57 @@ ${footer}
 }
 
 /**
+ * Magic sign-in link for the portal's "Send me a login link" method (the
+ * email login-link login provider). Clicking the link spends the single-use
+ * token and drops the recipient straight into a signed-in session — nothing
+ * is typed, no password ever leaves the mailbox's owner.
+ */
+export async function sendLoginLinkEmail(params: {
+  to: string;
+  firstName: string;
+  lastName: string;
+  /** Single-use, short-lived link that signs the recipient in. */
+  loginUrl: string;
+  /** Human-readable link lifetime ('15 minutes'). */
+  expiresLabel: string;
+}): Promise<boolean> {
+  const { to, firstName, lastName, loginUrl, expiresLabel } = params;
+  const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
+  const safeLoginUrl = escapeHtml(loginUrl);
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const subject = `Your ${appName} sign-in link`;
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Sign in to ${escapeHtml(appName)}</h1>
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#374151;">Hi ${displayName}, use the link below to sign in &mdash; no password needed. It works once and expires in <strong>${escapeHtml(expiresLabel)}</strong>.</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 8px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:14px 16px;font-size:14px;color:#374151;line-height:1.8;">
+              <div><strong>Account:</strong> ${escapeHtml(to)}</div>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 16px;">
+            <a href="${safeLoginUrl}" style="display:inline-block;background-color:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;">Sign in now</a>
+          </p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link can only be used once, and only by the person with access to this inbox. Requesting another one invalidates it.</p>
+          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you did not request this, you can safely ignore this email &mdash; you will not be signed in.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>`;
+  return sendEmail(to, subject, html);
+}
+
+/**
  * Security notice sent to the account owner when a super admin turns their
  * two-factor authentication off (release or turn-off from the Admins list).
  * The account holder never did this themselves, so the mail says exactly

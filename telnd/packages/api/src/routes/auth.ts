@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema, requestOtpSchema } from '@telnd/validation';
+import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema, requestOtpSchema, forgotPasswordSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
@@ -10,8 +10,8 @@ import { getLockoutState, isCurrentlyLockedOut, getRetryAfterSeconds, recordFail
 import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
 import { notifyNewDeviceLogin, registerLoginDevice, describeLoginDevice } from '../lib/loginAlerts';
-import { checkPasswordToken, findUsablePasswordToken } from '../lib/passwordTokens';
-import { isSmtpConfigured } from '../lib/email';
+import { checkPasswordToken, findUsablePasswordToken, issuePasswordToken, discardPasswordToken, portalUrl } from '../lib/passwordTokens';
+import { isSmtpConfigured, sendPasswordResetEmail, sendLoginLinkEmail } from '../lib/email';
 import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import { normalizePin, verifySecurityPin } from '../lib/securityPin';
@@ -174,7 +174,56 @@ async function issueSession(c: any, user: any, ip: string) {
   };
 }
 
+// ── Sign-in methods (Admin → Settings → Login Providers) ──────────────
+// Those switches decide how USERS sign in on the portal. Admin sign-in
+// never reads them (the gate below runs only for non-admin accounts), so
+// turning portal email login off can never lock the operator out of the
+// panel. A method nobody ever configured keeps its default: the built-in
+// email/phone methods are on until switched off.
+async function loginMethodEnabled(method: 'email' | 'phone' | 'emailLink'): Promise<boolean> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'loginProviders' } });
+    const stored = (row?.value as Record<string, { enabled?: unknown } | undefined> | null)?.[method];
+    if (!stored || typeof stored !== 'object') return true;
+    return stored.enabled !== false;
+  } catch {
+    return true; // settings unreadable → default on, never lock sign-in out
+  }
+}
+
+function methodDisabled(c: any, method: 'email' | 'phone' | 'emailLink') {
+  const messages = {
+    email: 'Sign in with email and password is currently disabled.',
+    phone: 'Sign in with phone number is currently disabled.',
+    emailLink: 'Sign in with an email login link is currently disabled.',
+  };
+  return c.json(
+    { success: false, error: { code: 'METHOD_DISABLED', message: messages[method] } },
+    403,
+  );
+}
+
 export const authRoutes = new Hono<AuthEnv>();
+
+// What the portal's sign-in screens render: the Login Providers switches
+// as plain booleans (defaults: the built-in methods on, OAuth off). Public
+// on purpose — an anonymous visitor is the one choosing a method — and it
+// can never leak a credential: only these six flags leave this endpoint.
+authRoutes.get('/providers', async (c) => {
+  const defaults = { email: true, emailLink: true, phone: true, google: false, facebook: false, linkedin: false };
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'loginProviders' } });
+    const stored = (row?.value ?? {}) as Record<string, { enabled?: unknown } | undefined>;
+    const out: Record<keyof typeof defaults, boolean> = { ...defaults };
+    for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
+      const v = stored[key];
+      if (v && typeof v === 'object' && typeof v.enabled === 'boolean') out[key] = v.enabled;
+    }
+    return c.json({ success: true, data: out });
+  } catch {
+    return c.json({ success: true, data: defaults });
+  }
+});
 
 authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(signupSchema), async (c) => {
   const data = c.get('validatedData');
@@ -414,6 +463,16 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
 
   // Step 6: Success — reset lockout completely
   await resetLockout(identifier);
+
+  // Step 6b: The portal's Login Providers switches (email / phone) decide
+  // whether this credential path is open to users right now — checked only
+  // AFTER the password/OTP above verified, so a disabled method can never
+  // become an account-existence oracle (a wrong password still answers
+  // 401, identically to an unknown account). Admin accounts skip it: the
+  // panel's sign-in does not read that section at all.
+  if (user.role !== 'ADMIN' && !(await loginMethodEnabled(data.email ? 'email' : 'phone'))) {
+    return methodDisabled(c, data.email ? 'email' : 'phone');
+  }
 
   // Step 7: Two-factor gate. An enabled second factor stops the sign-in
   // here — no session exists yet, only a 10-minute pending token in its
@@ -1054,6 +1113,10 @@ authRoutes.post('/logout', async (c) => {
 // never disclose whether a phone has an account — and delivery problems
 // are logged server-side instead of echoed, for the same reason.
 authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate(requestOtpSchema), async (c) => {
+  // Phone login can be switched off in Admin → Settings → Login Providers.
+  // Method-level gate — the answer depends on the switch alone, never on
+  // whether the number has an account, so it discloses nothing.
+  if (!(await loginMethodEnabled('phone'))) return methodDisabled(c, 'phone');
   const body = c.get('validatedData') as { phone: string };
   const user = await prisma.user.findFirst({
     where: { phone: body.phone },
@@ -1070,6 +1133,108 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
     }
   }
   return c.json({ success: true, data: { message: 'OTP sent' } });
+});
+
+// ── Forgot password (portal self-service) ──────────────────────────────
+// The caller gets the SAME answer whether or not an account exists ("If an
+// account exists…"), so this endpoint can never be used to probe which
+// addresses are registered. When an account does exist, a single-use
+// 60-minute reset link goes out for the portal's reset page to spend. A
+// delivery failure stays server-side too: the token is discarded (a link
+// nobody received must not linger) and the generic answer stands.
+authRoutes.post('/forgot-password', rateLimit({ windowMs: 60000, max: 5 }), validate(forgotPasswordSchema), async (c) => {
+  const body = c.get('validatedData') as { email: string };
+  const generic = {
+    success: true,
+    data: { message: 'If an account exists for that email, a password reset link is on its way.' },
+  };
+  try {
+    const user = await prisma.user.findFirst({ where: { email: body.email } });
+    if (user?.isActive) {
+      const raw = await issuePasswordToken(user.id, 'reset');
+      const emailed = await sendPasswordResetEmail({
+        to: body.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        resetUrl: portalUrl(`/auth/reset-password?token=${raw}`),
+        expiresLabel: '60 minutes',
+      });
+      if (!emailed) {
+        await discardPasswordToken(user.id, 'reset').catch(() => {});
+        console.error('[auth] forgot-password: reset email could not be delivered');
+      }
+    }
+  } catch (err) {
+    console.error('[auth] forgot-password request failed:', err);
+  }
+  return c.json(generic);
+});
+
+// ── Email login link (portal magic link) ───────────────────────────────
+// Half one: mint + email a single-use 15-minute link. Same generic answer
+// as forgot-password (no account-existence oracle); the emailLink switch
+// from Admin → Settings → Login Providers gates it at the door — a
+// method-level answer that says nothing about any account.
+authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(forgotPasswordSchema), async (c) => {
+  if (!(await loginMethodEnabled('emailLink'))) return methodDisabled(c, 'emailLink');
+  const body = c.get('validatedData') as { email: string };
+  const generic = {
+    success: true,
+    data: { message: 'If an account exists for that email, a sign-in link is on its way.' },
+  };
+  try {
+    const user = await prisma.user.findFirst({ where: { email: body.email } });
+    if (user?.isActive) {
+      const raw = await issuePasswordToken(user.id, 'login');
+      const emailed = await sendLoginLinkEmail({
+        to: body.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        loginUrl: portalUrl(`/auth/login-link?token=${raw}`),
+        expiresLabel: '15 minutes',
+      });
+      if (!emailed) {
+        await discardPasswordToken(user.id, 'login').catch(() => {});
+        console.error('[auth] login-link: sign-in email could not be delivered');
+      }
+    }
+  } catch (err) {
+    console.error('[auth] login-link request failed:', err);
+  }
+  return c.json(generic);
+});
+
+// Half two: the click. The token is spent by its own delete (single-use
+// even under a race — a second redeem finds no row) and only then does a
+// session appear, identical in shape to a password login's answer. The
+// emailLink switch is re-checked here so a method switched off after the
+// email went out still cannot open a session — without spending the token,
+// so switching it back on makes the same link work again.
+authRoutes.post('/login-link/verify', rateLimit({ windowMs: 60000, max: 10 }), validate(checkResetTokenSchema), async (c) => {
+  if (!(await loginMethodEnabled('emailLink'))) return methodDisabled(c, 'emailLink');
+  const body = c.get('validatedData') as { token: string };
+  const invalid = () =>
+    c.json(
+      {
+        success: false,
+        error: { code: 'LINK_INVALID', message: 'This sign-in link is invalid or has expired. Please request a new one.' },
+      },
+      401,
+    );
+
+  const row = await findUsablePasswordToken(body.token, ['login']);
+  if (!row) return invalid();
+  const user = await prisma.user.findUnique({ where: { id: row.userId } });
+  if (!user || !user.isActive) {
+    // A suspended or deleted account's link dies with it.
+    await prisma.passwordToken.deleteMany({ where: { id: row.id } }).catch(() => {});
+    return invalid();
+  }
+  const consumed = await prisma.passwordToken.deleteMany({ where: { id: row.id, usedAt: null } });
+  if (consumed.count === 0) return invalid(); // a rival click spent it first
+
+  const payload = await issueSession(c, user, getIp(c));
+  return c.json({ success: true, data: payload });
 });
 
 // Current authenticated user, including admin role + permissions for the admin UI.

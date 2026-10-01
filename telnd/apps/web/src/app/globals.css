@@ -3,6 +3,17 @@
 @tailwind utilities;
 
 @layer base {
+  /* The welcome mascot's idle drift — mirrors the Flutter app's 2s
+     ease-in-out float between 0 and -12px. */
+  @keyframes auth-float {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(-12px);
+    }
+  }
+
   :root {
     --background: 43 20% 96%;
     --foreground: 160 15% 15%;
