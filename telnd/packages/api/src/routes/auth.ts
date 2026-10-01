@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
-import { signupSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema, requestOtpSchema, forgotPasswordSchema } from '@telnd/validation';
+import { signupCheckSchema, signupCompleteSchema, signupStartSchema, signupVerifyOtpSchema, loginSchema, resetPasswordSchema, checkResetTokenSchema, twoFactorVerifySchema, requestOtpSchema, forgotPasswordSchema, oauthVerifySchema, oauthLinkSchema, oauthUnlinkSchema } from '@telnd/validation';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { authMiddleware } from '../middleware/auth';
@@ -11,7 +11,8 @@ import { getIp } from '../lib/getIp';
 import { attachLoginLocation } from '../lib/geoLocation';
 import { notifyNewDeviceLogin, registerLoginDevice, describeLoginDevice } from '../lib/loginAlerts';
 import { checkPasswordToken, findUsablePasswordToken, issuePasswordToken, discardPasswordToken, portalUrl } from '../lib/passwordTokens';
-import { isSmtpConfigured, sendPasswordResetEmail, sendLoginLinkEmail } from '../lib/email';
+import { isSmtpConfigured, sendPasswordResetEmail, sendLoginLinkEmail, sendSignupVerifyEmail } from '../lib/email';
+import { mintSignupIntent, peekSignupIntent, takeSignupIntent, discardSignupIntent } from '../lib/signupIntents';
 import { consumeRecoveryCode, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
 import { normalizePin, verifySecurityPin } from '../lib/securityPin';
@@ -22,11 +23,25 @@ import {
   maskEmail,
   maskPhone,
   sendOtpToUser,
+  sendOtpToPhone,
+  sendOtpToEmailAddress,
   smsSendFailure,
   toBdSmsNumber,
   twoFactorPolicyRequired,
   verifyOtp,
 } from '../lib/twoFactor';
+import {
+  buildAuthorizeUrl,
+  burnFlowJti,
+  exchangeCodeForProfile,
+  isOAuthProvider,
+  oauthClientConfig,
+  oauthRedirectUri,
+  OAuthFlowError,
+  pkcePair,
+  randomOAuthToken,
+} from '../lib/oauth';
+import type { OAuthProfile, OAuthProvider } from '../lib/oauth';
 
 type AuthEnv = {
   Variables: {
@@ -203,6 +218,51 @@ function methodDisabled(c: any, method: 'email' | 'phone' | 'emailLink') {
   );
 }
 
+// ── Which portal a sign-in belongs to ─────────────────────────────────────
+// One account store, two front doors. The admin panel only lets ADMIN
+// accounts with an ACTIVE admin profile through; the user portal refuses
+// ADMIN accounts outright — an operator's session never rides into the
+// user side, and a candidate's credentials never open the panel. The front
+// end says which door it came from (`context` on /login, carried into the
+// 2FA pending token); the ACCOUNT decides. Absent context (scripts, older
+// clients) skips the check — it grants nothing: each door still enforces
+// its own rules, this only makes the refusal happen at the door instead
+// of after a session exists. Never called before the credential proved
+// itself, so the answer is never a pre-auth oracle.
+async function doorError(
+  user: { id: string; role: string },
+  context: 'admin' | 'portal' | undefined,
+): Promise<{ code: string; message: string } | null> {
+  if (context === 'admin') {
+    if (user.role !== 'ADMIN') {
+      return {
+        code: 'NOT_ADMIN',
+        message: 'This account does not have administrator access.',
+      };
+    }
+    const adminUser = await prisma.adminUser.findUnique({
+      where: { userId: user.id },
+      select: { isActive: true },
+    });
+    if (!adminUser?.isActive) {
+      // Role says operator but the panel profile is missing or deactivated
+      // — same refusal, so probing never distinguishes the two.
+      return {
+        code: 'NOT_ADMIN',
+        message: 'This account does not have an active administrator profile.',
+      };
+    }
+    return null;
+  }
+  if (context === 'portal' && user.role === 'ADMIN') {
+    return {
+      code: 'ADMIN_ACCOUNT',
+      message: 'Administrator accounts sign in through the admin portal.',
+    };
+  }
+  return null;
+}
+
 export const authRoutes = new Hono<AuthEnv>();
 
 // What the portal's sign-in screens render: the Login Providers switches
@@ -225,96 +285,51 @@ authRoutes.get('/providers', async (c) => {
   }
 });
 
-authRoutes.post('/signup', rateLimit({ windowMs: 60000, max: 5 }), validate(signupSchema), async (c) => {
-  const data = c.get('validatedData');
-  const ip = getIp(c);
-
-  const existingUser = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { email: data.email },
-        ...(data.phone ? [{ phone: data.phone }] : []),
-      ],
-    },
-  });
-
-  if (existingUser) {
-    return c.json({
-      success: false,
-      error: {
-        code: 'USER_EXISTS',
-        message: 'An account with this email already exists',
-      },
-    }, 409);
+// ── Sign-in-or-create, email half ────────────────────────────────────────
+// No account for this address yet — the CHANNEL is what gets proven, with
+// a 6-digit code to the mailbox (§14.49). The verification-link round is
+// gone from this path: the password and the profile come AFTER the code,
+// never before it, and this helper answers identically whether the call
+// came from /login's unknown-email branch or /signup/start. Outside
+// production the response also carries `devOtpCode` (the rule
+// `devVerifyUrl` used to carry) — an API-level test seam for the automated
+// suites: the portal never forwards nor renders it, and it cannot exist in
+// production.
+async function startEmailSignup(c: any, email: string) {
+  const sent = await sendOtpToEmailAddress(email);
+  if (!sent.ok) {
+    if (sent.reason === 'RESEND_SOON') {
+      // A live code is already in the mailbox — the resend gap refuses a
+      // second send, and the first code still verifies. `resendAfter`
+      // powers the wizard's countdown.
+      return c.json({
+        success: true,
+        data: {
+          requiresOtpVerification: true,
+          maskedIdentifier: maskEmail(email),
+          resendAfter: sent.retryAfterSec ?? 45,
+        },
+      });
+    }
+    // The known/unknown split is already disclosed by `accountExists` a
+    // line above, so an honest delivery error hides nothing — and stops
+    // nobody waiting on a code that never left the building.
+    const mapped = smsSendFailure(sent);
+    return c.json(
+      { success: false, error: { code: mapped.code, message: mapped.message } },
+      mapped.status,
+    );
   }
-
-  const bcrypt = await import('bcryptjs');
-  const passwordHash = await bcrypt.hash(data.password, 12);
-
-  const user = await prisma.user.create({
-    data: {
-      email: data.email,
-      phone: data.phone,
-      firstName: data.firstName,
-      lastName: data.lastName,
-      // The schema's lowercase enum ('candidate' | 'employer') never
-      // matched UserRole's uppercase values — every signup died on
-      // P2003/invalid-enum with a 500 (#35). Map explicitly; anything
-      // unexpected falls back to the default rather than the database
-      // deciding.
-      role: data.role === 'employer' ? 'EMPLOYER' : 'CANDIDATE',
-      passwordHash,
-    },
-  });
-
-  const token = await signAccess(user.id, user.role);
-  const refreshToken = await signRefresh(user.id);
-
-  const session = await prisma.session.create({
-    data: {
-      userId: user.id,
-      token,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      // Same device capture as login — the Security page's "Logged in
-      // devices" list includes sessions created at signup.
-      ipAddress: ip === 'unknown' ? null : ip,
-      userAgent: c.req.header('user-agent') || null,
-    },
-  });
-  void attachLoginLocation(user.id, session.id, ip);
-  // Recognize the signup device silently (no alert at account creation),
-  // so the owner's real first sign-in afterwards is not announced as "new
-  // device" when it is the very browser they just signed up from.
-  void registerLoginDevice(user.id, c.req.header('user-agent') || null);
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      // Same linkage as issueSession — see the #14 comment there.
-      sessionId: session.id,
-      familyId: randomUUID(),
-    },
-  });
-
-  setAuthCookie(c, 'telnd_admin_token', token, 7 * 24 * 60 * 60);
-  setAuthCookie(c, 'telnd_admin_refresh_token', refreshToken, 30 * 24 * 60 * 60);
-
+  const devOnly = process.env.NODE_ENV !== 'production';
   return c.json({
     success: true,
     data: {
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        avatar: user.avatar,
-      },
+      requiresOtpVerification: true,
+      maskedIdentifier: maskEmail(email),
+      ...(sent.devCode && devOnly ? { devOtpCode: sent.devCode } : {}),
     },
-  }, 201);
-});
+  });
+}
 
 authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(loginSchema), async (c) => {
   const data = c.get('validatedData');
@@ -388,17 +403,67 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
     }
   }
 
-  // Step 3: Look up user
+  // Step 3: Look up user. The phone clause carries `isPhoneVerified` —
+  // an unverified profile number (typed on the signup wizard, §14.50) is
+  // not a login identifier, so it answers exactly like an unknown number
+  // (the OTP store keys line up for that branch, and the wizard's
+  // uniqueness check later refuses to duplicate it).
   const user = await prisma.user.findFirst({
     where: {
       OR: [
         ...(data.email ? [{ email: data.email }] : []),
-        ...(data.phone ? [{ phone: data.phone }] : []),
+        ...(data.phone ? [{ phone: data.phone, isPhoneVerified: true }] : []),
       ],
     },
   });
 
   if (!user) {
+    // ── Sign-in-or-create: no account here yet ─────────────────────────
+    // Login and signup are one flow: the credential can't be checked
+    // against an account that doesn't exist, so the CHANNEL is what gets
+    // proven instead — a 6-digit code to the mailbox for email, the OTP
+    // for the phone — and the wizard afterwards (password → details →
+    // Sign up) creates the account. Both halves answer only after their
+    // method switch says the door is open (a switch never depends on the
+    // account, so it still discloses nothing), and a wrong OTP keeps the
+    // exact 401 an unknown account always had.
+    if (data.email && data.password) {
+      if (!(await loginMethodEnabled('email'))) return methodDisabled(c, 'email');
+
+      // The password typed here is NOT kept: it is chosen again on the
+      // wizard after the code proves the mailbox — that reordering is the
+      // whole point of the OTP round (§14.49).
+      return startEmailSignup(c, data.email);
+    }
+
+    if (data.phone && data.otp) {
+      if (!(await loginMethodEnabled('phone'))) return methodDisabled(c, 'phone');
+      // Unknown number's code lives in the phone-keyed OTP entry that
+      // /auth/otp/request minted — every failure mode (no code, wrong,
+      // expired, spent, wrong purpose) keeps the same generic 401.
+      const otpResult = verifyOtp(`phone:${data.phone}`, data.otp, 'login');
+      if (!otpResult.ok) {
+        await recordFailedAttempt(identifier, ip);
+        return c.json({
+          success: false,
+          error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+        }, 401);
+      }
+      // The OTP proved the number — this token is what the name step
+      // finishes with. No account, no session yet.
+      const minted = mintSignupIntent({ channel: 'phone', phone: data.phone });
+      return c.json({
+        success: true,
+        data: {
+          requiresProfile: true,
+          ...(minted.status === 'sent' ? { signupToken: minted.raw } : {}),
+        },
+      });
+    }
+
+    // Unreachable while the schema refine holds (email+password or
+    // phone+otp) — belt and braces so a future schema loosening cannot
+    // walk an unproven request straight into a response.
     await recordFailedAttempt(identifier, ip);
     return c.json({
       success: false,
@@ -464,6 +529,12 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   // Step 6: Success — reset lockout completely
   await resetLockout(identifier);
 
+  // Step 6a: Which door did this sign-in start on? The credential proved
+  // itself above, so refusing here discloses nothing an attacker could
+  // not already learn by holding the password.
+  const door = await doorError(user, data.context);
+  if (door) return c.json({ success: false, error: door }, 403);
+
   // Step 6b: The portal's Login Providers switches (email / phone) decide
   // whether this credential path is open to users right now — checked only
   // AFTER the password/OTP above verified, so a disabled method can never
@@ -492,6 +563,9 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
         jti: randomUUID(),
         type: '2fa-pending',
         purpose: user.twoFactorEnabled ? '2fa' : '2fa-enroll',
+        // The door rides along: when the challenge closes, it must still
+        // be this account's door (§ doorError).
+        ...(data.context ? { context: data.context } : {}),
         exp: Math.floor(Date.now() / 1000) + 10 * 60,
       },
       getJwtSecret(),
@@ -508,6 +582,248 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   }
 
   const payload = await issueSession(c, user, ip);
+  return c.json({ success: true, data: payload });
+});
+
+// ── Starting the email proof (sign-in-or-create) ─────────────────────────
+// The email step of the wizard asks for the address FIRST (§14.49) — this
+// is where "no account here yet" is decided and where the 6-digit code
+// goes out. Known address → `{ accountExists: true }` with no mail sent
+// (the visitor carries on to the sign-in screen); unknown → a
+// purpose-bound 'signup' code to the mailbox. The known/unknown split is
+// already disclosed by that answer, so delivery problems are reported
+// honestly here — and outside production the code comes back as
+// `devOtpCode` (the hook `devVerifyUrl` used to carry).
+authRoutes.post('/signup/start', rateLimit({ windowMs: 60000, max: 5 }), validate(signupStartSchema), async (c) => {
+  const body = c.get('validatedData') as { email: string };
+
+  // Creation obeys the switch that governs the channel it would be born
+  // on — checked BEFORE existence is looked at, so a switched-off door
+  // never discloses whether an address is taken.
+  if (!(await loginMethodEnabled('email'))) return methodDisabled(c, 'email');
+
+  const existing = await prisma.user.findFirst({ where: { email: body.email }, select: { id: true } });
+  if (existing) return c.json({ success: true, data: { accountExists: true } });
+
+  return startEmailSignup(c, body.email);
+});
+
+// Spend the emailed code and mint the one-time signup token. Every
+// failure except "too many tries" answers the same generic 401 — no
+// oracle separates "no code was ever sent here" from "wrong code" from
+// "expired", and #38's purpose binding rules out spending a sign-in or
+// reset code here. Success means the channel proof is COMPLETE: the
+// wizard's password and profile steps come next, and only the finished
+// /signup/complete ever creates a row.
+authRoutes.post('/signup/verify-otp', rateLimit({ windowMs: 60000, max: 10 }), validate(signupVerifyOtpSchema), async (c) => {
+  const body = c.get('validatedData') as { email: string; code: string };
+  if (!(await loginMethodEnabled('email'))) return methodDisabled(c, 'email');
+
+  const result = verifyOtp(`email:${body.email}`, body.code, 'signup');
+  if (!result.ok) {
+    if (result.reason === 'TOO_MANY_ATTEMPTS') {
+      return c.json({
+        success: false,
+        error: { code: 'OTP_TOO_MANY_ATTEMPTS', message: 'Too many wrong codes. Please request a new one.' },
+      }, 429);
+    }
+    return c.json({
+      success: false,
+      error: { code: 'OTP_INVALID', message: 'That code is invalid or has expired. Please try again.' },
+    }, 401);
+  }
+
+  const minted = mintSignupIntent({ channel: 'email', email: body.email });
+  if (minted.status !== 'sent') {
+    // No mail rides on this mint (the code already proved the mailbox) —
+    // 'throttled' can only mean a wizard run for this address is already
+    // under 60 seconds old. Honest wait, nothing leaks.
+    return c.json({
+      success: false,
+      error: { code: 'SIGNUP_WAIT', message: 'Please wait a minute, then request a new code.' },
+    }, 429);
+  }
+  return c.json({
+    success: true,
+    data: { requiresProfile: true, signupToken: minted.raw },
+  });
+});
+
+// ── Finishing a created account (sign-in-or-create) ──────────────────────
+// The channel is already proven by the time these run: the emailed
+// 6-digit code (email), the login-link click (link) or the phone OTP
+// handed the caller a one-time signup token, and NOTHING about the
+// account exists until /signup/complete succeeds — the intent store
+// holds the half-finished signup in memory (§ lib/signupIntents). Both
+// steps re-read the method switch that governs their channel: a door
+// switched off after the proof went out still cannot mint an account
+// through it.
+
+// What the finish screen renders: which identifier the token is for (so
+// the form can say who it is creating), or the "sign in instead" verdict
+// when an account appeared since the link went out. Never spends the
+// token — a reload must not burn it.
+authRoutes.post('/signup/check', rateLimit({ windowMs: 60000, max: 20 }), validate(signupCheckSchema), async (c) => {
+  const body = c.get('validatedData') as { token: string };
+  const intent = peekSignupIntent(body.token);
+  if (!intent) {
+    return c.json({
+      success: false,
+      error: { code: 'SIGNUP_TOKEN_INVALID', message: 'This link is invalid or has expired. Please start again.' },
+    }, 401);
+  }
+  const gate = intent.channel === 'phone' ? 'phone' : intent.channel === 'link' ? 'emailLink' : 'email';
+  if (!(await loginMethodEnabled(gate))) return methodDisabled(c, gate);
+
+  const existing = await prisma.user.findFirst({
+    where: intent.email ? { email: intent.email } : { phone: intent.phone },
+    select: { id: true },
+  });
+  if (existing) {
+    // An account appeared since the token was minted (another door won
+    // the race) — the finish screen turns into "sign in instead".
+    return c.json({ success: true, data: { accountExists: true } });
+  }
+  return c.json({
+    success: true,
+    data: {
+      valid: true,
+      channel: intent.channel,
+      identifier: intent.email ? maskEmail(intent.email) : maskPhone(intent.phone),
+    },
+  });
+});
+
+// Burn the token, create the account, sign it in. Single-use is enforced
+// by the take itself: a rival tab or a replayed link finds nothing. One
+// account, one role — every self-created account starts as a candidate;
+// ADMIN only ever comes from the admin panel's own management.
+/**
+ * BD forms the profile field may arrive in (bare 10 digits, a leading 0,
+ * `880…`, `+880…`) → the canonical `+880XXXXXXXXXX` the phone channel
+ * stores; anything that is not a 10-digit national number → null.
+ */
+function normalizeSignupPhone(raw: string): string | null {
+  let national = raw.replace(/[\s()-]/g, '');
+  if (national.startsWith('+880')) national = national.slice(4);
+  else if (national.startsWith('880')) national = national.slice(3);
+  else if (national.startsWith('0')) national = national.slice(1);
+  if (!/^[1-9]\d{9}$/.test(national)) return null;
+  return `+880${national}`;
+}
+
+authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), validate(signupCompleteSchema), async (c) => {
+  const body = c.get('validatedData') as {
+    token: string;
+    firstName: string;
+    lastName: string;
+    password: string;
+    phone?: string;
+  };
+
+  // Peek for the door check first so a refusal does not burn the token —
+  // the take below still re-validates under the same process.
+  const peeked = peekSignupIntent(body.token);
+  if (!peeked) {
+    return c.json({
+      success: false,
+      error: { code: 'SIGNUP_TOKEN_INVALID', message: 'This link is invalid or has expired. Please start again.' },
+    }, 401);
+  }
+  const gate = peeked.channel === 'phone' ? 'phone' : peeked.channel === 'link' ? 'emailLink' : 'email';
+  if (!(await loginMethodEnabled(gate))) return methodDisabled(c, gate);
+
+  // The optional profile phone — normalized, validated and looked up for
+  // uniqueness BEFORE the token is spent, so a typo or a taken number
+  // costs nothing (the visitor edits the field and submits again with the
+  // token still live). The phone CHANNEL's identifier is not replaceable
+  // here: its number was proven by OTP, a body field cannot swap it.
+  // Stored numbers from this field stay UNVERIFIED — /otp/request and
+  // /login only ever treat `isPhoneVerified` numbers as phone-login
+  // identifiers, so a typed number opens no door (§14.50).
+  let extraPhone: string | null = null;
+  if (body.phone && body.phone.trim() && peeked.channel !== 'phone') {
+    extraPhone = normalizeSignupPhone(body.phone);
+    if (!extraPhone) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_INVALID', message: 'Enter a valid 10-digit phone number.' },
+      }, 400);
+    }
+    const taken = await prisma.user.findFirst({ where: { phone: extraPhone }, select: { id: true } });
+    if (taken) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_IN_USE', message: 'That phone number is already on another account.' },
+      }, 409);
+    }
+  }
+
+  const intent = takeSignupIntent(body.token);
+  if (!intent) {
+    return c.json({
+      success: false,
+      error: { code: 'SIGNUP_TOKEN_INVALID', message: 'This link is invalid or has expired. Please start again.' },
+    }, 401);
+  }
+
+  const identifierWhere = intent.email ? { email: intent.email } : { phone: intent.phone };
+  const existing = await prisma.user.findFirst({ where: identifierWhere, select: { id: true } });
+  if (existing) {
+    return c.json({
+      success: false,
+      error: { code: 'USER_EXISTS', message: 'An account already exists for this address. Sign in instead.' },
+    }, 409);
+  }
+
+  // The password arrived on the wizard's step AFTER the channel proof —
+  // hashed here, at row time, exactly like every other account's.
+  const bcrypt = await import('bcryptjs');
+  const passwordHash = await bcrypt.hash(body.password, 12);
+
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        email: intent.email ?? null,
+        // Phone channel → the proven identifier; email/link channel →
+        // the optional profile number, stored unverified (no login door).
+        phone: intent.phone ?? extraPhone,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        role: 'CANDIDATE',
+        passwordHash,
+        // The channel that proved the address IS the verification —
+        // an account is born verified by the door it walked through.
+        // A profile-typed phone never counts: it was never OTP-proven.
+        isEmailVerified: intent.channel === 'email' || intent.channel === 'link',
+        isPhoneVerified: intent.channel === 'phone',
+      },
+    });
+  } catch (err) {
+    // Lost the race between the check above and the insert: the unique
+    // constraint decided — an account exists, so sign in instead. The
+    // phone variant keeps its own wording (the pre-check above normally
+    // catches this without burning the token; only a true race lands here).
+    if ((err as { code?: string })?.code === 'P2002') {
+      const target = (err as { meta?: { target?: unknown } })?.meta?.target;
+      const lostPhoneRace = !intent.phone && !!extraPhone && Array.isArray(target) && target.includes('phone');
+      return c.json({
+        success: false,
+        error: lostPhoneRace
+          ? { code: 'PHONE_IN_USE', message: 'That phone number is already on another account.' }
+          : { code: 'USER_EXISTS', message: 'An account already exists for this address. Sign in instead.' },
+      }, 409);
+    }
+    throw err;
+  }
+
+  // First sign-in of a brand-new account: recognize the device BEFORE the
+  // session so the new-device alert does not fire at account creation —
+  // the owner's real first sign-in afterwards is announced, this one is
+  // not (the same rule the retired signup flow used).
+  await registerLoginDevice(user.id, c.req.header('user-agent') || null);
+  const payload = await issueSession(c, user, getIp(c));
   return c.json({ success: true, data: payload });
 });
 
@@ -530,7 +846,7 @@ function consumePendingJti(jti: string, expSec?: number): void {
 
 async function readPendingTwoFactor(
   c: any,
-): Promise<{ userId: string; purpose: '2fa' | '2fa-enroll'; jti: string } | null> {
+): Promise<{ userId: string; purpose: '2fa' | '2fa-enroll'; jti: string; context?: 'admin' | 'portal' } | null> {
   const cookieHeader: string = c.req.header('Cookie') || '';
   const pending = cookieHeader
     .split(';')
@@ -551,6 +867,11 @@ async function readPendingTwoFactor(
       userId: user.id,
       purpose: payload.purpose === '2fa-enroll' ? '2fa-enroll' : '2fa',
       jti: payload.jti as string,
+      // Only a door recorded at /login counts — legacy pendings simply
+      // have none and skip the check (they predate the two-door rule).
+      ...(payload.context === 'admin' || payload.context === 'portal'
+        ? { context: payload.context as 'admin' | 'portal' }
+        : {}),
     };
   } catch {
     return null;
@@ -663,6 +984,17 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
   const body = c.get('validatedData');
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
   if (!user) return challengeExpired(c);
+
+  // The door that opened this challenge must still be the account's door
+  // when it closes — a pending token minted on one portal never issues a
+  // session for the other. Checked before any attempt is counted (a wrong
+  // door is not a wrong code) and the pending cookie dies with the
+  // refusal, so the sign-in restarts at the right login screen.
+  const door = await doorError(user, pending.context);
+  if (door) {
+    clearPendingCookie(c);
+    return c.json({ success: false, error: door }, 403);
+  }
 
   // Brute-force cap per account (5 wrong tries → locked out for the rest
   // of the 15-minute window), layered on top of the per-IP rate limit
@@ -1118,8 +1450,14 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
   // whether the number has an account, so it discloses nothing.
   if (!(await loginMethodEnabled('phone'))) return methodDisabled(c, 'phone');
   const body = c.get('validatedData') as { phone: string };
+  // Only a PROVEN number is a phone-login identifier: a profile phone
+  // typed on the signup wizard (§14.50) is stored unverified, so this
+  // lookup skips it and the number behaves exactly like one with no
+  // account (same byte-identical answer — the oracle doesn't move). The
+  // OTP still reaches its owner; it just can't end in a session on an
+  // account it never proved.
   const user = await prisma.user.findFirst({
-    where: { phone: body.phone },
+    where: { phone: body.phone, isPhoneVerified: true },
     select: { id: true, isActive: true },
   });
   if (user?.isActive) {
@@ -1130,6 +1468,17 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
       if (result.reason !== 'RESEND_SOON') {
         console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
       }
+    }
+  } else if (!user) {
+    // Sign-in-or-create: the number has no account yet, but the OTP still
+    // goes out — verified against a phone-keyed store entry, which is what
+    // lets /login hand back the profile token that CREATES the account.
+    // The response stays byte-identical either way (and an inactive user
+    // row sends nothing, as before), so this still cannot probe which
+    // numbers are registered.
+    const result = await sendOtpToPhone(body.phone);
+    if (!result.ok && result.reason !== 'RESEND_SOON') {
+      console.error(`[auth] login OTP delivery failed (unregistered number): ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
     }
   }
   return c.json({ success: true, data: { message: 'OTP sent' } });
@@ -1182,6 +1531,7 @@ authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(
     success: true,
     data: { message: 'If an account exists for that email, a sign-in link is on its way.' },
   };
+  let devVerifyUrl: string | undefined;
   try {
     const user = await prisma.user.findFirst({ where: { email: body.email } });
     if (user?.isActive) {
@@ -1197,11 +1547,36 @@ authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(
         await discardPasswordToken(user.id, 'login').catch(() => {});
         console.error('[auth] login-link: sign-in email could not be delivered');
       }
+    } else if (!user) {
+      // Sign-in-or-create: the mailbox gets a CREATE-account link instead.
+      // The response below stays byte-identical either way, so this
+      // endpoint still cannot probe which addresses are registered — only
+      // the mailbox itself ever learns which kind it received. An inactive
+      // row (deactivated account) sends nothing, as before.
+      const minted = mintSignupIntent({ channel: 'link', email: body.email });
+      if (minted.status === 'sent') {
+        const verifyUrl = portalUrl(`/auth/verify-email?token=${minted.raw}`);
+        const emailed = await sendSignupVerifyEmail({
+          to: body.email,
+          verifyUrl,
+          expiresLabel: '30 minutes',
+        });
+        const devOnly = process.env.NODE_ENV !== 'production';
+        if (!emailed && !devOnly) {
+          discardSignupIntent(minted.raw); // production: dead link, dead intent
+        } else if (devOnly) {
+          // DEV-ONLY test hook (see /login's email branch) — never in prod.
+          devVerifyUrl = verifyUrl;
+        }
+      }
     }
   } catch (err) {
     console.error('[auth] login-link request failed:', err);
   }
-  return c.json(generic);
+  return c.json({
+    ...generic,
+    ...(devVerifyUrl ? { data: { ...generic.data, devVerifyUrl } } : {}),
+  });
 });
 
 // Half two: the click. The token is spent by its own delete (single-use
@@ -1230,6 +1605,11 @@ authRoutes.post('/login-link/verify', rateLimit({ windowMs: 60000, max: 10 }), v
     await prisma.passwordToken.deleteMany({ where: { id: row.id } }).catch(() => {});
     return invalid();
   }
+  // This link belongs to the user portal — ADMIN accounts don't walk this
+  // door (§ doorError). Checked before the token is spent, so the refusal
+  // leaves the link intact instead of dead-ending an operator's mailbox.
+  const door = await doorError(user, 'portal');
+  if (door) return c.json({ success: false, error: door }, 403);
   const consumed = await prisma.passwordToken.deleteMany({ where: { id: row.id, usedAt: null } });
   if (consumed.count === 0) return invalid(); // a rival click spent it first
 
@@ -1327,3 +1707,628 @@ authRoutes.post(
     return c.json({ success: true, data: { locked: false } });
   },
 );
+
+// ══════════════════════════════════════════════════════════════════════
+// Social sign-in (§14.48: Google / Facebook / LinkedIn)
+// ══════════════════════════════════════════════════════════════════════
+// Four endpoints, one handshake:
+//
+//   GET  /oauth/:provider/start    mints the flow state → 302 to the provider
+//   provider → GET <siteUrl>/auth/callback/:provider?code&state  (portal page)
+//   POST /oauth/:provider/verify   exchanges the code, resolves/creates the account
+//   POST /oauth/link               the proof screen — password attaches an identity
+//   POST /oauth/unlink             detach, session-gated, never strand the account
+//
+// Everything that makes a callback "belong" to this server lives in ONE
+// httpOnly cookie: a 10-minute JWT (JWT_SECRET) binding {state, nonce,
+// PKCE verifier, provider}. `state` travels through the provider's URL as
+// plain correlation; the verifier never leaves the server. Verify consumes
+// the cookie on FIRST read — a replayed callback URL from another browser
+// finds nothing — and matches provider + state exactly before so much as
+// looking at the code. The exchange is server-side, with PKCE (S256) and
+// the client secret; access/ID tokens are read once for the profile and
+// dropped — no column even exists to keep them in (§ lib/oauth). Identity
+// anchors on (provider, sub); a provider email attaches to, or routes
+// toward, the proof screen ONLY when the provider marked it verified —
+// never as a link credential on its own.
+
+const OAUTH_LABELS: Record<string, string> = { google: 'Google', facebook: 'Facebook', linkedin: 'LinkedIn' };
+function providerLabel(provider: string): string {
+  return OAUTH_LABELS[provider] ?? provider;
+}
+
+/**
+ * Read AND destroy the flow cookie in one motion. Single-use is the whole
+ * point: a second verify — rival tab, replayed URL, a callback pasted
+ * into another browser — finds it already gone, and anything malformed,
+ * expired or of the wrong purpose dies here too.
+ */
+async function takeOAuthState(
+  c: any,
+): Promise<{ state: string; provider: string; verifier: string } | null> {
+  const header = c.req.header('Cookie') || '';
+  const entry = header
+    .split(';')
+    .map((part: string) => part.trim())
+    .find((part: string) => part.startsWith('telnd_oauth='));
+  clearAuthCookie(c, 'telnd_oauth');
+  if (!entry) return null;
+  const token = decodeURIComponent(entry.slice('telnd_oauth='.length));
+  if (!token) return null;
+  try {
+    const payload = await verify(token, getJwtSecret(), 'HS256');
+    if (
+      payload.purpose !== 'oauth' ||
+      typeof payload.state !== 'string' ||
+      typeof payload.provider !== 'string' ||
+      typeof payload.verifier !== 'string' ||
+      typeof payload.jti !== 'string' ||
+      // Burned on FIRST read — even a mismatched attempt kills the flow
+      // (fail-closed): the second use of a captured cookie always dies.
+      !burnFlowJti(payload.jti)
+    ) {
+      return null;
+    }
+    return { state: payload.state, provider: payload.provider, verifier: payload.verifier };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The closing act every social path shares — /login's step 7 verbatim: an
+ * enrolled second factor (or a still-pending enrollment) stops the
+ * sign-in here with NO session, only the 10-minute pending cookie, and the
+ * portal's /auth/2fa screen takes over. Social is a FIRST factor only;
+ * `context: 'portal'` rides the token because these endpoints are the user
+ * portal's door — an ADMIN identity can never close its challenge on the
+ * panel side.
+ */
+async function finishSocialSignIn(c: any, user: any, ip: string) {
+  let needsEnrollment = false;
+  if (!user.twoFactorEnabled) {
+    needsEnrollment = user.twoFactorEnforced || (await twoFactorPolicyRequired());
+  }
+  if (user.twoFactorEnabled || needsEnrollment) {
+    const pending = await sign(
+      {
+        sub: user.id,
+        jti: randomUUID(),
+        type: '2fa-pending',
+        purpose: user.twoFactorEnabled ? '2fa' : '2fa-enroll',
+        context: 'portal',
+        exp: Math.floor(Date.now() / 1000) + 10 * 60,
+      },
+      getJwtSecret(),
+    );
+    setAuthCookie(c, 'telnd_2fa_pending', pending, 10 * 60);
+    return c.json({
+      success: true,
+      data: {
+        requires2FA: true,
+        requires2FAEnrollment: needsEnrollment,
+        method: user.twoFactorEnabled ? user.twoFactorMethod : null,
+      },
+    });
+  }
+  const payload = await issueSession(c, user, ip);
+  return c.json({ success: true, data: payload });
+}
+
+/**
+ * Social events land in the AuditLog: `social.signin` on every session a
+ * provider identity opens (`created:` on the JIT birth sign-in),
+ * `social.link` when an identity attaches, `social.unlink` when one is
+ * detached. Best-effort — like the other auth logs here, a failed write
+ * must never fail the sign-in.
+ */
+function writeSocialAudit(
+  c: any,
+  action: 'social.signin' | 'social.link',
+  userId: string,
+  identityId: string | null,
+  provider: string,
+  extra?: Record<string, string | boolean>,
+) {
+  return prisma.auditLog
+    .create({
+      data: {
+        userId,
+        action,
+        targetType: 'identity',
+        targetId: identityId,
+        newValues: { provider, ...extra },
+        ipAddress: getIp(c),
+        userAgent: (c.req.header('User-Agent') || '').slice(0, 512) || null,
+      },
+    })
+    .catch((err) => console.error(`[oauth] audit write failed (${action}):`, err));
+}
+
+type SocialResolution =
+  | { kind: 'identity'; user: any; identityId: string }
+  | { kind: 'linked'; user: any; identityId: string } // attached just now, visitor already signed in
+  | { kind: 'link'; email: string; linkToken: string }
+  | { kind: 'new'; user: any; identityId: string }
+  | { kind: 'refused'; code: string; message: string };
+
+/**
+ * Where this provider identity lands — exactly five answers, in decision
+ * order:
+ *
+ * 1. (provider, sub) already attached → THAT account, full stop. The
+ *    email plays no part; subs never change owner.
+ * 2. The visitor is signed in and the session's address IS the provider's
+ *    verified one → attach directly: ownership proven twice (live session
+ *    + verified mailbox), no password screen.
+ * 3. No identity, but an account HOLDS the provider's verified email →
+ *    the proof screen. Never attach on the match alone — a provider's view
+ *    of an address is not proof the visitor controls the local account
+ *    (the auto-link takeover this system refuses to build).
+ * 4. Nothing exists → JIT-create a CANDIDATE + identity. The email rides
+ *    along only when the provider vouched for it as verified; a provider
+ *    that vouches for nothing still creates an account — an email-less
+ *    one. ADMIN is unreachable through any of this (role fixed here +
+ *    doorError in every branch).
+ * 5. Refused — deactivated account or a door that isn't theirs (§ doorError).
+ *
+ * Both creations can race a rival callback (same sub, or the same
+ * verified address in two tabs): the loser re-resolves against the
+ * winner's rows instead of dying on a unique constraint.
+ */
+async function resolveSocialAccount(
+  provider: OAuthProvider,
+  profile: OAuthProfile,
+  sessionUserId: string | null,
+  depth = 0,
+): Promise<SocialResolution> {
+  // 1 ─ The anchor.
+  const identity = await prisma.userIdentity.findUnique({
+    where: { provider_sub: { provider, sub: profile.sub } },
+    include: { user: true },
+  });
+  if (identity) {
+    if (!identity.user.isActive) {
+      return { kind: 'refused', code: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated. Please contact support.' };
+    }
+    const door = await doorError(identity.user, 'portal');
+    if (door) return { kind: 'refused', code: door.code, message: door.message };
+    return { kind: 'identity', user: identity.user, identityId: identity.id };
+  }
+
+  // 2 ─ Session-assisted attach: the signed-in account's address equals
+  // the provider's VERIFIED one. (A session can only exist for an active
+  // account, and doorError re-checks the door anyway — an ADMIN session
+  // never gains a portal identity.)
+  if (sessionUserId && profile.email && profile.emailVerified) {
+    const sessionUser = await prisma.user.findUnique({ where: { id: sessionUserId } });
+    if (sessionUser && sessionUser.isActive && sessionUser.email === profile.email) {
+      const door = await doorError(sessionUser, 'portal');
+      if (door) return { kind: 'refused', code: door.code, message: door.message };
+      try {
+        const created = await prisma.userIdentity.create({
+          data: { userId: sessionUser.id, provider, sub: profile.sub, email: profile.email, lastLoginAt: new Date() },
+        });
+        return { kind: 'linked', user: sessionUser, identityId: created.id };
+      } catch {
+        // A rival click attached this sub between our checks — re-resolve
+        // against the winner (depth-bounded: step 1 will settle it).
+        if (depth < 2) return resolveSocialAccount(provider, profile, sessionUserId, depth + 1);
+        throw new OAuthFlowError('OAUTH_SIGNIN_FAILED', 'The sign-in could not be completed. Please try again.');
+      }
+    }
+  }
+
+  // 3 ─ The proof screen, and only when the provider VERIFIED the address.
+  if (profile.email && profile.emailVerified) {
+    const holder = await prisma.user.findUnique({ where: { email: profile.email } });
+    if (holder) {
+      if (!holder.isActive) {
+        return { kind: 'refused', code: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated. Please contact support.' };
+      }
+      const linkToken = await sign(
+        {
+          purpose: 'social-link',
+          provider,
+          sub: profile.sub,
+          email: profile.email,
+          exp: Math.floor(Date.now() / 1000) + 10 * 60,
+        },
+        getJwtSecret(),
+      );
+      return { kind: 'link', email: profile.email, linkToken };
+    }
+  }
+
+  // 4 ─ JIT creation.
+  let born: any;
+  try {
+    born = await prisma.user.create({
+      data: {
+        email: profile.email && profile.emailVerified ? profile.email : null,
+        firstName: profile.givenName || 'Member',
+        lastName: profile.familyName || '',
+        role: 'CANDIDATE',
+        isEmailVerified: Boolean(profile.email && profile.emailVerified),
+      },
+    });
+  } catch {
+    // Rival callback took the verified address first — re-resolve: the
+    // winner's rows decide (identity → straight in, else proof screen).
+    if (depth < 2) return resolveSocialAccount(provider, profile, sessionUserId, depth + 1);
+    throw new OAuthFlowError('OAUTH_SIGNIN_FAILED', 'The sign-in could not be completed. Please try again.');
+  }
+  try {
+    const created = await prisma.userIdentity.create({
+      data: { userId: born.id, provider, sub: profile.sub, email: profile.email, lastLoginAt: new Date() },
+    });
+    return { kind: 'new', user: born, identityId: created.id };
+  } catch {
+    // A twin callback won the (provider, sub) race by milliseconds. This
+    // shell has no session, no device, nothing — drop it, follow the winner.
+    await prisma.user.delete({ where: { id: born.id } }).catch(() => {});
+    if (depth < 2) return resolveSocialAccount(provider, profile, sessionUserId, depth + 1);
+    throw new OAuthFlowError('OAUTH_SIGNIN_FAILED', 'The sign-in could not be completed. Please try again.');
+  }
+}
+
+// ── 1. Start: mint state → hand the browser to the provider ────────────
+authRoutes.get('/oauth/:provider/start', rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+  const provider = c.req.param('provider') ?? '';
+  if (!isOAuthProvider(provider)) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_PROVIDER_UNSUPPORTED', message: 'That sign-in provider is not supported.' },
+    }, 404);
+  }
+  const cfg = await oauthClientConfig(provider);
+  if (!cfg.enabled) {
+    return c.json({
+      success: false,
+      error: { code: 'METHOD_DISABLED', message: `Sign in with ${providerLabel(provider)} is currently disabled.` },
+    }, 403);
+  }
+  if (!cfg.clientId || !cfg.clientSecret) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_CONFIG_MISSING', message: `Sign in with ${providerLabel(provider)} is not configured yet.` },
+    }, 400);
+  }
+
+  const redirectUri = await oauthRedirectUri(provider);
+  const state = randomOAuthToken();
+  const nonce = randomOAuthToken();
+  const { verifier, challenge } = pkcePair();
+  const flowCookie = await sign(
+    { purpose: 'oauth', provider, state, nonce, verifier, jti: randomUUID(), exp: Math.floor(Date.now() / 1000) + 10 * 60 },
+    getJwtSecret(),
+  );
+  setAuthCookie(c, 'telnd_oauth', flowCookie, 10 * 60);
+  return c.redirect(
+    buildAuthorizeUrl({ provider, clientId: cfg.clientId, redirectUri, state, nonce, codeChallenge: challenge }),
+    302,
+  );
+});
+
+// ── 2. Verify: exchange the code, resolve the account, open the door ───
+authRoutes.post('/oauth/:provider/verify', rateLimit({ windowMs: 60000, max: 10 }), validate(oauthVerifySchema), async (c) => {
+  const provider = c.req.param('provider') ?? '';
+  if (!isOAuthProvider(provider)) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_PROVIDER_UNSUPPORTED', message: 'That sign-in provider is not supported.' },
+    }, 404);
+  }
+  const body = c.get('validatedData') as { code: string; state: string };
+
+  // The cookie IS the flow — consumed here, matched exactly. No match →
+  // the code is never even sent to the provider (a stolen callback URL is
+  // worthless without this browser's cookie).
+  const pending = await takeOAuthState(c);
+  if (!pending || pending.provider !== provider || pending.state !== body.state) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_STATE_INVALID', message: 'This sign-in attempt could not be verified. Please start again.' },
+    }, 400);
+  }
+
+  // Both halves can have moved since start: the switch, the credentials.
+  const cfg = await oauthClientConfig(provider);
+  if (!cfg.enabled) {
+    return c.json({
+      success: false,
+      error: { code: 'METHOD_DISABLED', message: `Sign in with ${providerLabel(provider)} is currently disabled.` },
+    }, 403);
+  }
+  if (!cfg.clientId || !cfg.clientSecret) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_CONFIG_MISSING', message: `Sign in with ${providerLabel(provider)} is not configured yet.` },
+    }, 400);
+  }
+
+  let profile: OAuthProfile;
+  try {
+    profile = await exchangeCodeForProfile({
+      provider,
+      clientId: cfg.clientId,
+      clientSecret: cfg.clientSecret,
+      code: body.code,
+      redirectUri: await oauthRedirectUri(provider),
+      codeVerifier: pending.verifier,
+    });
+  } catch (err) {
+    console.error(`[oauth] verify failed (${provider}):`, err instanceof Error ? err.message : err);
+    const flow = err instanceof OAuthFlowError ? err : null;
+    return c.json({
+      success: false,
+      error: {
+        code: flow?.code ?? 'OAUTH_EXCHANGE_FAILED',
+        message: flow?.message ?? 'The sign-in request could not be completed. Please try again.',
+      },
+    }, 400);
+  }
+
+  const ip = getIp(c);
+  const sessionUserId = (c.get('userId') as string | undefined) ?? null;
+  let resolution: SocialResolution;
+  try {
+    resolution = await resolveSocialAccount(provider, profile, sessionUserId);
+  } catch (err) {
+    console.error(`[oauth] account resolve failed (${provider}):`, err instanceof Error ? err.message : err);
+    const flow = err instanceof OAuthFlowError ? err : null;
+    return c.json({
+      success: false,
+      error: {
+        code: flow?.code ?? 'OAUTH_SIGNIN_FAILED',
+        message: flow?.code === 'ACCOUNT_DEACTIVATED' && flow.message
+          ? flow.message
+          : 'The sign-in could not be completed. Please try again.',
+      },
+    }, flow?.code === 'ACCOUNT_DEACTIVATED' ? 403 : 400);
+  }
+
+  if (resolution.kind === 'refused') {
+    return c.json({ success: false, error: { code: resolution.code, message: resolution.message } }, 403);
+  }
+
+  if (resolution.kind === 'link') {
+    return c.json({
+      success: true,
+      data: { requiresLink: true, provider, email: resolution.email, linkToken: resolution.linkToken },
+    });
+  }
+
+  if (resolution.kind === 'linked') {
+    // Already inside — only the connection happened. No new session, no
+    // second 2FA round for a sign-in that didn't occur. The audit is
+    // awaited (it can never fail: writeSocialAudit swallows its own
+    // errors) so the row exists before the caller hears back.
+    await writeSocialAudit(c, 'social.link', resolution.user.id, resolution.identityId, provider, { via: 'session' });
+    return c.json({ success: true, data: { alreadySignedIn: true } });
+  }
+
+  if (resolution.kind === 'identity') {
+    await prisma.userIdentity
+      .update({ where: { id: resolution.identityId }, data: { lastLoginAt: new Date(), email: profile.email } })
+      .catch(() => {});
+    await writeSocialAudit(c, 'social.signin', resolution.user.id, resolution.identityId, provider);
+    return finishSocialSignIn(c, resolution.user, ip);
+  }
+
+  // kind === 'new': the JIT account's first sign-in IS its birth, so this
+  // device is pre-registered — no "new device" alert the moment it exists
+  // (the same rule as /signup/complete).
+  await registerLoginDevice(resolution.user.id, c.req.header('user-agent') || null).catch(() => {});
+  await writeSocialAudit(c, 'social.signin', resolution.user.id, resolution.identityId, provider, { created: true });
+  return finishSocialSignIn(c, resolution.user, ip);
+});
+
+// ── 3. Link proof: the local account's password attaches the identity ──
+// The token only BINDS (provider, sub, email) from the callback — it is
+// not a credential. The password is, checked under /login's exact ladder:
+// lockout first, captcha from the second failure, wrong answers counted
+// against the same identifier a password sign-in would use. Then the door
+// re-runs (§ doorError — ADMIN never gains a portal identity) before the
+// row attaches. Self-invalidating: once attached, a replay either finds
+// the row on the same account (that IS the goal — sign-in proceeds) or
+// refuses on someone else's (409).
+authRoutes.post('/oauth/link', rateLimit({ windowMs: 60000, max: 5 }), validate(oauthLinkSchema), async (c) => {
+  const body = c.get('validatedData') as { token: string; password: string; turnstileToken?: string };
+  const payload = await verify(body.token, getJwtSecret(), 'HS256').catch(() => null);
+  const provider = typeof payload?.provider === 'string' ? payload.provider : '';
+  const sub = typeof payload?.sub === 'string' ? payload.sub : '';
+  const email = typeof payload?.email === 'string' ? payload.email : '';
+  if (!payload || payload.purpose !== 'social-link' || !isOAuthProvider(provider) || !sub || !email) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_LINK_INVALID', message: 'This sign-in attempt expired. Please start again.' },
+    }, 401);
+  }
+
+  // The method may have been switched off since the callback: off means
+  // off, mid-flow or not.
+  const cfg = await oauthClientConfig(provider);
+  if (!cfg.enabled) {
+    return c.json({
+      success: false,
+      error: { code: 'METHOD_DISABLED', message: `Sign in with ${providerLabel(provider)} is currently disabled.` },
+    }, 403);
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    // Deleted since the callback — same words as a dead token, no hint
+    // about what used to be here.
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_LINK_INVALID', message: 'This sign-in attempt expired. Please start again.' },
+    }, 401);
+  }
+  if (!user.isActive) {
+    return c.json({
+      success: false,
+      error: { code: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated. Please contact support.' },
+    }, 403);
+  }
+
+  const ip = getIp(c);
+
+  // Ladder, step 1: lockout BEFORE any password work.
+  const lockoutState = await getLockoutState(email);
+  if (isCurrentlyLockedOut(lockoutState)) {
+    const retryAfter = getRetryAfterSeconds(lockoutState);
+    c.header('Retry-After', String(retryAfter));
+    return c.json({
+      success: false,
+      error: { code: 'ACCOUNT_LOCKED', message: 'Too many failed attempts. Please try again later.', retryAfter },
+    }, 429);
+  }
+
+  // Ladder, step 2: captcha from the second failure on — /login's rule.
+  const failedCount = getFailedCount(lockoutState);
+  if (failedCount >= 2) {
+    let captchaEnabled = false;
+    try {
+      const captchaSetting = await prisma.setting.findUnique({ where: { key: 'captcha' } });
+      captchaEnabled = (captchaSetting?.value as { enabled?: unknown } | null)?.enabled === true;
+    } catch {
+      // settings unreadable → fail open, exactly like /login
+    }
+    if (captchaEnabled && body.turnstileToken) {
+      const secretKey = process.env.TURNSTILE_SECRET_KEY;
+      if (secretKey) {
+        try {
+          const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ secret: secretKey, response: body.turnstileToken }),
+          });
+          const result = (await resp.json()) as { success: boolean };
+          if (!result.success) {
+            return c.json({
+              success: false,
+              error: { code: 'CAPTCHA_FAILED', message: 'CAPTCHA verification failed. Please try again.' },
+            }, 400);
+          }
+        } catch {
+          // Turnstile unreachable → fail open, same as /login
+        }
+      }
+    } else if (captchaEnabled && !body.turnstileToken) {
+      return c.json({
+        success: false,
+        error: { code: 'CAPTCHA_REQUIRED', message: 'CAPTCHA verification is required.' },
+      }, 400);
+    }
+  }
+
+  // Ladder, step 3: the proof. No password on the account → none is
+  // possible; the message is honest because the token already proved the
+  // mailbox (sign in the usual way, then retry — the signed-in callback
+  // attaches without asking again).
+  if (!user.passwordHash) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'PASSWORD_NOT_SET',
+        message: `This account signs in without a password. Sign in your usual way first, then start the ${providerLabel(provider)} connection again.`,
+      },
+    }, 403);
+  }
+  const bcrypt = await import('bcryptjs');
+  const passwordOk = await bcrypt.compare(body.password, user.passwordHash);
+  if (!passwordOk) {
+    await recordFailedAttempt(email, ip);
+    return c.json({
+      success: false,
+      error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+    }, 401);
+  }
+  await resetLockout(email);
+
+  // The door, before anything attaches.
+  const door = await doorError(user, 'portal');
+  if (door) return c.json({ success: false, error: door }, 403);
+
+  let identityId: string;
+  let attached = false;
+  const existing = await prisma.userIdentity.findUnique({ where: { provider_sub: { provider, sub } } });
+  if (existing) {
+    if (existing.userId !== user.id) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'OAUTH_ALREADY_LINKED',
+          message: `That ${providerLabel(provider)} account is already connected to a different account.`,
+        },
+      }, 409);
+    }
+    identityId = existing.id; // replay after success: same account — the goal
+  } else {
+    try {
+      const created = await prisma.userIdentity.create({
+        data: { userId: user.id, provider, sub, email: user.email, lastLoginAt: new Date() },
+      });
+      identityId = created.id;
+      attached = true;
+    } catch {
+      // A rival click attached it between our check and the insert.
+      return c.json({
+        success: false,
+        error: { code: 'OAUTH_ALREADY_LINKED', message: `That ${providerLabel(provider)} account is already connected.` },
+      }, 409);
+    }
+  }
+
+  if (attached) await writeSocialAudit(c, 'social.link', user.id, identityId, provider, { via: 'password' });
+  await writeSocialAudit(c, 'social.signin', user.id, identityId, provider);
+  return finishSocialSignIn(c, user, ip);
+});
+
+// ── 4. Unlink: detach, session-gated, never strand the account ─────────
+authRoutes.post('/oauth/unlink', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), validate(oauthUnlinkSchema), async (c) => {
+  const userId = c.get('userId') as string;
+  const { provider } = c.get('validatedData') as { provider: OAuthProvider };
+
+  const identity = await prisma.userIdentity.findFirst({ where: { userId, provider } });
+  if (!identity) {
+    return c.json({
+      success: false,
+      error: { code: 'OAUTH_NOT_LINKED', message: `No ${providerLabel(provider)} account is connected.` },
+    }, 404);
+  }
+
+  // The account must keep a way back in: another identity, a password, or
+  // a phone. Otherwise this button would be the last door closing on itself.
+  const [otherIdentities, user] = await Promise.all([
+    prisma.userIdentity.count({ where: { userId, id: { not: identity.id } } }),
+    prisma.user.findUnique({ where: { id: userId } }),
+  ]);
+  const stranded = otherIdentities === 0 && !user?.passwordHash && !user?.phone;
+  if (stranded) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'LAST_SIGNIN_METHOD',
+        message: 'This is your only sign-in method — set a password or a phone number first.',
+      },
+    }, 403);
+  }
+
+  await prisma.userIdentity.delete({ where: { id: identity.id } });
+  await prisma.auditLog
+    .create({
+      data: {
+        userId,
+        action: 'social.unlink',
+        targetType: 'identity',
+        targetId: identity.id,
+        oldValues: { provider },
+        ipAddress: getIp(c),
+        userAgent: (c.req.header('User-Agent') || '').slice(0, 512) || null,
+      },
+    })
+    .catch((err) => console.error('[oauth] audit write failed (social.unlink):', err));
+  return c.json({ success: true, data: { unlinked: provider } });
+});

@@ -175,6 +175,106 @@ export async function sendOtpToUser(
 }
 
 /**
+ * Issue + deliver a login OTP for a phone number that has NO account yet —
+ * the phone half of sign-in-or-create. The account-less number gets the
+ * same store under a `phone:` key, so every rule holds identically: one
+ * live code, 5-minute expiry, 5 wrong tries, 45-second resend gap,
+ * purpose-bound to 'login'. /auth/login verifies it through
+ * verifyOtp(`phone:${number}`, code, 'login') and hands back the profile
+ * token that creates the account. Callers keep the response generic —
+ * this never tells them whether the number is registered.
+ */
+export async function sendOtpToPhone(phone: string): Promise<SmsSendResult> {
+  const key = `phone:${phone}`;
+  const number = toBdSmsNumber(phone);
+  if (!number) return { ok: false, reason: 'INVALID_PHONE' };
+
+  const gateway = await getSmsGateway();
+  if (!gateway.configured || !gateway.apiKey) return { ok: false, reason: 'NOT_CONFIGURED' };
+  const apiKey = gateway.apiKey;
+
+  const existing = otpStore.get(key);
+  if (existing && existing.sentAt + OTP_RESEND_GAP_MS > Date.now()) {
+    return { ok: false, reason: 'RESEND_SOON', retryAfterSec: Math.ceil((existing.sentAt + OTP_RESEND_GAP_MS - Date.now()) / 1000) };
+  }
+
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const result = await sendAlphaSms(apiKey, number, otpMessage(code));
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: 'GATEWAY_ERROR',
+      message: result.message || 'The SMS gateway could not deliver the code. Please try again.',
+    };
+  }
+
+  otpStore.set(key, {
+    hash: hashOtp(key, code),
+    expiresAt: Date.now() + OTP_TTL_MS,
+    attempts: 0,
+    sentAt: Date.now(),
+    // Phone codes only ever open one door: the sign-in that CREATES the
+    // account for this number (#38's purpose binding, same as account codes).
+    purpose: 'login',
+  });
+  pruneOtpStore();
+  return { ok: true };
+}
+
+/**
+ * Issue + deliver a signup OTP for an email address that has NO account
+ * yet — the email half of sign-in-or-create's wizard. Same store under an
+ * `email:` key, purpose-bound to 'signup': one live code, 5-minute expiry,
+ * 5 wrong tries, 45-second resend gap. Outside production the code rides
+ * back on the response (`devCode`) whether or not the relay accepted it —
+ * the same rule the emailed-link round had with `devVerifyUrl`. This is an
+ * API-level TEST SEAM for the automated suites: the portal never forwards
+ * nor renders it (a verification code has no business on a screen), and it
+ * cannot exist in production. Production never mints on a failed send
+ * (nothing to verify, caller told plainly to retry).
+ */
+export type EmailOtpResult = ({ ok: true; devCode?: string }) | SmsSendFailure;
+
+export async function sendOtpToEmailAddress(email: string): Promise<EmailOtpResult> {
+  const key = `email:${email}`;
+  const devOnly = process.env.NODE_ENV !== 'production';
+
+  const smtp = await isSmtpConfigured();
+  if (!smtp && !devOnly) return { ok: false, reason: 'EMAIL_NOT_CONFIGURED' };
+
+  const existing = otpStore.get(key);
+  if (existing && existing.sentAt + OTP_RESEND_GAP_MS > Date.now()) {
+    return {
+      ok: false,
+      reason: 'RESEND_SOON',
+      retryAfterSec: Math.ceil((existing.sentAt + OTP_RESEND_GAP_MS - Date.now()) / 1000),
+    };
+  }
+
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const delivered = smtp ? await sendTwoFactorCodeEmail(email, code, 'signup') : false;
+  if (!delivered && !devOnly) {
+    return {
+      ok: false,
+      reason: 'EMAIL_ERROR',
+      message: 'The email with the code could not be delivered. Please try again.',
+    };
+  }
+
+  otpStore.set(key, {
+    hash: hashOtp(key, code),
+    expiresAt: Date.now() + OTP_TTL_MS,
+    attempts: 0,
+    sentAt: Date.now(),
+    // Purpose binding (#38): only the signup wizard's verify step may spend
+    // it — a sign-in challenge or a reset can't open with this code.
+    purpose: 'signup',
+  });
+  pruneOtpStore();
+  return devOnly ? { ok: true, devCode: code } : { ok: true };
+}
+
+/**
  * Maps an OTP delivery failure to the HTTP status + client-facing message —
  * the single source of truth shared by the login challenge and the
  * Security page's own "send code" button.

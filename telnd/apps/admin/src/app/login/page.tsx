@@ -17,6 +17,10 @@ export default function LoginPage() {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  // A refused password goes straight back under the cursor (selected, so
+  // the next keystroke replaces it) — retrying is all this screen is for
+  // once the answer came back wrong.
+  const passwordRef = useRef<HTMLInputElement>(null);
   // Settings -> General (mascot + primary logo) arrives WITH the server
   // render via the root layout's provider — the first paint already shows
   // the real assets, so a refresh can't flash the app-name text first and
@@ -97,6 +101,8 @@ export default function LoginPage() {
       await login(email, password, showCaptcha ? turnstileToken : undefined);
       setFailedAttempts(0);
     } catch (err) {
+      passwordRef.current?.focus();
+      passwordRef.current?.select();
       if (err instanceof ApiError) {
         if (err.status === 429) {
           setError(t('login.error.tooMany'));
@@ -370,6 +376,7 @@ export default function LoginPage() {
                 </span>
                 <input
                   id="password"
+                  ref={passwordRef}
                   type={showPassword ? 'text' : 'password'}
                   className="auth-field"
                   value={password}

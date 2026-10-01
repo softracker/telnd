@@ -92,11 +92,44 @@ model User {
   notificationPreference NotificationPreference?
   reports           Report[]
   verificationAttempts VerificationRequest[]
+  identities        UserIdentity[]
 
   @@index([email])
   @@index([phone])
   @@index([role])
   @@index([countryId])
+}
+
+// ============================================
+// OAuth social identities (§14.48)
+// ============================================
+// The anchor for "Sign in with Google / Facebook / LinkedIn": one row per
+// connected provider account, keyed by (provider, sub) — the provider's
+// IMMUTABLE subject id, never the email (addresses can be re-assigned,
+// subs never change owner). An identity is only ever attached through
+// proof: a fresh callback for this sub (sign-in/JIT) or the local
+// account's password while signed in (the /auth/link screen). An email
+// match alone NEVER links — that would be an account-takeover vector.
+// No provider token is ever stored: an access token is used once, inside
+// the exchange, to read the profile and is then dropped.
+model UserIdentity {
+  id          String   @id @default(cuid())
+  userId      String
+  // 'google' | 'facebook' | 'linkedin' (validated at the route, not a
+  // enum — a fourth provider must not need a migration).
+  provider    String
+  sub         String
+  // Provider-reported address at the last sign-in — display/diagnostics
+  // only, never an identity decision (the sub is).
+  email       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, sub])
+  @@index([userId])
 }
 
 enum UserRole {

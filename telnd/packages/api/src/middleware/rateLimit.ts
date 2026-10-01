@@ -4,7 +4,8 @@ import { getIp } from '../lib/getIp';
 const MAX_MAP_SIZE = 10000;
 const counters = new Map<string, { count: number; expiresAt: number }>();
 
-function inMemoryRateLimit(key: string, options: { windowMs: number; max: number }): boolean {
+/** Returns null while allowed, else the seconds left in the window. */
+function inMemoryRateLimit(key: string, options: { windowMs: number; max: number }): number | null {
   const now = Date.now();
   const entry = counters.get(key);
 
@@ -21,11 +22,12 @@ function inMemoryRateLimit(key: string, options: { windowMs: number; max: number
       }
     }
     counters.set(key, { count: 1, expiresAt: now + options.windowMs });
-    return false;
+    return null;
   }
 
   entry.count++;
-  return entry.count > options.max;
+  if (entry.count <= options.max) return null;
+  return Math.max(1, Math.ceil((entry.expiresAt - now) / 1000));
 }
 
 setInterval(() => {
@@ -55,11 +57,18 @@ export function rateLimit(options: { windowMs: number; max: number }) {
       }
 
       if (current > options.max) {
+        // The window's remaining seconds ride along so the caller can say
+        // WHEN to come back instead of an open-ended "later" — the fixed
+        // window started at the first request, so the TTL is exact.
+        const ttl = await redis.ttl(key);
+        const retryAfter = ttl > 0 ? ttl : Math.ceil(options.windowMs / 1000);
+        c.header('Retry-After', String(retryAfter));
         return c.json({
           success: false,
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
-            message: 'Too many requests. Please try again later.',
+            message: `Too many requests. Please try again in ${retryAfter} second${retryAfter === 1 ? '' : 's'}.`,
+            retryAfter,
           },
         }, 429);
       }
@@ -67,12 +76,15 @@ export function rateLimit(options: { windowMs: number; max: number }) {
       c.header('X-RateLimit-Limit', String(options.max));
       c.header('X-RateLimit-Remaining', String(Math.max(0, options.max - current)));
     } catch {
-      if (inMemoryRateLimit(key, options)) {
+      const retryAfter = inMemoryRateLimit(key, options);
+      if (retryAfter !== null) {
+        c.header('Retry-After', String(retryAfter));
         return c.json({
           success: false,
           error: {
             code: 'RATE_LIMIT_EXCEEDED',
-            message: 'Too many requests. Please try again later.',
+            message: `Too many requests. Please try again in ${retryAfter} second${retryAfter === 1 ? '' : 's'}.`,
+            retryAfter,
           },
         }, 429);
       }

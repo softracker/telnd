@@ -206,13 +206,14 @@ export async function isSmtpConfigured(): Promise<boolean> {
  * gate, a phone-number sign-in, or a neutral fallback. Pure so it can be
  * checked without SMTP.
  */
-export type OtpEmailContext = 'signin' | 'setup' | 'verify' | 'login';
+export type OtpEmailContext = 'signin' | 'setup' | 'verify' | 'login' | 'signup';
 
 export function twoFactorEmailLead(context: OtpEmailContext, appName: string): string {
   const name = escapeHtml(appName);
   if (context === 'signin') return `Enter this code to finish signing in to ${name}:`;
   if (context === 'setup') return `Enter this code to finish setting up two-factor authentication for ${name}:`;
   if (context === 'login') return `Enter this code to sign in to ${name}:`;
+  if (context === 'signup') return `Enter this code to create your ${name} account:`;
   return `Enter this code to continue in ${name}:`;
 }
 
@@ -424,6 +425,56 @@ export async function sendLoginLinkEmail(params: {
           </p>
           <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link can only be used once, and only by the person with access to this inbox. Requesting another one invalidates it.</p>
           <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you did not request this, you can safely ignore this email &mdash; you will not be signed in.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>`;
+  return sendEmail(to, subject, html);
+}
+
+/**
+ * The channel proof for sign-in-or-create: sent to an address with NO
+ * account yet, one click on it both verifies the mailbox and (on the
+ * finish screen) creates the account. Never greets by name — there is no
+ * name to greet — and says plainly that doing nothing creates nothing,
+ * so a mistyped or unsolicited address stays unregistered. The link is
+ * single-use, expires, and dies entirely if a newer request replaces it.
+ */
+export async function sendSignupVerifyEmail(params: {
+  to: string;
+  /** One-time signup token already folded into the URL. */
+  verifyUrl: string;
+  /** Human-readable link lifetime ('30 minutes'). */
+  expiresLabel: string;
+}): Promise<boolean> {
+  const { to, verifyUrl, expiresLabel } = params;
+  const safeVerifyUrl = escapeHtml(verifyUrl);
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const subject = `Verify your email to create your ${appName} account`;
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Create your ${escapeHtml(appName)} account</h1>
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#374151;">Use the button below to verify this address and finish creating your account. The link works once and expires in <strong>${escapeHtml(expiresLabel)}</strong>.</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 8px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:14px 16px;font-size:14px;color:#374151;line-height:1.8;">
+              <div><strong>Account:</strong> ${escapeHtml(to)}</div>
+            </td></tr>
+          </table>
+          <p style="margin:0 0 16px;">
+            <a href="${safeVerifyUrl}" style="display:inline-block;background-color:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;">Verify &amp; create account</a>
+          </p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">This link can only be used once, and only by the person with access to this inbox. Requesting another one invalidates it.</p>
+          <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:#9ca3af;">If you did not request this, you can safely ignore the email — no account will be created.</p>
         </td></tr>
 ${footer}
       </table>

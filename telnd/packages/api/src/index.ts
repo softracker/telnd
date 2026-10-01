@@ -48,7 +48,7 @@ app.use('*', async (c, next) => {
 // its own cookies; answering 401 first (and never reaching the handler)
 // left dead cookies the browser kept sending forever (#23). The handler
 // itself only ever acts on the tokens actually presented.
-const publicPaths = ['/api/auth/login', '/api/auth/login-link', '/api/auth/signup', '/api/auth/otp', '/api/auth/refresh', '/api/auth/logout', '/api/auth/reset-password', '/api/auth/reset-password/check', '/api/auth/forgot-password', '/api/auth/providers', '/api/auth/2fa', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
+const publicPaths = ['/api/auth/login', '/api/auth/login-link', '/api/auth/signup/check', '/api/auth/signup/complete', '/api/auth/signup/start', '/api/auth/signup/verify-otp', '/api/auth/otp', '/api/auth/refresh', '/api/auth/logout', '/api/auth/reset-password', '/api/auth/reset-password/check', '/api/auth/forgot-password', '/api/auth/providers', '/api/auth/oauth', '/api/auth/2fa', '/api/health', '/api/jobs', '/api/captcha-config', '/api/settings/general', '/api/settings/team', '/api/pages'];
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
   const isPublic = publicPaths.some((p) => path === p || path.startsWith(p + '/'));

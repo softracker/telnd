@@ -95,7 +95,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await api.get<{ success: boolean; data: User }>('/api/auth/me');
       if (response.success && response.data) {
-        persistUser(response.data);
+        // The panel is admin-only. A session whose account holds no ACTIVE
+        // admin role is not a panel session — a portal user's cookie is
+        // host-scoped and reaches this origin too (ports don't scope
+        // cookies), and a role deactivated mid-session lands here as well.
+        // Drop it so AdminLayout bounces to /login instead of rendering an
+        // empty shell around a wall of 403s.
+        if (response.data.adminRole) {
+          persistUser(response.data);
+        } else {
+          localStorage.removeItem(USER_KEY);
+          setUser(null);
+        }
       }
     } catch (err) {
       // 401/403 means the session is gone server-side (account suspended —
@@ -139,6 +150,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const response = await api.post<AuthResponse>('/api/auth/login', {
       email,
       password,
+      // Which door this sign-in is at (§ doorError on the API): the panel
+      // refuses non-ADMIN accounts and accounts without an active admin
+      // profile, and the user portal refuses ADMIN accounts the same way.
+      context: 'admin',
       ...(turnstileToken ? { turnstileToken } : {}),
     });
 
@@ -152,6 +167,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { user: userData } = response.data;
     if (!userData) return;
+
+    // Belt-and-braces: the API's door check already refuses an account
+    // without an active admin profile — if one ever slipped through, the
+    // panel still refuses to build a shell around it.
+    if (!userData.adminRole) {
+      throw new ApiError('This account does not have administrator access.', 403, {
+        success: false,
+        error: { code: 'NOT_ADMIN', message: 'This account does not have administrator access.' },
+      });
+    }
 
     // Token and refresh token are set as HttpOnly cookies by the server
     // Store only user metadata in localStorage for UI display — the grants
@@ -167,6 +192,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const completeLogin = useCallback((nextUser: User) => {
+    // The challenge can only close on the door it opened on: a pending
+    // token minted on the user portal (host-scoped cookie, /2fa at this
+    // origin too) must not seat a non-admin in the panel. Refuse, clear
+    // whatever session the answer carried, land on the login screen.
+    if (!nextUser.adminRole) {
+      localStorage.removeItem(USER_KEY);
+      setUser(null);
+      void api.post('/api/auth/logout', {}).catch(() => {});
+      router.replace('/login');
+      return;
+    }
     localStorage.setItem(USER_KEY, JSON.stringify({ ...nextUser, adminRole: null }));
     setUser(nextUser);
     // The two-factor gate just completed — a full sign-in, same trust as
