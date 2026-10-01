@@ -12,9 +12,11 @@ const FOOTER_LINKS = [
 
 export function Footer() {
   // The sign-in flow is immersive in the app design — full-bleed background,
-  // no chrome below the fold — so the site footer steps aside there.
+  // no chrome below the fold — so the site footer steps aside there. Same
+  // story for My Account: the admin-style shell is its own full-height
+  // surface (§14.51).
   const pathname = usePathname();
-  if (pathname.startsWith('/auth')) return null;
+  if (pathname.startsWith('/auth') || pathname.startsWith('/my-account')) return null;
 
   return (
     <footer className="border-t border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-950/80">

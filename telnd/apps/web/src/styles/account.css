@@ -1,0 +1,390 @@
+/* ──────────────────────────────────────────────────────────────────────
+   My Account layout (§14.51) — copied verbatim from the admin panel's
+   styles/admin.css so the account area wears the SAME shell (fixed
+   header, collapsible rail, content pane) the user asked for. Two
+   deliberate adaptations:
+
+   1. The variables are scoped to `.account-shell` instead of `:root`.
+      The portal's globals.css defines its own `--accent` (an HSL triplet,
+      shadcn-style) — the admin copy would have overwritten it with a hex
+      and broken every Tailwind color that reads `hsl(var(--accent))`.
+   2. Dark mode rides the portal's `html.dark` class rather than the
+      admin's `data-theme` attribute, and the `html, body` background
+      override from the admin app is dropped — the portal keeps its own.
+
+   Everything below the variable blocks (rail geometry, header, sidebar
+   items, dropdown, mobile behaviour) is the admin file, unchanged.
+   ────────────────────────────────────────────────────────────────────── */
+
+.account-shell {
+  --sidebar-width: 250px;
+  --sidebar-collapsed: 60px;
+  --admin-header-height: 56px;
+  --sidebar-bg: #ffffff;
+  --sidebar-text: #5f6368;
+  --sidebar-active: #034548;
+  --sidebar-hover: rgba(0,0,0,0.04);
+  --sidebar-sub-bg: #f0f1f3;
+  --sidebar-border: rgba(0,0,0,0.06);
+  --sidebar-label-muted: rgba(95,99,104,0.45);
+  --text-main: #1a1a1a;
+  --text-muted: #555555;
+  --text-light: #888888;
+  --bg-main: #f4f5f6;
+  --bg-secondary: #f9fafb;
+  --bg-hover: #f0f0f0;
+  --secondary-btn-bg: #f0f0f0;
+  --border-color: rgba(0,0,0,0.06);
+  --input-bg: #ffffff;
+  --input-border: #d1d5db;
+  --card-bg: #ffffff;
+  --accent: #034548;
+  --accent-light: #e6f4f1;
+  --accent-hover: #5aa6a4;
+  --success-bg: #f0fdf4;
+  --success-text: #166534;
+  --error-bg: #fef2f2;
+  --error-text: #991b1b;
+  --dropdown-bg: #ffffff;
+  --muted-text: #9ca3af;
+  --label-text: #374151;
+  --disabled-bg: #f3f4f6;
+}
+
+.dark .account-shell {
+  --sidebar-bg: #16161e;
+  --sidebar-text: #a0a0b0;
+  --sidebar-active: #5aa6a4;
+  --sidebar-hover: rgba(255,255,255,0.06);
+  --sidebar-sub-bg: #12141f;
+  --sidebar-border: rgba(255,255,255,0.08);
+  --sidebar-label-muted: rgba(160,160,176,0.45);
+  --text-main: #e4e4e7;
+  --text-muted: #a1a1aa;
+  --text-light: #71717a;
+  --bg-main: #12141a;
+  --bg-secondary: #16161e;
+  --bg-hover: #1e293b;
+  --secondary-btn-bg: #1e293b;
+  --border-color: rgba(255,255,255,0.08);
+  --input-bg: #1f2937;
+  --input-border: #374151;
+  --card-bg: #1f2937;
+  --accent: #5aa6a4;
+  --accent-light: rgba(90,166,164,0.15);
+  --accent-hover: #7ec8c6;
+  --success-bg: rgba(34,197,94,0.1);
+  --success-text: #86efac;
+  --error-bg: rgba(239,68,68,0.1);
+  --error-text: #fca5a5;
+  --dropdown-bg: #1f2937;
+  --muted-text: #9ca3af;
+  --label-text: #d1d5db;
+  --disabled-bg: #374151;
+}
+
+.account-shell .admin-body { overflow: hidden; height: 100vh; background: var(--sidebar-bg); }
+
+/* ── Header ── */
+.account-shell .admin-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--admin-header-height);
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+}
+
+.account-shell .admin-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.account-shell .sidebar-toggle {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 8px;
+  color: var(--text-main);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.account-shell .sidebar-toggle:hover { background: var(--bg-hover); }
+.account-shell .admin-header-left .sidebar-toggle { margin-left: -4px; }
+
+.account-shell .admin-logo {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #034548;
+  text-decoration: none;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.account-shell .admin-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── User dropdown ── */
+.account-shell .admin-user {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.account-shell .admin-user:hover { background: var(--bg-hover); }
+
+.account-shell .admin-user-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #034548;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.account-shell .admin-user-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.account-shell .admin-user-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 200px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+  padding: 0.4rem;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: all 0.2s ease;
+  z-index: 1001;
+}
+.account-shell .admin-user-dropdown.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.account-shell .admin-user-dropdown a,
+.account-shell .admin-user-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  border-radius: 6px;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.account-shell .admin-user-dropdown a:hover,
+.account-shell .admin-user-dropdown button:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.account-shell .admin-user-dropdown .dropdown-divider {
+  height: 1px;
+  background: rgba(0,0,0,0.06);
+  margin: 0.25rem 0;
+}
+
+/* ── Layout ── */
+.account-shell .admin-layout {
+  display: flex;
+  padding-top: var(--admin-header-height);
+  height: 100vh;
+}
+
+/* ── Sidebar ── */
+.account-shell .admin-sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--sidebar-bg);
+  height: calc(100vh - var(--admin-header-height));
+  overflow-y: auto;
+  position: fixed;
+  top: var(--admin-header-height);
+  left: 0;
+  z-index: 999;
+  border-right: 1px solid var(--sidebar-border);
+  transition: width 0.3s ease, min-width 0.3s ease;
+}
+
+.account-shell .admin-sidebar.collapsed {
+  width: var(--sidebar-collapsed);
+  min-width: var(--sidebar-collapsed);
+}
+
+.account-shell .admin-sidebar.collapsed .sidebar-label,
+.account-shell .admin-sidebar.collapsed .sidebar-arrow,
+.account-shell .admin-sidebar.collapsed .sidebar-section-title {
+  display: none;
+}
+
+.account-shell .admin-sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  padding: 0.7rem 0;
+}
+
+.account-shell .admin-sidebar.collapsed .sidebar-icon { margin: 0; }
+
+.account-shell .admin-sidebar.collapsed { overflow: visible; }
+
+.account-shell .sidebar-section-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sidebar-label-muted);
+  padding: 1.2rem 1rem 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.account-shell .sidebar-nav {
+  list-style: none;
+  padding: 0.3rem 0.5rem;
+  margin: 0;
+}
+
+.account-shell .sidebar-item {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  background: none;
+  border: none;
+  transition: background 0.15s, color 0.15s;
+  margin-bottom: 1px;
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.account-shell .sidebar-item:hover {
+  background: var(--sidebar-hover);
+  color: var(--text-main);
+}
+.account-shell .sidebar-item.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.account-shell .sidebar-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 0.7rem;
+  font-size: 0.9rem;
+}
+
+.account-shell .sidebar-label {
+  flex: 1;
+  font-size: 0.82rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Content ── */
+.account-shell .admin-content {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  padding: 1.5rem 2rem;
+  overflow-y: auto;
+  height: calc(100vh - var(--admin-header-height));
+  transition: margin-left 0.3s ease;
+  background-color: var(--bg-main);
+}
+
+.account-shell .admin-sidebar.collapsed ~ .admin-content {
+  margin-left: var(--sidebar-collapsed);
+}
+
+.account-shell .admin-content h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 1.5rem;
+}
+
+/* ── Mobile overlay ── */
+.account-shell .admin-sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 998;
+}
+
+/* ── Mobile responsive ── */
+.account-shell .mobile-menu-btn { display: none; }
+.account-shell .desktop-toggle { display: flex; }
+
+@media (max-width: 768px) {
+  .account-shell .mobile-menu-btn { display: flex; }
+  .account-shell .desktop-toggle { display: none; }
+
+  .account-shell .admin-sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    z-index: 1001;
+  }
+  .account-shell .admin-sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  .account-shell .admin-sidebar-overlay.active {
+    display: block;
+  }
+  .account-shell .admin-content {
+    margin-left: 0 !important;
+    padding: 1rem;
+  }
+  .account-shell .admin-user-name {
+    display: none;
+  }
+}

@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MyAccountButton } from '@/components/MyAccountButton';
 
 export default function HomePage() {
   return (
@@ -14,7 +15,10 @@ export default function HomePage() {
             priority
             className="h-9 w-auto"
           />
-          <ThemeToggle />
+          <div className="flex items-center gap-3">
+            <MyAccountButton />
+            <ThemeToggle />
+          </div>
         </div>
       </header>
       <section className="container py-20">
