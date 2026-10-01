@@ -535,7 +535,23 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   // itself above, so refusing here discloses nothing an attacker could
   // not already learn by holding the password.
   const door = await doorError(user, data.context);
-  if (door) return c.json({ success: false, error: door }, 403);
+  if (door) {
+    // §14.54: the portal's refusal of an ADMIN account never names the
+    // account type. A correct password on the user side answers with the
+    // EXACT 401 a wrong one gets — same code, same words, recorded as a
+    // failed attempt like any other, so body AND lockout behaviour stay
+    // indistinguishable from a plain wrong password. The panel's own door
+    // (context 'admin', NOT_ADMIN wording) is the only place account
+    // types ever speak.
+    if (door.code === 'ADMIN_ACCOUNT') {
+      await recordFailedAttempt(identifier, ip);
+      return c.json({
+        success: false,
+        error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+      }, 401);
+    }
+    return c.json({ success: false, error: door }, 403);
+  }
 
   // Step 6b: The portal's Login Providers switches (email / phone) decide
   // whether this credential path is open to users right now — checked only
@@ -1429,10 +1445,22 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
   // one with no account (same byte-identical answer — the oracle doesn't
   // move). The OTP still reaches its owner; it just can't end in a
   // session on an account it never proved.
-  const user = await prisma.user.findFirst({
-    where: { phone: body.phone, isPhoneVerified: true },
-    select: { id: true, isActive: true },
+  //
+  // The lookup itself sees ANY row holding the number (verified or not)
+  // so an ADMIN row can be refused up front — §14.54: no code is minted,
+  // no SMS goes out, and the answer names no reason: "Something is
+  // wrong" reads like any other unusable-number reply, never that an
+  // administrator account holds this number.
+  const found = await prisma.user.findFirst({
+    where: { phone: body.phone },
+    select: { id: true, isActive: true, isPhoneVerified: true, role: true },
   });
+  if (found?.role === 'ADMIN') {
+    return c.json({
+      success: false,
+      error: { code: 'PHONE_UNAVAILABLE', message: 'Something is wrong. Try with another number.' },
+    }, 400);
+  }
   // Dev seam (§14.53): outside production the minted code rides back as
   // `devOtpCode` on BOTH branches — the anti-oracle response shape stays
   // identical (present on both / absent on both in production), and the
@@ -1440,8 +1468,8 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
   // finish a phone sign-in without a live SMS gateway.
   const devOnly = process.env.NODE_ENV !== 'production';
   let devOtpCode: string | undefined;
-  if (user?.isActive) {
-    const result = await sendOtpToUser(user.id, 'sms', 'login');
+  if (found?.isPhoneVerified && found.isActive) {
+    const result = await sendOtpToUser(found.id, 'sms', 'login');
     if (result.ok) {
       devOtpCode = result.devCode;
     } else if (result.reason !== 'RESEND_SOON') {
@@ -1449,8 +1477,9 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
       // real delivery failures are an operator problem, not the caller's.
       console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
     }
-  } else if (!user) {
-    // Sign-in-or-create: the number has no account yet, but the OTP still
+  } else if (!found?.isPhoneVerified) {
+    // Sign-in-or-create: the number has no account yet (or only a legacy
+    // unverified row, which is byte-identical to none), but the OTP still
     // goes out — verified against a phone-keyed store entry, which is what
     // lets /login hand back the profile token that CREATES the account.
     // The response stays byte-identical either way (and an inactive user
@@ -1484,7 +1513,11 @@ authRoutes.post('/forgot-password', rateLimit({ windowMs: 60000, max: 5 }), vali
   };
   try {
     const user = await prisma.user.findFirst({ where: { email: body.email } });
-    if (user?.isActive) {
+    // §14.54: no reset mail ever leaves for an ADMIN account — panel
+    // recovery is issued from the admin side (invite / regenerate), and
+    // the portal must treat that address exactly like one it has never
+    // heard of: same generic body, no token row, no SMTP attempt.
+    if (user?.isActive && user.role !== 'ADMIN') {
       const raw = await issuePasswordToken(user.id, 'reset');
       const emailed = await sendPasswordResetEmail({
         to: body.email,
@@ -1519,7 +1552,11 @@ authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(
   let devVerifyUrl: string | undefined;
   try {
     const user = await prisma.user.findFirst({ where: { email: body.email } });
-    if (user?.isActive) {
+    // §14.54: an ADMIN address is answered like a deactivated one — no
+    // sign-in link, AND the create-branch below must not catch it (the
+    // row exists, so `!user` is false): nothing is minted, nothing is
+    // emailed, and the body stays byte-identical to any known address.
+    if (user?.isActive && user.role !== 'ADMIN') {
       const raw = await issuePasswordToken(user.id, 'login');
       const emailed = await sendLoginLinkEmail({
         to: body.email,
@@ -1593,8 +1630,11 @@ authRoutes.post('/login-link/verify', rateLimit({ windowMs: 60000, max: 10 }), v
   // This link belongs to the user portal — ADMIN accounts don't walk this
   // door (§ doorError). Checked before the token is spent, so the refusal
   // leaves the link intact instead of dead-ending an operator's mailbox.
+  // §14.54: the refusal itself is generic too — an admin link answers
+  // exactly like a dead one (same 401, no door wording, nothing spent),
+  // so even a hand-delivered URL never names the account type.
   const door = await doorError(user, 'portal');
-  if (door) return c.json({ success: false, error: door }, 403);
+  if (door) return invalid();
   const consumed = await prisma.passwordToken.deleteMany({ where: { id: row.id, usedAt: null } });
   if (consumed.count === 0) return invalid(); // a rival click spent it first
 
