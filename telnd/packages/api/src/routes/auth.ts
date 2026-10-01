@@ -228,8 +228,10 @@ function methodDisabled(c: any, method: 'email' | 'phone' | 'emailLink') {
 // clients) skips the check — it grants nothing: each door still enforces
 // its own rules, this only makes the refusal happen at the door instead
 // of after a session exists. Never called before the credential proved
-// itself, so the answer is never a pre-auth oracle.
-async function doorError(
+// itself, so the answer is never a pre-auth oracle. Exported for the
+// Sign-in-methods routes (§14.53), which re-assert the portal door on
+// every call — an operator's session never reaches them either.
+export async function doorError(
   user: { id: string; role: string },
   context: 'admin' | 'portal' | undefined,
 ): Promise<{ code: string; message: string } | null> {
@@ -404,10 +406,10 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
   }
 
   // Step 3: Look up user. The phone clause carries `isPhoneVerified` —
-  // an unverified profile number (typed on the signup wizard, §14.50) is
-  // not a login identifier, so it answers exactly like an unknown number
-  // (the OTP store keys line up for that branch, and the wizard's
-  // uniqueness check later refuses to duplicate it).
+  // only a PROVEN number is a login identifier. §14.53 removed the
+  // wizard's phone field, so new signups can no longer store an
+  // unverified number at all; the filter stays as defense in depth for
+  // any legacy row (such a number answers exactly like an unknown one).
   const user = await prisma.user.findFirst({
     where: {
       OR: [
@@ -703,22 +705,12 @@ authRoutes.post('/signup/check', rateLimit({ windowMs: 60000, max: 20 }), valida
  * `880…`, `+880…`) → the canonical `+880XXXXXXXXXX` the phone channel
  * stores; anything that is not a 10-digit national number → null.
  */
-function normalizeSignupPhone(raw: string): string | null {
-  let national = raw.replace(/[\s()-]/g, '');
-  if (national.startsWith('+880')) national = national.slice(4);
-  else if (national.startsWith('880')) national = national.slice(3);
-  else if (national.startsWith('0')) national = national.slice(1);
-  if (!/^[1-9]\d{9}$/.test(national)) return null;
-  return `+880${national}`;
-}
-
 authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), validate(signupCompleteSchema), async (c) => {
   const body = c.get('validatedData') as {
     token: string;
     firstName: string;
     lastName: string;
     password: string;
-    phone?: string;
   };
 
   // Peek for the door check first so a refusal does not burn the token —
@@ -733,31 +725,11 @@ authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), vali
   const gate = peeked.channel === 'phone' ? 'phone' : peeked.channel === 'link' ? 'emailLink' : 'email';
   if (!(await loginMethodEnabled(gate))) return methodDisabled(c, gate);
 
-  // The optional profile phone — normalized, validated and looked up for
-  // uniqueness BEFORE the token is spent, so a typo or a taken number
-  // costs nothing (the visitor edits the field and submits again with the
-  // token still live). The phone CHANNEL's identifier is not replaceable
-  // here: its number was proven by OTP, a body field cannot swap it.
-  // Stored numbers from this field stay UNVERIFIED — /otp/request and
-  // /login only ever treat `isPhoneVerified` numbers as phone-login
-  // identifiers, so a typed number opens no door (§14.50).
-  let extraPhone: string | null = null;
-  if (body.phone && body.phone.trim() && peeked.channel !== 'phone') {
-    extraPhone = normalizeSignupPhone(body.phone);
-    if (!extraPhone) {
-      return c.json({
-        success: false,
-        error: { code: 'PHONE_INVALID', message: 'Enter a valid 10-digit phone number.' },
-      }, 400);
-    }
-    const taken = await prisma.user.findFirst({ where: { phone: extraPhone }, select: { id: true } });
-    if (taken) {
-      return c.json({
-        success: false,
-        error: { code: 'PHONE_IN_USE', message: 'That phone number is already on another account.' },
-      }, 409);
-    }
-  }
+  // §14.53: the wizard's profile step no longer accepts a phone number —
+  // an identifier is proven at BINDING time, so a phone reaches the row
+  // only through the phone door (OTP at signup) or My Account's verified
+  // add flow. Unknown keys are stripped by the schema; there is nothing
+  // to validate, refuse or store here.
 
   const intent = takeSignupIntent(body.token);
   if (!intent) {
@@ -786,16 +758,15 @@ authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), vali
     user = await prisma.user.create({
       data: {
         email: intent.email ?? null,
-        // Phone channel → the proven identifier; email/link channel →
-        // the optional profile number, stored unverified (no login door).
-        phone: intent.phone ?? extraPhone,
+        // Phone channel → the OTP-proven identifier; email/link channel
+        // → no number at all (§14.53: the wizard never types one).
+        phone: intent.phone,
         firstName: body.firstName,
         lastName: body.lastName,
         role: 'CANDIDATE',
         passwordHash,
         // The channel that proved the address IS the verification —
         // an account is born verified by the door it walked through.
-        // A profile-typed phone never counts: it was never OTP-proven.
         isEmailVerified: intent.channel === 'email' || intent.channel === 'link',
         isPhoneVerified: intent.channel === 'phone',
       },
@@ -803,11 +774,12 @@ authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), vali
   } catch (err) {
     // Lost the race between the check above and the insert: the unique
     // constraint decided — an account exists, so sign in instead. The
-    // phone variant keeps its own wording (the pre-check above normally
-    // catches this without burning the token; only a true race lands here).
+    // phone variant keeps its own wording (only a true race on the
+    // phone CHANNEL's number can land here — §14.53 removed every other
+    // way to type a number into this route).
     if ((err as { code?: string })?.code === 'P2002') {
       const target = (err as { meta?: { target?: unknown } })?.meta?.target;
-      const lostPhoneRace = !intent.phone && !!extraPhone && Array.isArray(target) && target.includes('phone');
+      const lostPhoneRace = !!intent.phone && Array.isArray(target) && target.includes('phone');
       return c.json({
         success: false,
         error: lostPhoneRace
@@ -1450,24 +1422,32 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
   // whether the number has an account, so it discloses nothing.
   if (!(await loginMethodEnabled('phone'))) return methodDisabled(c, 'phone');
   const body = c.get('validatedData') as { phone: string };
-  // Only a PROVEN number is a phone-login identifier: a profile phone
-  // typed on the signup wizard (§14.50) is stored unverified, so this
-  // lookup skips it and the number behaves exactly like one with no
-  // account (same byte-identical answer — the oracle doesn't move). The
-  // OTP still reaches its owner; it just can't end in a session on an
-  // account it never proved.
+  // Only a PROVEN number is a phone-login identifier. §14.53 removed the
+  // wizard's phone field (nothing stores an unverified number anymore),
+  // so this lookup is exact for every reachable row — the filter stays
+  // as defense in depth for any legacy row, which behaves exactly like
+  // one with no account (same byte-identical answer — the oracle doesn't
+  // move). The OTP still reaches its owner; it just can't end in a
+  // session on an account it never proved.
   const user = await prisma.user.findFirst({
     where: { phone: body.phone, isPhoneVerified: true },
     select: { id: true, isActive: true },
   });
+  // Dev seam (§14.53): outside production the minted code rides back as
+  // `devOtpCode` on BOTH branches — the anti-oracle response shape stays
+  // identical (present on both / absent on both in production), and the
+  // portal never forwards nor renders it. This is what lets the suites
+  // finish a phone sign-in without a live SMS gateway.
+  const devOnly = process.env.NODE_ENV !== 'production';
+  let devOtpCode: string | undefined;
   if (user?.isActive) {
     const result = await sendOtpToUser(user.id, 'sms', 'login');
-    if (!result.ok) {
+    if (result.ok) {
+      devOtpCode = result.devCode;
+    } else if (result.reason !== 'RESEND_SOON') {
       // Re-send gap is normal (a fast double-click) and needs no answer;
       // real delivery failures are an operator problem, not the caller's.
-      if (result.reason !== 'RESEND_SOON') {
-        console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
-      }
+      console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
     }
   } else if (!user) {
     // Sign-in-or-create: the number has no account yet, but the OTP still
@@ -1477,11 +1457,16 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
     // row sends nothing, as before), so this still cannot probe which
     // numbers are registered.
     const result = await sendOtpToPhone(body.phone);
-    if (!result.ok && result.reason !== 'RESEND_SOON') {
+    if (result.ok) {
+      devOtpCode = result.devCode;
+    } else if (result.reason !== 'RESEND_SOON') {
       console.error(`[auth] login OTP delivery failed (unregistered number): ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
     }
   }
-  return c.json({ success: true, data: { message: 'OTP sent' } });
+  return c.json({
+    success: true,
+    data: { message: 'OTP sent', ...(devOtpCode && devOnly ? { devOtpCode } : {}) },
+  });
 });
 
 // ── Forgot password (portal self-service) ──────────────────────────────

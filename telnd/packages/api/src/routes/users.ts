@@ -62,9 +62,11 @@ userRoutes.get('/me', authMiddleware, async (c) => {
 
 // Own-account management: change name / email / phone (password changes are
 // intentionally not handled here). The phone number is what SMS 2FA codes
-// are delivered to — empty string clears it. Email and phone are the
-// sign-in identifiers, so touching either additionally demands the account
-// password in the same body (#6) — see the re-auth gate below.
+// are delivered to — empty string clears it. §14.53 split the identifiers:
+// PORTAL sessions are refused below (they move through My Account's
+// verified Sign-in-methods flows instead), while ADMIN sessions — the
+// admin panel's Account page — keep the password-gated email/phone change
+// (#6) — see the re-auth gate below.
 // Profile update — also the re-auth gate for email/phone changes (#6), so
 // the bucket counts password guesses: a stolen session can't brute-force
 // currentPassword past the same 5/min the other credential checks use.
@@ -89,6 +91,26 @@ userRoutes.patch('/me', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), 
       : null;
   const emailChanging = body.email !== undefined && body.email !== current.email;
   const phoneChanging = body.phone !== undefined && nextPhone !== current.phone;
+
+  // §14.53, portal half: user sessions can no longer move identifiers
+  // through here AT ALL — a portal phone must prove itself by OTP (My
+  // Account's verified add flow), and a portal email the same, so an
+  // unproven number can never reach a sign-in door and a passwordless
+  // (phone or social) account isn't deadlocked behind a re-auth it can't
+  // answer. The admin panel's own Account page keeps its password-gated
+  // change below: ADMIN rows live behind the panel's email+password+2FA
+  // door and never sign in by phone, so this path is theirs alone. The
+  // refusal happens before the password gate — the answer is about
+  // policy, not a credential the caller could retry.
+  if ((emailChanging || phoneChanging) && current.role !== 'ADMIN') {
+    return c.json({
+      success: false,
+      error: {
+        code: 'IDENTIFIERS_READ_ONLY',
+        message: 'Email and phone can only be changed from Sign-in methods in My Account.',
+      },
+    }, 403);
+  }
 
   // Re-auth gate (#6): without it a stolen session could swap the email to
   // an attacker-controlled address, request a password reset there and take
@@ -162,8 +184,17 @@ userRoutes.patch('/me', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), 
       }
     }
     data.phone = phone;
-    // A number change invalidates any OTP already sent to the old one.
-    if (phone !== current.phone) clearOtp(userId);
+    // A number change invalidates any OTP already sent to the old one…
+    if (phone !== current.phone) {
+      clearOtp(userId);
+      // …and the NEW number never inherits the old one's proof (§14.53):
+      // it arrived here with only a password behind it, so it must not
+      // stay a phone-login identifier until an OTP has seen it. For
+      // admin rows that changes nothing they use — SMS 2FA delivery
+      // reads `phone`, not the flag — while portal phone doors (which
+      // never reach this branch anymore) would refuse it anyway.
+      data.isPhoneVerified = false;
+    }
   }
 
   const user = await prisma.user.update({ where: { id: userId }, data });

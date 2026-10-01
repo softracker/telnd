@@ -9,9 +9,10 @@
 //              spends it and hands back the one-time signup token)
 //   password — choose the sign-in password (asked AFTER the proof — the
 //              reordering this round exists for)
-//   profile  — basic information (first + last name, plus an optional
-//              phone number — hidden on the phone channel, whose number
-//              is the proven identifier) → "Sign up"
+//   profile  — basic information (first + last name) → "Sign up"
+//              (§14.53 removed the phone field: a number now reaches an
+//              account only through an OTP — the phone door at signup,
+//              or My Account's verified add flow)
 //   done     — /signup/complete burns the token, creates the candidate
 //              account and hands back the session cookies
 //
@@ -45,14 +46,6 @@ interface CheckData {
   channel?: string;
 }
 
-/** The only country line live — same fixed chip the phone screen uses. */
-const COUNTRY_CODE = '+880';
-
-/** Digits only, no leading zero, capped at 10 — one rule for typing and paste. */
-function sanitizeNumber(raw: string): string {
-  return raw.replace(/\D/g, '').replace(/^0+/, '').slice(0, 10);
-}
-
 export default function AuthVerifyEmailPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('checking');
@@ -64,11 +57,6 @@ export default function AuthVerifyEmailPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  // Optional profile phone (digits under the fixed +880 chip). Empty is
-  // valid; on the phone channel the field isn't rendered at all — that
-  // number was proven by OTP and is not editable here.
-  const [phone, setPhone] = useState('');
-  const [channel, setChannel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -99,7 +87,6 @@ export default function AuthVerifyEmailPage() {
             return;
           }
           setIdentifier(data.identifier ?? '');
-          setChannel(data.channel ?? '');
           setStep('password');
         })
         .catch(() => setStep('invalid'));
@@ -187,23 +174,17 @@ export default function AuthVerifyEmailPage() {
     e?.preventDefault();
     const fn = firstName.trim();
     const ln = lastName.trim();
-    const ph = phone.trim();
     if (submitting || !fn || !ln || password.length < 8) return;
-    // Optional means empty-or-complete: a half-typed number never reaches
-    // the API (the API re-validates and normalizes to +880…).
-    if (ph && ph.length !== 10) {
-      setError('Enter a valid 10-digit phone number, or leave the field blank.');
-      return;
-    }
     setError('');
     setSubmitting(true);
     try {
+      // No phone rides this payload (§14.53) — identifiers bind only
+      // through an OTP, never as an unverified profile field.
       await api.post('/api/auth/signup/complete', {
         token,
         firstName: fn,
         lastName: ln,
         password,
-        ...(ph ? { phone: `${COUNTRY_CODE}${ph}` } : {}),
       });
       // Session cookies arrived with the answer — same landing as any
       // other sign-in (the page the trip started from, consumed here).
@@ -214,10 +195,6 @@ export default function AuthVerifyEmailPage() {
         setStep('invalid');
       } else if (c === 'USER_EXISTS') {
         setStep('exists');
-      } else if (c === 'PHONE_INVALID' || c === 'PHONE_IN_USE') {
-        // Fixable right here — the token is still live (the uniqueness
-        // check runs before it is spent), so stay on the form.
-        setError(authErrorMessage(err, 'That phone number cannot be used. Please check it.'));
       } else if (c === 'METHOD_DISABLED') {
         setError(authErrorMessage(err, 'This sign-in method is currently unavailable.'));
       } else {
@@ -399,35 +376,6 @@ export default function AuthVerifyEmailPage() {
                   />
                 </div>
               </div>
-              {channel !== 'phone' && (
-                <div>
-                  <label
-                    htmlFor="signup-phone"
-                    className="block text-[13px] font-medium text-[#1F2937] dark:text-white/70"
-                  >
-                    Phone number{' '}
-                    <span className="font-normal text-[#94A3B8] dark:text-white/40">(optional)</span>
-                  </label>
-                  {/* Same fixed +880 chip as the phone screen — no picker. */}
-                  <div className="mt-2 flex items-stretch gap-3">
-                    <div className="flex h-[52px] shrink-0 items-center rounded-[14px] bg-[#F1F5F9] px-3.5 text-[15px] font-medium text-[#1F2937] dark:bg-white/5 dark:text-white">
-                      {COUNTRY_CODE}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <AuthInput
-                        id="signup-phone"
-                        type="tel"
-                        inputMode="tel"
-                        autoComplete="tel-national"
-                        placeholder="1XXXXXXXXX"
-                        maxLength={10}
-                        value={phone}
-                        onChange={(e) => setPhone(sanitizeNumber(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
             </form>
           </>
         )}

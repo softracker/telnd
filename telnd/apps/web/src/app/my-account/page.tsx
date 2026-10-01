@@ -1,22 +1,332 @@
-// My Account (§14.51) — the admin-style shell (header, rail, content
-// pane) is live; the actual account contents land in a later round
-// ("later we will change and put the contents into it"), so this page
-// only holds the placeholder card. The shell around it already knows
-// who is signed in and shows their name in the header.
+'use client';
+
+// Sign-in methods (§14.53) — My Account's first real content: every
+// identifier that can open a session on this account, whether it is
+// proven, and the door to ADD a missing one. A number or address only
+// ever arrives OTP-verified (the signup wizard stopped taking a phone
+// number this round), and the add wizards live under /my-account — never
+// under /auth, whose auth guard bounces signed-in visitors straight back
+// out again.
+//
+// Password is a state row, not a flow: wizard-born accounts keep the
+// password they chose at signup; social-only accounts choose theirs
+// inside the add-email attach (the API demands it there — no skip).
+// Connected accounts are removable with the standing two-click arm →
+// Confirm, and the API refuses the removal that would close the last
+// door (LAST_SIGNIN_METHOD), so the button can never strand anyone.
+// Connect navigates natively to the API's start URL on purpose — that
+// route 302s to the provider, which only a real browser navigation can
+// follow.
+
+import Link from 'next/link';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { api } from '@/lib/api';
+import { authErrorMessage } from '@/lib/auth';
+import { AuthError, Spinner } from '@/components/auth/AuthUI';
+
+type Methods = {
+  email: string | null;
+  isEmailVerified: boolean;
+  phone: string | null;
+  isPhoneVerified: boolean;
+  hasPassword: boolean;
+  identities: { provider: string; createdAt: string; lastLoginAt: string | null }[];
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  google: 'Google',
+  facebook: 'Facebook',
+  linkedin: 'LinkedIn',
+};
+const CONNECTABLE = ['google', 'facebook', 'linkedin'];
+
+const card =
+  'max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-white/5';
+const primaryBtn =
+  'inline-flex h-9 items-center rounded-[10px] bg-[#034548] px-3.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#025C5F] dark:bg-[#30A9A2] dark:text-[#0D0D0D] dark:hover:bg-[#37bdb6]';
+const quietBtn =
+  'inline-flex h-9 items-center gap-2 rounded-[10px] border border-gray-200 px-3.5 text-[13px] font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-default disabled:opacity-60 dark:border-white/15 dark:text-white/80 dark:hover:bg-white/5';
+const dangerBtn =
+  'inline-flex h-9 items-center gap-2 rounded-[10px] bg-red-600 px-3.5 text-[13px] font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-default disabled:opacity-60';
+
+/** One line of the methods list: label + state on the left, action right. */
+function Row({
+  title,
+  detail,
+  hint,
+  aside,
+}: {
+  title: string;
+  detail: ReactNode;
+  hint?: ReactNode;
+  aside?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">{title}</p>
+        <p className="mt-0.5 break-all text-sm text-gray-600 dark:text-gray-400">{detail}</p>
+        {hint && <p className="mt-1 text-[13px] leading-relaxed text-gray-500 dark:text-white/45">{hint}</p>}
+      </div>
+      {aside && <div className="flex shrink-0 items-center gap-2">{aside}</div>}
+    </div>
+  );
+}
+
+/** Verification chip: green when proven, amber when it somehow isn't. */
+function Chip({ tone, children }: { tone: 'ok' | 'warn'; children: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${
+        tone === 'ok'
+          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+          : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default function MyAccountPage() {
+  const [methods, setMethods] = useState<Methods | null>(null);
+  const [flags, setFlags] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [armed, setArmed] = useState('');
+  const [busy, setBusy] = useState('');
+  const [removeError, setRemoveError] = useState('');
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [m, p] = await Promise.all([
+        api.get<{ data: Methods }>('/api/account/methods'),
+        // Best-effort: if the flags fetch dies, keep the methods list up
+        // and simply show no Connect rows (fail closed — better a missing
+        // row than a Connect link that404s).
+        api
+          .get<{ data: Record<string, boolean> }>('/api/auth/providers')
+          .catch(() => ({ data: {} as Record<string, boolean> })),
+      ]);
+      setMethods(m.data);
+      setFlags(p.data ?? {});
+    } catch (err) {
+      setMethods(null);
+      setError(authErrorMessage(err, 'Your sign-in methods could not be loaded. Please try again.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // ?added=phone|email arrives from a finished wizard — announce it
+    // once, then drop the query so a refresh doesn't repeat the claim.
+    const added = new URLSearchParams(window.location.search).get('added');
+    if (added === 'phone') setNotice('Phone number added — it now signs you in.');
+    else if (added === 'email') setNotice('Email address added — it now signs you in.');
+    if (added) window.history.replaceState(null, '', '/my-account');
+    void load();
+    return () => {
+      if (armTimer.current) clearTimeout(armTimer.current);
+    };
+  }, [load]);
+
+  /** First click arms the Remove button; the click inside 5s confirms. */
+  function armRemoval(provider: string) {
+    if (armTimer.current) clearTimeout(armTimer.current);
+    setArmed(provider);
+    setRemoveError('');
+    armTimer.current = setTimeout(() => setArmed(''), 5000);
+  }
+
+  async function removeIdentity(provider: string) {
+    if (armed !== provider) {
+      armRemoval(provider);
+      return;
+    }
+    if (busy) return;
+    if (armTimer.current) clearTimeout(armTimer.current);
+    setBusy(provider);
+    setRemoveError('');
+    try {
+      await api.post('/api/auth/oauth/unlink', { provider });
+      setArmed('');
+      setNotice(`${PROVIDER_LABELS[provider] ?? provider} is no longer connected.`);
+      await load();
+    } catch (err) {
+      setArmed('');
+      setRemoveError(
+        authErrorMessage(err, `${PROVIDER_LABELS[provider] ?? provider} could not be removed. Please try again.`),
+      );
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const identities = methods?.identities ?? [];
+  const connectedProviders = new Set(identities.map((i) => i.provider));
+  const connectable = CONNECTABLE.filter((p) => flags[p] && !connectedProviders.has(p));
+
   return (
     <>
       <h1>My Account</h1>
-      <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Welcome to your account
-        </h2>
-        <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Your account overview, profile, security and notification settings
-          will live here. This space is the shell only — the contents arrive
-          in a later round.
+      {notice && (
+        <div
+          aria-live="polite"
+          className="mt-4 max-w-2xl rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+        >
+          {notice}
+        </div>
+      )}
+      <div className={`mt-4 ${card}`}>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Sign-in methods</h2>
+        <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+          How you get into your account. A new method only counts once a code sent to it proves it.
         </p>
+
+        {loading && (
+          <div
+            className="flex min-h-[260px] items-center justify-center"
+            role="status"
+            aria-label="Loading your sign-in methods"
+          >
+            <Spinner className="h-8 w-8" />
+          </div>
+        )}
+
+        {!loading && error && (
+          <div className="flex min-h-[260px] flex-col items-center justify-center gap-4 text-center">
+            <AuthError>{error}</AuthError>
+            <button type="button" className={quietBtn} onClick={() => void load()}>
+              Try again
+            </button>
+          </div>
+        )}
+
+        {!loading && !error && methods && (
+          <>
+            <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
+              <Row
+                title="Email"
+                detail={methods.email ?? 'Not added yet'}
+                hint={
+                  methods.email && !methods.isEmailVerified
+                    ? 'This address has not been verified yet.'
+                    : undefined
+                }
+                aside={
+                  methods.email ? (
+                    <Chip tone={methods.isEmailVerified ? 'ok' : 'warn'}>
+                      {methods.isEmailVerified ? 'Verified' : 'Unverified'}
+                    </Chip>
+                  ) : (
+                    <Link href="/my-account/add-email" className={primaryBtn} title="Add an email address">
+                      Add email
+                    </Link>
+                  )
+                }
+              />
+              <Row
+                title="Phone number"
+                detail={methods.phone ?? 'Not added yet'}
+                hint={
+                  methods.phone && !methods.isPhoneVerified
+                    ? 'This number has not been verified yet.'
+                    : undefined
+                }
+                aside={
+                  methods.phone ? (
+                    <Chip tone={methods.isPhoneVerified ? 'ok' : 'warn'}>
+                      {methods.isPhoneVerified ? 'Verified' : 'Unverified'}
+                    </Chip>
+                  ) : (
+                    <Link href="/my-account/add-phone" className={primaryBtn} title="Add a phone number">
+                      Add phone
+                    </Link>
+                  )
+                }
+              />
+              <Row
+                title="Password"
+                detail={methods.hasPassword ? 'Set — you can sign in with it.' : 'Not set yet.'}
+                hint={
+                  methods.hasPassword
+                    ? undefined
+                    : methods.email
+                      ? 'You sign in through a connected account — no password yet.'
+                      : "You'll choose one when you add your email."
+                }
+                aside={methods.hasPassword ? <Chip tone="ok">Set</Chip> : undefined}
+              />
+            </div>
+
+            <div className="mt-6 border-t border-gray-100 pt-6 dark:border-white/10">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Connected accounts</h2>
+              <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+                Sign in with a social account. Removing one asks twice, and never closes your last door.
+              </p>
+              {removeError && (
+                <div className="mt-3">
+                  <AuthError>{removeError}</AuthError>
+                </div>
+              )}
+              <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
+                {identities.map((identity) => {
+                  const label = PROVIDER_LABELS[identity.provider] ?? identity.provider;
+                  const isArmed = armed === identity.provider;
+                  return (
+                    <Row
+                      key={identity.provider}
+                      title={label}
+                      detail={
+                        identity.lastLoginAt
+                          ? `Connected — last used ${new Date(identity.lastLoginAt).toLocaleDateString()}`
+                          : 'Connected'
+                      }
+                      aside={
+                        <button
+                          type="button"
+                          className={isArmed ? dangerBtn : quietBtn}
+                          onClick={() => void removeIdentity(identity.provider)}
+                          disabled={!!busy}
+                          title={`Remove ${label} sign-in`}
+                        >
+                          {busy === identity.provider && <Spinner className="h-4 w-4" />}
+                          {isArmed ? 'Confirm remove' : 'Remove'}
+                        </button>
+                      }
+                    />
+                  );
+                })}
+                {connectable.map((provider) => (
+                  <Row
+                    key={provider}
+                    title={PROVIDER_LABELS[provider] ?? provider}
+                    detail="Not connected"
+                    aside={
+                      <a
+                        href={`/api/auth/oauth/${provider}/start`}
+                        className={quietBtn}
+                        title={`Connect ${PROVIDER_LABELS[provider] ?? provider}`}
+                      >
+                        Connect
+                      </a>
+                    }
+                  />
+                ))}
+                {identities.length === 0 && connectable.length === 0 && (
+                  <p className="py-4 text-sm text-gray-600 dark:text-gray-400">
+                    No accounts are connected right now.
+                  </p>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </>
   );

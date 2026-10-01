@@ -206,7 +206,11 @@ export async function isSmtpConfigured(): Promise<boolean> {
  * gate, a phone-number sign-in, or a neutral fallback. Pure so it can be
  * checked without SMTP.
  */
-export type OtpEmailContext = 'signin' | 'setup' | 'verify' | 'login' | 'signup';
+// `account-phone` / `account-email` are the Sign-in-methods attach flows
+// (§14.53): codes that bind a NEW identifier to an account the caller is
+// already signed into. Purpose binding keeps them from ever opening a
+// sign-in, signup or 2FA door (and vice versa).
+export type OtpEmailContext = 'signin' | 'setup' | 'verify' | 'login' | 'signup' | 'account-phone' | 'account-email';
 
 export function twoFactorEmailLead(context: OtpEmailContext, appName: string): string {
   const name = escapeHtml(appName);
@@ -214,6 +218,10 @@ export function twoFactorEmailLead(context: OtpEmailContext, appName: string): s
   if (context === 'setup') return `Enter this code to finish setting up two-factor authentication for ${name}:`;
   if (context === 'login') return `Enter this code to sign in to ${name}:`;
   if (context === 'signup') return `Enter this code to create your ${name} account:`;
+  if (context === 'account-email') return `Enter this code to finish adding this address to your ${name} account:`;
+  // 'account-phone' codes ride SMS, never this email — worded anyway so
+  // the lead never falls through to the generic sentence.
+  if (context === 'account-phone') return `Enter this code to finish adding this phone number to your ${name} account:`;
   return `Enter this code to continue in ${name}:`;
 }
 

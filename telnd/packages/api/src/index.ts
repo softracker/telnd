@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { authRoutes } from './routes/auth';
+import { accountRoutes } from './routes/account';
 import { jobRoutes } from './routes/jobs';
 import { userRoutes } from './routes/users';
 import { companyRoutes } from './routes/companies';
@@ -111,6 +112,7 @@ app.get('/settings/team', async (c) => {
 
 // Routes
 app.route('/auth', authRoutes);
+app.route('/account', accountRoutes);
 app.route('/jobs', jobRoutes);
 app.route('/users', userRoutes);
 app.route('/companies', companyRoutes);

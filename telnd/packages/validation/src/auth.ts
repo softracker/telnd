@@ -48,13 +48,36 @@ export const signupCompleteSchema = z.object({
   // Chosen on the wizard AFTER the channel proof — same floor as the
   // sign-in password, same bcrypt (12) hash at rest.
   password: z.string().min(8),
-  // Optional contact number offered beside the names on the profile step.
-  // Accepted in the same BD forms the phone screen accepts (10 digits, a
-  // leading 0 tolerated); empty / absent means "no phone". The route
-  // validates + normalizes it and — unlike the identifier — it is stored
-  // UNVERIFIED: a number typed here never opens a sign-in door until an
-  // OTP proves it.
-  phone: z.string().max(20).optional(),
+  // §14.53: no phone field — an identifier is proven at binding time,
+  // so a number reaches the row only through the phone door (OTP) or
+  // My Account's verified add flow. Unknown keys are stripped, so an
+  // old client that still sends one is ignored, never stored.
+});
+
+// ── Sign-in methods (§14.53): add an identifier to your own account ───────
+// The signed-in My Account flows. `start` answers uniformly (a taken
+// identifier is never revealed before the OTP proves possession of it);
+// `verify` is where uniqueness is finally checked against other rows.
+// The route normalizes + validates the phone — the schema only bounds it.
+export const accountPhoneStartSchema = z.object({
+  phone: z.string().min(1).max(20),
+});
+
+export const accountPhoneVerifySchema = z.object({
+  phone: z.string().min(1).max(20),
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+});
+
+export const accountEmailStartSchema = z.object({
+  email: emailSchema,
+});
+
+export const accountEmailVerifySchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  // Chosen only when the account has no password yet (social signups) —
+  // the route DEMANDS it in that case (no skip) and ignores it otherwise.
+  password: z.string().min(8).optional(),
 });
 
 // ── Social sign-in (OAuth: Google / Facebook / LinkedIn) ──────────────────

@@ -54,6 +54,22 @@ export function maskPhone(phone: string | null | undefined): string | null {
   return `+${digits.slice(0, 5)}•••${digits.slice(-4)}`;
 }
 
+/**
+ * Normalize a user-typed BD mobile to the stored "+8801712345678" form —
+ * the exact string `user.phone` holds, so lookups and uniqueness checks
+ * line up. Accepts local ("017…"), country-coded ("880…"/"+880…") and
+ * space/dash separated input; anything that isn't a 10-digit national
+ * number returns null instead of letting garbage reach the store.
+ */
+export function normalizeSignupPhone(raw: string): string | null {
+  let national = raw.replace(/[\s()-]/g, '');
+  if (national.startsWith('+880')) national = national.slice(4);
+  else if (national.startsWith('880')) national = national.slice(3);
+  else if (national.startsWith('0')) national = national.slice(1);
+  if (!/^[1-9]\d{9}$/.test(national)) return null;
+  return `+880${national}`;
+}
+
 /** "chinthika@gmail.com" → "c•••@gmail.com" (domain stays readable). */
 export function maskEmail(email: string | null | undefined): string | null {
   if (!email) return null;
@@ -91,6 +107,12 @@ export function otpMessage(code: string): string {
  * `context` only shapes the emailed copy (sign-in vs. setup) — the code
  * itself is identical either way. Returns `{ ok }` with a machine reason
  * the routes can map to messages.
+ *
+ * Dev-only seam: outside production an SMS code comes back as `devCode`
+ * even when the gateway is absent or refused (the same rule the emailed
+ * signup code has) — that is how the suites complete a phone sign-in
+ * without a live gateway. Production never mints on a failed send, and
+ * no client ever renders a `devCode`.
  */
 export type OtpChannel = 'sms' | 'email';
 export type SmsSendFailure = {
@@ -107,7 +129,7 @@ export type SmsSendFailure = {
   retryAfterSec?: number;
   message?: string;
 };
-export type SmsSendResult = { ok: true } | SmsSendFailure;
+export type SmsSendResult = { ok: true; devCode?: string } | SmsSendFailure;
 
 export async function sendOtpToUser(
   userId: string,
@@ -137,9 +159,16 @@ export async function sendOtpToUser(
     if (!number) return { ok: false, reason: 'INVALID_PHONE' };
 
     const gateway = await getSmsGateway();
-    if (!gateway.configured || !gateway.apiKey) return { ok: false, reason: 'NOT_CONFIGURED' };
-    const apiKey = gateway.apiKey;
+    const apiKey = gateway.apiKey ?? '';
+    // Dev seam (§14.53): outside production a missing gateway does not
+    // stop the mint — the code comes back as `devCode` below so the
+    // suites can finish a phone sign-in with no live SMS. Production
+    // still refuses before anything is minted.
+    if ((!gateway.configured || !apiKey) && process.env.NODE_ENV === 'production') {
+      return { ok: false, reason: 'NOT_CONFIGURED' };
+    }
     deliver = async (code) => {
+      if (!gateway.configured || !apiKey) return null; // dev fallthrough
       const result = await sendAlphaSms(apiKey, number, otpMessage(code));
       return result.ok ? null : (result.message || 'The SMS gateway could not deliver the code. Please try again.');
     };
@@ -152,7 +181,12 @@ export async function sendOtpToUser(
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const failureMessage = await deliver(code);
-  if (failureMessage !== null) {
+  // The dev seam also swallows an outright gateway refusal — same rule
+  // the emailed signup code has: outside production the code rides back
+  // whether or not the relay accepted it. Production (and the email
+  // channel, which keeps its own failure answers) is untouched.
+  const devSms = channel === 'sms' && process.env.NODE_ENV !== 'production';
+  if (failureMessage !== null && !devSms) {
     return {
       ok: false,
       reason: channel === 'email' ? 'EMAIL_ERROR' : 'GATEWAY_ERROR',
@@ -171,27 +205,40 @@ export async function sendOtpToUser(
     purpose: context,
   });
   pruneOtpStore();
-  return { ok: true };
+  return devSms ? { ok: true, devCode: code } : { ok: true };
 }
 
 /**
  * Issue + deliver a login OTP for a phone number that has NO account yet —
- * the phone half of sign-in-or-create. The account-less number gets the
- * same store under a `phone:` key, so every rule holds identically: one
- * live code, 5-minute expiry, 5 wrong tries, 45-second resend gap,
- * purpose-bound to 'login'. /auth/login verifies it through
+ * the phone half of sign-in-or-create — or, with `purpose: 'account-phone'`,
+ * the Sign-in-methods attach code for a signed-in user adding a number
+ * (§14.53). Both keep the account-less / already-owned posture: callers
+ * never learn whether the number is registered until the code proves
+ * possession of the handset.
+ *
+ * The account-less number gets the same store under a `phone:` key (the
+ * attach flow a separate `acct-phone:` key — one live code per purpose,
+ * neither door can spend the other's), so every rule holds identically:
+ * one live code, 5-minute expiry, 5 wrong tries, 45-second resend gap,
+ * purpose-bound. /auth/login verifies a login code through
  * verifyOtp(`phone:${number}`, code, 'login') and hands back the profile
- * token that creates the account. Callers keep the response generic —
- * this never tells them whether the number is registered.
+ * token that creates the account. Outside production the minted code
+ * rides back as `devCode` whether or not the relay accepted it — the
+ * same test seam the emailed signup code has; production never mints on
+ * a failed send, and no client ever renders a `devCode`.
  */
-export async function sendOtpToPhone(phone: string): Promise<SmsSendResult> {
-  const key = `phone:${phone}`;
+export async function sendOtpToPhone(
+  phone: string,
+  purpose: 'login' | 'account-phone' = 'login',
+): Promise<EmailOtpResult> {
+  const key = purpose === 'login' ? `phone:${phone}` : `acct-phone:${phone}`;
+  const devOnly = process.env.NODE_ENV !== 'production';
   const number = toBdSmsNumber(phone);
   if (!number) return { ok: false, reason: 'INVALID_PHONE' };
 
   const gateway = await getSmsGateway();
-  if (!gateway.configured || !gateway.apiKey) return { ok: false, reason: 'NOT_CONFIGURED' };
-  const apiKey = gateway.apiKey;
+  const apiKey = gateway.apiKey ?? '';
+  if ((!gateway.configured || !apiKey) && !devOnly) return { ok: false, reason: 'NOT_CONFIGURED' };
 
   const existing = otpStore.get(key);
   if (existing && existing.sentAt + OTP_RESEND_GAP_MS > Date.now()) {
@@ -199,13 +246,15 @@ export async function sendOtpToPhone(phone: string): Promise<SmsSendResult> {
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  const result = await sendAlphaSms(apiKey, number, otpMessage(code));
-  if (!result.ok) {
-    return {
-      ok: false,
-      reason: 'GATEWAY_ERROR',
-      message: result.message || 'The SMS gateway could not deliver the code. Please try again.',
-    };
+  if (gateway.configured && apiKey) {
+    const result = await sendAlphaSms(apiKey, number, otpMessage(code));
+    if (!result.ok && !devOnly) {
+      return {
+        ok: false,
+        reason: 'GATEWAY_ERROR',
+        message: result.message || 'The SMS gateway could not deliver the code. Please try again.',
+      };
+    }
   }
 
   otpStore.set(key, {
@@ -213,30 +262,41 @@ export async function sendOtpToPhone(phone: string): Promise<SmsSendResult> {
     expiresAt: Date.now() + OTP_TTL_MS,
     attempts: 0,
     sentAt: Date.now(),
-    // Phone codes only ever open one door: the sign-in that CREATES the
-    // account for this number (#38's purpose binding, same as account codes).
-    purpose: 'login',
+    // Purpose binding (#38): a login code only ever opens the sign-in
+    // that CREATES the account; an account-phone code may only be spent
+    // attaching a number to the caller's own signed-in account.
+    purpose,
   });
   pruneOtpStore();
-  return { ok: true };
+  // Dev: the code comes back whether or not the relay accepted it (no
+  // gateway configured, or the send refused) — production never reaches
+  // this line without a real send.
+  return devOnly ? { ok: true, devCode: code } : { ok: true };
 }
 
 /**
  * Issue + deliver a signup OTP for an email address that has NO account
- * yet — the email half of sign-in-or-create's wizard. Same store under an
- * `email:` key, purpose-bound to 'signup': one live code, 5-minute expiry,
- * 5 wrong tries, 45-second resend gap. Outside production the code rides
- * back on the response (`devCode`) whether or not the relay accepted it —
- * the same rule the emailed-link round had with `devVerifyUrl`. This is an
- * API-level TEST SEAM for the automated suites: the portal never forwards
- * nor renders it (a verification code has no business on a screen), and it
- * cannot exist in production. Production never mints on a failed send
- * (nothing to verify, caller told plainly to retry).
+ * yet — the email half of sign-in-or-create's wizard — or, with
+ * `purpose: 'account-email'`, the Sign-in-methods attach code for a
+ * signed-in user adding an address (§14.53). Same store under an
+ * `email:` key (the attach flow gets its own `acct-email:` key — one
+ * live code per purpose, neither door can spend the other's), purpose-
+ * bound: one live code, 5-minute expiry, 5 wrong tries, 45-second resend
+ * gap. Outside production the code rides back on the response
+ * (`devCode`) whether or not the relay accepted it — the same rule the
+ * emailed-link round had with `devVerifyUrl`. This is an API-level TEST
+ * SEAM for the automated suites: the portal never forwards nor renders
+ * it (a verification code has no business on a screen), and it cannot
+ * exist in production. Production never mints on a failed send (nothing
+ * to verify, caller told plainly to retry).
  */
 export type EmailOtpResult = ({ ok: true; devCode?: string }) | SmsSendFailure;
 
-export async function sendOtpToEmailAddress(email: string): Promise<EmailOtpResult> {
-  const key = `email:${email}`;
+export async function sendOtpToEmailAddress(
+  email: string,
+  purpose: 'signup' | 'account-email' = 'signup',
+): Promise<EmailOtpResult> {
+  const key = purpose === 'signup' ? `email:${email}` : `acct-email:${email}`;
   const devOnly = process.env.NODE_ENV !== 'production';
 
   const smtp = await isSmtpConfigured();
@@ -252,7 +312,7 @@ export async function sendOtpToEmailAddress(email: string): Promise<EmailOtpResu
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  const delivered = smtp ? await sendTwoFactorCodeEmail(email, code, 'signup') : false;
+  const delivered = smtp ? await sendTwoFactorCodeEmail(email, code, purpose) : false;
   if (!delivered && !devOnly) {
     return {
       ok: false,
@@ -266,9 +326,10 @@ export async function sendOtpToEmailAddress(email: string): Promise<EmailOtpResu
     expiresAt: Date.now() + OTP_TTL_MS,
     attempts: 0,
     sentAt: Date.now(),
-    // Purpose binding (#38): only the signup wizard's verify step may spend
-    // it — a sign-in challenge or a reset can't open with this code.
-    purpose: 'signup',
+    // Purpose binding (#38): only the flow that requested the code may
+    // spend it — the signup wizard's verify step, or the signed-in
+    // attach flow; neither can open the other's door.
+    purpose,
   });
   pruneOtpStore();
   return devOnly ? { ok: true, devCode: code } : { ok: true };
