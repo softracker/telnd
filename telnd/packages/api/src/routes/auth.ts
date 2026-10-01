@@ -1473,9 +1473,20 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
     if (result.ok) {
       devOtpCode = result.devCode;
     } else if (result.reason !== 'RESEND_SOON') {
-      // Re-send gap is normal (a fast double-click) and needs no answer;
-      // real delivery failures are an operator problem, not the caller's.
+      // A RESEND_SOON gap is not a failure — a live code is already on
+      // its way and still verifies, so the plain success below stands.
+      // Anything else means the Alpha gateway said no (§14.56): answer
+      // with the shared delivery-failure mapping NOW, so nobody sits at
+      // an OTP screen waiting for a code that never left the building.
+      // Which branch picked up the send never decides this — the
+      // provider does — so sign-in-or-create's byte-identity holds on
+      // the failure path exactly as on the success path.
       console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
+      const mapped = smsSendFailure(result);
+      return c.json(
+        { success: false, error: { code: mapped.code, message: mapped.message } },
+        mapped.status,
+      );
     }
   } else if (!found?.isPhoneVerified) {
     // Sign-in-or-create: the number has no account yet (or only a legacy
@@ -1489,7 +1500,16 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
     if (result.ok) {
       devOtpCode = result.devCode;
     } else if (result.reason !== 'RESEND_SOON') {
+      // Same honest refusal as the registered branch above — the caller
+      // hears "delivery failed, try again later" whether or not the
+      // number is registered, because the gateway's health decides the
+      // answer, not the account behind the number.
       console.error(`[auth] login OTP delivery failed (unregistered number): ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
+      const mapped = smsSendFailure(result);
+      return c.json(
+        { success: false, error: { code: mapped.code, message: mapped.message } },
+        mapped.status,
+      );
     }
   }
   return c.json({

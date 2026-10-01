@@ -276,9 +276,22 @@ export default function AuthEmailPasswordPage() {
                   <AuthInput
                     id="password"
                     ref={passwordRef}
+                    /* Arriving from "Continue" at /auth/email — hands are
+                       already on the keyboard, so the field takes the
+                       cursor itself. */
+                    autoFocus
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
                     placeholder="Enter your password"
+                    onKeyDown={(e) => {
+                      // Enter logs in. Explicit (and never mid-IME
+                      // composition) so it never leans on the browser's
+                      // implicit-submission quirks.
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        void login();
+                      }
+                    }}
                     prefix={<PasswordIcon className="h-5 w-5" />}
                     suffix={
                       <button

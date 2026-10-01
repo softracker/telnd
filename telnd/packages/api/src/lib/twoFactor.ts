@@ -108,11 +108,13 @@ export function otpMessage(code: string): string {
  * itself is identical either way. Returns `{ ok }` with a machine reason
  * the routes can map to messages.
  *
- * Dev-only seam: outside production an SMS code comes back as `devCode`
- * even when the gateway is absent or refused (the same rule the emailed
- * signup code has) — that is how the suites complete a phone sign-in
- * without a live gateway. Production never mints on a failed send, and
- * no client ever renders a `devCode`.
+ * Dev-only seam (narrowed, §14.58): outside production the code comes
+ * back as `devCode` when NO send was attempted — the gateway is absent —
+ * which is how the suites complete a phone sign-in without a live
+ * gateway. An attempted send Alpha REFUSED now answers honestly in every
+ * environment (that is the error the phone widget shows before its
+ * 6-digit screen); production never mints on a failed send, and no
+ * client ever renders a `devCode`.
  */
 export type OtpChannel = 'sms' | 'email';
 export type SmsSendFailure = {
@@ -152,7 +154,7 @@ export async function sendOtpToUser(
     deliver = async (code) =>
       (await sendTwoFactorCodeEmail(to, code, context))
         ? null
-        : 'The email with the code could not be delivered. Please try again.';
+        : 'The email with the code could not be delivered. Please try again later.';
   } else {
     const number = toBdSmsNumber(user?.phone ?? null);
     if (!user?.phone) return { ok: false, reason: 'NO_PHONE' };
@@ -170,7 +172,7 @@ export async function sendOtpToUser(
     deliver = async (code) => {
       if (!gateway.configured || !apiKey) return null; // dev fallthrough
       const result = await sendAlphaSms(apiKey, number, otpMessage(code));
-      return result.ok ? null : (result.message || 'The SMS gateway could not deliver the code. Please try again.');
+      return result.ok ? null : (result.message || 'The SMS gateway could not deliver the code. Please try again later.');
     };
   }
 
@@ -181,12 +183,13 @@ export async function sendOtpToUser(
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const failureMessage = await deliver(code);
-  // The dev seam also swallows an outright gateway refusal — same rule
-  // the emailed signup code has: outside production the code rides back
-  // whether or not the relay accepted it. Production (and the email
-  // channel, which keeps its own failure answers) is untouched.
-  const devSms = channel === 'sms' && process.env.NODE_ENV !== 'production';
-  if (failureMessage !== null && !devSms) {
+  // §14.58 narrowed the seam: `failureMessage` is only ever set when a
+  // send was ATTEMPTED and the provider said no, and that refusal now
+  // surfaces in every environment. The seam that remains is the absent
+  // gateway above — deliver's dev fallthrough returns null, so nothing
+  // failed and the mint proceeds. The email channel keeps its own
+  // failure answers, as ever.
+  if (failureMessage !== null) {
     return {
       ok: false,
       reason: channel === 'email' ? 'EMAIL_ERROR' : 'GATEWAY_ERROR',
@@ -205,6 +208,7 @@ export async function sendOtpToUser(
     purpose: context,
   });
   pruneOtpStore();
+  const devSms = channel === 'sms' && process.env.NODE_ENV !== 'production';
   return devSms ? { ok: true, devCode: code } : { ok: true };
 }
 
@@ -223,9 +227,10 @@ export async function sendOtpToUser(
  * purpose-bound. /auth/login verifies a login code through
  * verifyOtp(`phone:${number}`, code, 'login') and hands back the profile
  * token that creates the account. Outside production the minted code
- * rides back as `devCode` whether or not the relay accepted it — the
- * same test seam the emailed signup code has; production never mints on
- * a failed send, and no client ever renders a `devCode`.
+ * rides back as `devCode` when no send was attempted (gateway absent —
+ * the suites' seam, §14.58); an attempted send Alpha refused answers
+ * the mapped error in every environment, production never mints on a
+ * failed send, and no client ever renders a `devCode`.
  */
 export async function sendOtpToPhone(
   phone: string,
@@ -247,12 +252,15 @@ export async function sendOtpToPhone(
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   if (gateway.configured && apiKey) {
+    // This block only runs when a send is ATTEMPTED; a refusal Alpha
+    // actually gave is an error in dev too (§14.58) — the missing-
+    // gateway case never gets here and still mints below.
     const result = await sendAlphaSms(apiKey, number, otpMessage(code));
-    if (!result.ok && !devOnly) {
+    if (!result.ok) {
       return {
         ok: false,
         reason: 'GATEWAY_ERROR',
-        message: result.message || 'The SMS gateway could not deliver the code. Please try again.',
+        message: result.message || 'The SMS gateway could not deliver the code. Please try again later.',
       };
     }
   }
@@ -268,9 +276,9 @@ export async function sendOtpToPhone(
     purpose,
   });
   pruneOtpStore();
-  // Dev: the code comes back whether or not the relay accepted it (no
-  // gateway configured, or the send refused) — production never reaches
-  // this line without a real send.
+  // Dev: the code comes back when no send was attempted (no gateway
+  // configured — the suites' seam) or when Alpha ACCEPTED one;
+  // production never reaches this line without a real send.
   return devOnly ? { ok: true, devCode: code } : { ok: true };
 }
 
@@ -292,15 +300,27 @@ export async function sendOtpToPhone(
  */
 export type EmailOtpResult = ({ ok: true; devCode?: string }) | SmsSendFailure;
 
+// RFC 2606 documentation domains — what the suites sign up with
+// (e2e-…@*.test, …@example.com). The local dev relay refuses those by
+// design, and THAT refusal alone stays behind the seam (§14.58); any
+// real address gets the honest delivery answer in every environment.
+function isDocumentationDomain(email: string): boolean {
+  const at = email.lastIndexOf('@');
+  const domain = at < 0 ? '' : email.slice(at + 1).toLowerCase();
+  return /(^|\.)(test|example|invalid|localhost)$/.test(domain) ||
+    /(^|\.)example\.(com|net|org)$/.test(domain);
+}
+
 export async function sendOtpToEmailAddress(
   email: string,
   purpose: 'signup' | 'account-email' = 'signup',
 ): Promise<EmailOtpResult> {
   const key = purpose === 'signup' ? `email:${email}` : `acct-email:${email}`;
   const devOnly = process.env.NODE_ENV !== 'production';
+  const docDomain = isDocumentationDomain(email);
 
   const smtp = await isSmtpConfigured();
-  if (!smtp && !devOnly) return { ok: false, reason: 'EMAIL_NOT_CONFIGURED' };
+  if (!smtp && (!devOnly || !docDomain)) return { ok: false, reason: 'EMAIL_NOT_CONFIGURED' };
 
   const existing = otpStore.get(key);
   if (existing && existing.sentAt + OTP_RESEND_GAP_MS > Date.now()) {
@@ -313,11 +333,15 @@ export async function sendOtpToEmailAddress(
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const delivered = smtp ? await sendTwoFactorCodeEmail(email, code, purpose) : false;
-  if (!delivered && !devOnly) {
+  // §14.58: dev swallows a failed delivery ONLY for documentation
+  // domains (the suites need their minted code despite the local
+  // relay's refusal); a real address answers EMAIL_ERROR here just as
+  // production does.
+  if (!delivered && (!devOnly || !docDomain)) {
     return {
       ok: false,
       reason: 'EMAIL_ERROR',
-      message: 'The email with the code could not be delivered. Please try again.',
+      message: 'The email with the code could not be delivered. Please try again later.',
     };
   }
 
@@ -360,10 +384,18 @@ export function smsSendFailure(result: SmsSendFailure): {
     NO_PHONE: 'No phone number is set on this account. Add one in My Account to use SMS codes.',
     INVALID_PHONE: 'The phone number on this account is not a valid Bangladeshi mobile number.',
     NOT_CONFIGURED: 'SMS sending is not configured. Set up the Alpha SMS gateway in Settings, or use an authenticator app.',
-    GATEWAY_ERROR: result.message || 'The SMS gateway could not deliver the code. Please try again.',
+    // GATEWAY_ERROR never carries Alpha's own words to the caller (§14.57):
+    // anything but `error: 0` — 411 reseller suspended, 413 invalid sender,
+    // 417 insufficient balance, 420 content blocked, 421 pre-recharge lock,
+    // timeouts, non-2xx — resolves to the same "try again later". The raw
+    // text still reaches the server log (routes print `result.message`) and
+    // the admin's Gateway-settings balance probe; an end user cannot act on
+    // "insufficient balance", and gateway internals have no business on a
+    // portal screen.
+    GATEWAY_ERROR: 'The SMS gateway could not deliver the code. Please try again later.',
     NO_EMAIL: 'No email address is set on this account, so email codes cannot be used.',
     EMAIL_NOT_CONFIGURED: 'Email sending is not configured. Set up SMTP in Settings, or use an authenticator app.',
-    EMAIL_ERROR: result.message || 'The email with the code could not be delivered. Please try again.',
+    EMAIL_ERROR: result.message || 'The email with the code could not be delivered. Please try again later.',
   };
   return {
     status: 400,
@@ -375,7 +407,7 @@ export function smsSendFailure(result: SmsSendFailure): {
           : isEmail
             ? 'EMAIL_SEND_FAILED'
             : 'SMS_SEND_FAILED',
-    message: messages[result.reason] || 'The code could not be delivered. Please try again.',
+    message: messages[result.reason] || 'The code could not be delivered. Please try again later.',
   };
 }
 

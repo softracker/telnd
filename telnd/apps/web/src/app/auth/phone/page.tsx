@@ -6,7 +6,11 @@
 // stripped as you type — +880 already carries the country, so 01XXXXXXXXXX
 // would duplicate it). Send OTP posts to /api/auth/otp/request, which
 // delivers a real login code; the API's answer never says whether the
-// number has an account, so navigation always continues either way.
+// number has an account, so a SUCCESS continues to the 6-digit screen
+// either way — while a delivery failure (§14.56/§14.58: the gateway
+// refused, no SMTP, …) comes back as an error and keeps the visitor
+// HERE, with the message under the phone field, before any code widget
+// is shown.
 
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';

@@ -62,6 +62,9 @@ export default function AuthVerifyEmailPage() {
   const [error, setError] = useState('');
   const [resendSeconds, setResendSeconds] = useCountdown(60);
   const started = useRef(false);
+  // Profile step: Enter in "First name" walks here, Enter in "Last name"
+  // submits the form.
+  const lastNameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (started.current) return;
@@ -169,6 +172,15 @@ export default function AuthVerifyEmailPage() {
     }
   }
 
+  // The password step's one move — the Continue button, Enter in the
+  // field and the form's submit all take this same path, and the guard
+  // mirrors the button's disabled state (short answers never advance).
+  function advanceToProfile() {
+    if (password.length < 8) return;
+    setError('');
+    setStep('profile');
+  }
+
   // Last step: burn the one-time token, create the account, land signed in.
   async function finish(e?: FormEvent) {
     e?.preventDefault();
@@ -264,9 +276,7 @@ export default function AuthVerifyEmailPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (password.length < 8) return;
-              setError('');
-              setStep('profile');
+              advanceToProfile();
             }}
           >
             <h1 className="mt-5 text-[24px] font-bold leading-tight text-[#1F2937] dark:text-[#F1F5F9]">
@@ -291,9 +301,19 @@ export default function AuthVerifyEmailPage() {
               <div className="mt-2">
                 <AuthInput
                   id="signup-password"
+                  /* The step just replaced the 6-digit code — the cursor
+                     lands here so the password can be typed straight away
+                     (and Enter carries it on to the next step). */
+                  autoFocus
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="new-password"
                   placeholder="At least 8 characters"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      advanceToProfile();
+                    }
+                  }}
                   prefix={<PasswordIcon className="h-5 w-5" />}
                   suffix={
                     <button
@@ -353,6 +373,15 @@ export default function AuthVerifyEmailPage() {
                     type="text"
                     autoComplete="given-name"
                     placeholder="First name"
+                    /* New-account step — the form lands on this field
+                       the moment it mounts. */
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        lastNameRef.current?.focus();
+                      }
+                    }}
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                   />
@@ -368,9 +397,18 @@ export default function AuthVerifyEmailPage() {
                 <div className="mt-2">
                   <AuthInput
                     id="lastName"
+                    ref={lastNameRef}
                     type="text"
                     autoComplete="family-name"
                     placeholder="Last name"
+                    onKeyDown={(e) => {
+                      // End of the form: Enter here submits — the last
+                      // field is where "go to next" becomes "send it".
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        void finish();
+                      }
+                    }}
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                   />
@@ -432,10 +470,7 @@ export default function AuthVerifyEmailPage() {
         <div className="px-6 pb-10 pt-6">
           <PrimaryButton
             type="button"
-            onClick={() => {
-              setError('');
-              setStep('profile');
-            }}
+            onClick={advanceToProfile}
             disabled={password.length < 8}
           >
             Continue
