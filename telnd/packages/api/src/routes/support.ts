@@ -52,7 +52,7 @@ const displayUserSelect = {
 // per user per hour — the bucket keys on the authenticated user id, so one
 // abuser can't starve anyone else, and 10/hour is far above a real support
 // conversation.
-support.post('/tickets', rateLimit({ windowMs: 3600000, max: 10 }), validate(supportTicketSchema), async (c) => {
+support.post('/tickets', rateLimit('support.createTicket'), validate(supportTicketSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
@@ -200,7 +200,7 @@ support.patch('/admin/tickets/:id', roleGuard('ADMIN'), requireAdmin, requirePer
 // human reply cadence but stops a runaway loop from spraying every open
 // ticket. Placed after the admin/permission guards so only admins consume
 // this bucket.
-support.post('/admin/tickets/:id/messages', roleGuard('ADMIN'), requireAdmin, requirePermission('support.edit'), rateLimit({ windowMs: 60000, max: 30 }), validate(supportMessageSchema), async (c) => {
+support.post('/admin/tickets/:id/messages', roleGuard('ADMIN'), requireAdmin, requirePermission('support.edit'), rateLimit('admin.write'), validate(supportMessageSchema), async (c) => {
   const user = c.get('user');
   const id = c.req.param('id')!;
   const body = c.get('validatedData');

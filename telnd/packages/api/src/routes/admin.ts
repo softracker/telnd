@@ -127,6 +127,78 @@ admin.get('/dashboard', requireAdmin, requirePermission('dashboard.view'), async
 });
 
 // ============================================
+// Send statistics (§14.60) — Settings → Sending analytics
+// ============================================
+// Daily SMS/email outcomes for the graphs: sent / failed / blocked
+// (destination budget or daily cap — split so the tiles can show how much
+// was abuse vs. provider trouble). Rows carry no destination, so this is
+// counts only. Days are bucketed in SERVER-LOCAL calendar days (the
+// operator's "today"), zero-filled across the window so the chart's x-axis
+// is continuous. The query window carries one day of slack for the
+// timezone edge; rows outside the zero-filled days are ignored.
+type SendCounts = { sent: number; failed: number; blockedDestination: number; blockedDaily: number };
+const emptySendCounts = (): SendCounts => ({ sent: 0, failed: 0, blockedDestination: 0, blockedDaily: 0 });
+
+function localDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function bumpSendCounts(counts: SendCounts, outcome: string): void {
+  if (outcome === 'SENT') counts.sent++;
+  else if (outcome === 'FAILED') counts.failed++;
+  else if (outcome === 'BLOCKED_DESTINATION') counts.blockedDestination++;
+  else if (outcome === 'BLOCKED_DAILY') counts.blockedDaily++;
+}
+
+admin.get('/send-stats', requireAdmin, requirePermission('dashboard.view'), async (c) => {
+  const requested = parseInt(c.req.query('days') ?? '30', 10);
+  const days = Number.isFinite(requested) ? Math.min(120, Math.max(1, requested)) : 30;
+
+  const since = new Date(Date.now() - (days + 1) * 24 * 60 * 60 * 1000);
+  const rows = await prisma.sendEvent.findMany({
+    select: { createdAt: true, channel: true, outcome: true },
+    where: { createdAt: { gte: since } },
+    // The store is bounded by the daily caps (~600/day at defaults) and
+    // pruned past 400 days; the take is pure belt-and-braces against a
+    // pathological cap raise so one admin view can never pull a table.
+    take: 100000,
+  });
+
+  const byDay = new Map<string, { sms: SendCounts; email: SendCounts }>();
+  const dayKeys: string[] = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const key = localDayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
+    dayKeys.push(key);
+    byDay.set(key, { sms: emptySendCounts(), email: emptySendCounts() });
+  }
+
+  const totals = { sms: emptySendCounts(), email: emptySendCounts() };
+  for (const row of rows) {
+    const day = byDay.get(localDayKey(row.createdAt));
+    if (!day) continue;
+    const bucket = row.channel === 'SMS' ? day.sms : day.email;
+    bumpSendCounts(bucket, row.outcome);
+    bumpSendCounts(row.channel === 'SMS' ? totals.sms : totals.email, row.outcome);
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      days: dayKeys.map((date) => {
+        const d = byDay.get(date)!;
+        return { date, sms: d.sms, email: d.email };
+      }),
+      totals,
+      rangeDays: days,
+    },
+  });
+});
+
+// ============================================
 // Users Management
 // ============================================
 admin.get('/users', requireAdmin, requirePermission('users.view'), async (c) => {
@@ -175,7 +247,7 @@ admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c)
   return c.json(safeUser);
 });
 
-admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), rateLimit('admin.write'), async (c) => {
   // Suspension revokes a live account — a sensitive action like delete,
   // so it carries the same PIN approval (#9).
   const pinGate = await requirePinApproval(c);
@@ -214,7 +286,7 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
   return c.json(safeUser);
 });
 
-admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), rateLimit('admin.write'), async (c) => {
   // Restoring access is the mirror sensitive action (#9).
   const pinGate = await requirePinApproval(c);
   if (pinGate) return pinGate;
@@ -334,7 +406,7 @@ admin.get('/admins', requireAdmin, requirePermission('admins.view'), async (c) =
   });
 });
 
-admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate(createAdminSchema), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate(createAdminSchema), rateLimit('admin.sensitive'), async (c) => {
   // Sensitive: creating an admin grants panel access — approve with PIN.
   const pinGate = await requirePinApproval(c);
   if (pinGate) return pinGate;
@@ -421,7 +493,7 @@ admin.post('/admins', requireAdmin, requirePermission('admins.create'), validate
   }, 201);
 });
 
-admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), validate(updateAdminSchema), rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+admin.patch('/admins/:id', requireAdmin, requirePermission('admins.edit'), validate(updateAdminSchema), rateLimit('admin.write'), async (c) => {
   // Editing an admin — including a role change — is escalation-adjacent:
   // approve with PIN like the delete beside it (#9).
   const pinGate = await requirePinApproval(c);
@@ -556,7 +628,7 @@ admin.delete('/admins/:id', requireAdmin, requirePermission('admins.delete'), as
 // admin only, since it starts sign-in recovery for any account. The link is
 // emailed first; a failed send discards it, so a failed request leaves the
 // current password untouched. Nothing changes until the link is used.
-admin.post('/admins/:id/regenerate-password', requireAdmin, rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.post('/admins/:id/regenerate-password', requireAdmin, rateLimit('admin.sensitive'), async (c) => {
   const id = c.req.param('id');
   const actor = c.get('admin');
   const actorPerms: unknown[] = Array.isArray(actor?.role?.permissions) ? actor.role.permissions : [];
@@ -626,7 +698,7 @@ admin.post('/admins/:id/regenerate-password', requireAdmin, rateLimit({ windowMs
 // setup screen at its next sign-in; an enrolled one starts challenging
 // immediately and can no longer be self-disabled. Releasing wipes the
 // enrollment entirely (fresh secret when it's turned back on).
-admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -710,7 +782,7 @@ admin.patch('/admins/:id/two-factor', requireAdmin, validate(z.object({ required
 // Stored under a Setting key that is deliberately NOT in KEY_PERMISSIONS,
 // so the generic settings PUT can never flip it: unknown keys resolve to
 // the "*" (super) permission on both read and write.
-admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -774,7 +846,7 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
 // a lost one needs a permission-enabled admin to clear it here). The
 // requirement survives the reset, so a demanded account must immediately
 // choose a fresh one at its next PIN challenge.
-admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit'), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit'), rateLimit('admin.sensitive'), async (c) => {
   // Approving a PIN change with the PIN being changed would defeat it —
   // this gate checks the ACTING admin's own PIN.
   const pinGate = await requirePinApproval(c);
@@ -810,7 +882,7 @@ admin.post('/admins/:id/pin-reset', requireAdmin, requirePermission('admins.edit
 // provisions nothing — the account must set a PIN at its next PIN
 // challenge (lock screen or first sensitive action) and can no longer
 // leave the panel without one.
-admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -854,7 +926,7 @@ admin.patch('/admins/:id/pin-required', requireAdmin, validate(z.object({ requir
 // session" gap to close (#17) — every sensitive call re-reads the policy
 // server-side through requirePinApproval, which applies to sessions
 // issued months ago exactly as it does to new ones (and fails closed).
-admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+admin.post('/pin-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
   const actor = c.get('admin');
   if (!isSuper(actor?.role?.permissions)) {
     return c.json({
@@ -1175,7 +1247,7 @@ admin.get('/roles', requireAdmin, requirePermission('roles.view'), async (c) => 
   return c.json(roles);
 });
 
-admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(adminRoleSchema), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(adminRoleSchema), rateLimit('admin.roles'), async (c) => {
   // Creating a role can mint "*" — approval with PIN before anything else
   // (#9).
   const pinGate = await requirePinApproval(c);
@@ -1206,7 +1278,7 @@ admin.post('/roles', requireAdmin, requirePermission('roles.create'), validate(a
   return c.json(role, 201);
 });
 
-admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(adminRoleSchema), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(adminRoleSchema), rateLimit('admin.roles'), async (c) => {
   // Editing a role's grants is the classic escalation path — approve with
   // PIN first (#9).
   const pinGate = await requirePinApproval(c);
@@ -1256,7 +1328,7 @@ admin.put('/roles/:id', requireAdmin, requirePermission('roles.edit'), validate(
   return c.json(updated);
 });
 
-admin.delete('/roles/:id', requireAdmin, requirePermission('roles.delete'), rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+admin.delete('/roles/:id', requireAdmin, requirePermission('roles.delete'), rateLimit('admin.roles'), async (c) => {
   // Removing a role is destructive like every other delete here (#9).
   const pinGate = await requirePinApproval(c);
   if (pinGate) return pinGate;

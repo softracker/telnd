@@ -317,6 +317,7 @@ async function startEmailSignup(c: any, email: string) {
     // line above, so an honest delivery error hides nothing — and stops
     // nobody waiting on a code that never left the building.
     const mapped = smsSendFailure(sent);
+    if (mapped.retryAfterSec) c.header('Retry-After', String(mapped.retryAfterSec));
     return c.json(
       { success: false, error: { code: mapped.code, message: mapped.message } },
       mapped.status,
@@ -333,7 +334,7 @@ async function startEmailSignup(c: any, email: string) {
   });
 }
 
-authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(loginSchema), async (c) => {
+authRoutes.post('/login', rateLimit('auth.login'), validate(loginSchema), async (c) => {
   const data = c.get('validatedData');
   const identifier = data.email ?? data.phone;
   const ip = getIp(c);
@@ -612,7 +613,7 @@ authRoutes.post('/login', rateLimit({ windowMs: 60000, max: 10 }), validate(logi
 // already disclosed by that answer, so delivery problems are reported
 // honestly here — and outside production the code comes back as
 // `devOtpCode` (the hook `devVerifyUrl` used to carry).
-authRoutes.post('/signup/start', rateLimit({ windowMs: 60000, max: 5 }), validate(signupStartSchema), async (c) => {
+authRoutes.post('/signup/start', rateLimit('auth.signupStart'), validate(signupStartSchema), async (c) => {
   const body = c.get('validatedData') as { email: string };
 
   // Creation obeys the switch that governs the channel it would be born
@@ -633,7 +634,7 @@ authRoutes.post('/signup/start', rateLimit({ windowMs: 60000, max: 5 }), validat
 // reset code here. Success means the channel proof is COMPLETE: the
 // wizard's password and profile steps come next, and only the finished
 // /signup/complete ever creates a row.
-authRoutes.post('/signup/verify-otp', rateLimit({ windowMs: 60000, max: 10 }), validate(signupVerifyOtpSchema), async (c) => {
+authRoutes.post('/signup/verify-otp', rateLimit('auth.signupVerifyOtp'), validate(signupVerifyOtpSchema), async (c) => {
   const body = c.get('validatedData') as { email: string; code: string };
   if (!(await loginMethodEnabled('email'))) return methodDisabled(c, 'email');
 
@@ -681,7 +682,7 @@ authRoutes.post('/signup/verify-otp', rateLimit({ windowMs: 60000, max: 10 }), v
 // the form can say who it is creating), or the "sign in instead" verdict
 // when an account appeared since the link went out. Never spends the
 // token — a reload must not burn it.
-authRoutes.post('/signup/check', rateLimit({ windowMs: 60000, max: 20 }), validate(signupCheckSchema), async (c) => {
+authRoutes.post('/signup/check', rateLimit('auth.signupCheck'), validate(signupCheckSchema), async (c) => {
   const body = c.get('validatedData') as { token: string };
   const intent = peekSignupIntent(body.token);
   if (!intent) {
@@ -721,7 +722,7 @@ authRoutes.post('/signup/check', rateLimit({ windowMs: 60000, max: 20 }), valida
  * `880…`, `+880…`) → the canonical `+880XXXXXXXXXX` the phone channel
  * stores; anything that is not a 10-digit national number → null.
  */
-authRoutes.post('/signup/complete', rateLimit({ windowMs: 60000, max: 5 }), validate(signupCompleteSchema), async (c) => {
+authRoutes.post('/signup/complete', rateLimit('auth.signupComplete'), validate(signupCompleteSchema), async (c) => {
   const body = c.get('validatedData') as {
     token: string;
     firstName: string;
@@ -880,7 +881,7 @@ function challengeExpired(c: any) {
 // What the /2fa screen renders on load: challenge vs. forced enrollment,
 // the enrolled method, masked delivery addresses for SMS/email, and
 // whether each channel is even an option right now.
-authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async (c) => {
+authRoutes.post('/2fa/challenge', rateLimit('auth.twoFactorChallenge'), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
   const user = await prisma.user.findUnique({ where: { id: pending.userId } });
@@ -912,7 +913,7 @@ authRoutes.post('/2fa/challenge', rateLimit({ windowMs: 60000, max: 30 }), async
 // First half of authenticator-app enrollment: mint a fresh secret (stored
 // with 2FA still off) and hand back the QR payload. Only the verification
 // below flips the flag, so an abandoned attempt changes nothing.
-authRoutes.post('/2fa/challenge/setup', rateLimit({ windowMs: 60000, max: 5 }), async (c) => {
+authRoutes.post('/2fa/challenge/setup', rateLimit('auth.twoFactorSetup'), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
   if (pending.purpose !== '2fa-enroll') {
@@ -939,7 +940,7 @@ authRoutes.post('/2fa/challenge/setup', rateLimit({ windowMs: 60000, max: 5 }), 
 // by an enrolled OTP-method challenge (send + resend). An enrolled account
 // always delivers to its stored method; an enrollment screen says which
 // factor it is setting up in the body.
-authRoutes.post('/2fa/challenge/send', rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
+authRoutes.post('/2fa/challenge/send', rateLimit('auth.twoFactorSend'), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
 
@@ -966,7 +967,7 @@ authRoutes.post('/2fa/challenge/send', rateLimit({ windowMs: 60000, max: 4 }), a
 
 // Second half — verify the code and *then* complete the sign-in. Enrollment
 // ends by flipping twoFactorEnabled on before the session is issued.
-authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 }), validate(twoFactorVerifySchema), async (c) => {
+authRoutes.post('/2fa/challenge/verify', rateLimit('auth.twoFactorVerify'), validate(twoFactorVerifySchema), async (c) => {
   const pending = await readPendingTwoFactor(c);
   if (!pending) return challengeExpired(c);
   const body = c.get('validatedData');
@@ -1137,7 +1138,7 @@ authRoutes.post('/2fa/challenge/verify', rateLimit({ windowMs: 60000, max: 12 })
 // 60/min on its own per-path bucket: a dead link costs one call (the page
 // remembers verdicts per tab), and a reload loop on a *live* link may exhaust
 // it — falling back to the form, which is the correct state for that link.
-authRoutes.post('/reset-password/check', rateLimit({ windowMs: 60000, max: 60 }), validate(checkResetTokenSchema), async (c) => {
+authRoutes.post('/reset-password/check', rateLimit('auth.resetCheck'), validate(checkResetTokenSchema), async (c) => {
   const body = c.get('validatedData');
   const status = await checkPasswordToken(body.token, ['reset', 'invite']);
   if (status === 'valid') {
@@ -1161,7 +1162,7 @@ authRoutes.post('/reset-password/check', rateLimit({ windowMs: 60000, max: 60 })
 // new password. The only way to receive such a link is a super admin's
 // regenerate action, an admin invite, or the Security page while signed in —
 // there is deliberately no unauthenticated "forgot password" entry point.
-authRoutes.post('/reset-password', rateLimit({ windowMs: 60000, max: 5 }), validate(resetPasswordSchema), async (c) => {
+authRoutes.post('/reset-password', rateLimit('auth.resetPassword'), validate(resetPasswordSchema), async (c) => {
   const body = c.get('validatedData');
   const row = await findUsablePasswordToken(body.token, ['reset', 'invite']);
   if (!row) {
@@ -1254,7 +1255,7 @@ async function revokeRefreshFamily(row: { userId: string; familyId: string | nul
   }
 }
 
-authRoutes.post('/refresh', rateLimit({ windowMs: 60000, max: 10 }), async (c) => {
+authRoutes.post('/refresh', rateLimit('auth.refresh'), async (c) => {
   // Try cookie first, then body
   const cookieHeader = c.req.header('Cookie') || '';
   const refreshTokenFromCookie = cookieHeader
@@ -1432,7 +1433,7 @@ authRoutes.post('/logout', async (c) => {
 // identical for registered and unregistered numbers — a request must
 // never disclose whether a phone has an account — and delivery problems
 // are logged server-side instead of echoed, for the same reason.
-authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate(requestOtpSchema), async (c) => {
+authRoutes.post('/otp/request', rateLimit('auth.otpRequest'), validate(requestOtpSchema), async (c) => {
   // Phone login can be switched off in Admin → Settings → Login Providers.
   // Method-level gate — the answer depends on the switch alone, never on
   // whether the number has an account, so it discloses nothing.
@@ -1483,6 +1484,10 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
       // the failure path exactly as on the success path.
       console.error(`[auth] login OTP delivery failed: ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
       const mapped = smsSendFailure(result);
+      // §14.59: honest countdown as a Retry-After header — set on both
+      // branches identically, so the byte-identity between the registered
+      // and unregistered answer holds header-for-header too.
+      if (mapped.retryAfterSec) c.header('Retry-After', String(mapped.retryAfterSec));
       return c.json(
         { success: false, error: { code: mapped.code, message: mapped.message } },
         mapped.status,
@@ -1506,6 +1511,9 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
       // answer, not the account behind the number.
       console.error(`[auth] login OTP delivery failed (unregistered number): ${result.reason}${result.message ? ` — ${result.message}` : ''}`);
       const mapped = smsSendFailure(result);
+      // §14.59: same header on this branch as on the registered one above
+      // — the two answers stay byte-identical, Retry-After included.
+      if (mapped.retryAfterSec) c.header('Retry-After', String(mapped.retryAfterSec));
       return c.json(
         { success: false, error: { code: mapped.code, message: mapped.message } },
         mapped.status,
@@ -1525,7 +1533,7 @@ authRoutes.post('/otp/request', rateLimit({ windowMs: 60000, max: 3 }), validate
 // 60-minute reset link goes out for the portal's reset page to spend. A
 // delivery failure stays server-side too: the token is discarded (a link
 // nobody received must not linger) and the generic answer stands.
-authRoutes.post('/forgot-password', rateLimit({ windowMs: 60000, max: 5 }), validate(forgotPasswordSchema), async (c) => {
+authRoutes.post('/forgot-password', rateLimit('auth.forgotPassword'), validate(forgotPasswordSchema), async (c) => {
   const body = c.get('validatedData') as { email: string };
   const generic = {
     success: true,
@@ -1562,7 +1570,7 @@ authRoutes.post('/forgot-password', rateLimit({ windowMs: 60000, max: 5 }), vali
 // as forgot-password (no account-existence oracle); the emailLink switch
 // from Admin → Settings → Login Providers gates it at the door — a
 // method-level answer that says nothing about any account.
-authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(forgotPasswordSchema), async (c) => {
+authRoutes.post('/login-link', rateLimit('auth.loginLink'), validate(forgotPasswordSchema), async (c) => {
   if (!(await loginMethodEnabled('emailLink'))) return methodDisabled(c, 'emailLink');
   const body = c.get('validatedData') as { email: string };
   const generic = {
@@ -1627,7 +1635,7 @@ authRoutes.post('/login-link', rateLimit({ windowMs: 60000, max: 3 }), validate(
 // emailLink switch is re-checked here so a method switched off after the
 // email went out still cannot open a session — without spending the token,
 // so switching it back on makes the same link work again.
-authRoutes.post('/login-link/verify', rateLimit({ windowMs: 60000, max: 10 }), validate(checkResetTokenSchema), async (c) => {
+authRoutes.post('/login-link/verify', rateLimit('auth.loginLinkVerify'), validate(checkResetTokenSchema), async (c) => {
   if (!(await loginMethodEnabled('emailLink'))) return methodDisabled(c, 'emailLink');
   const body = c.get('validatedData') as { token: string };
   const invalid = () =>
@@ -1699,7 +1707,7 @@ authRoutes.get('/me', authMiddleware, async (c) => {
 authRoutes.post(
   '/session/lock',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 30 }),
+  rateLimit('auth.sessionLock'),
   async (c) => {
     const token = c.get('token') as string;
     // Idempotent: the idle timer, the rail button, other tabs and the
@@ -1712,7 +1720,7 @@ authRoutes.post(
 authRoutes.post(
   '/session/unlock',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 12 }),
+  rateLimit('auth.sessionUnlock'),
   async (c) => {
     const token = c.get('token') as string;
     const userId = c.get('userId') as string;
@@ -2018,7 +2026,7 @@ async function resolveSocialAccount(
 }
 
 // ── 1. Start: mint state → hand the browser to the provider ────────────
-authRoutes.get('/oauth/:provider/start', rateLimit({ windowMs: 60000, max: 20 }), async (c) => {
+authRoutes.get('/oauth/:provider/start', rateLimit('auth.oauthStart'), async (c) => {
   const provider = c.req.param('provider') ?? '';
   if (!isOAuthProvider(provider)) {
     return c.json({
@@ -2056,7 +2064,7 @@ authRoutes.get('/oauth/:provider/start', rateLimit({ windowMs: 60000, max: 20 })
 });
 
 // ── 2. Verify: exchange the code, resolve the account, open the door ───
-authRoutes.post('/oauth/:provider/verify', rateLimit({ windowMs: 60000, max: 10 }), validate(oauthVerifySchema), async (c) => {
+authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), validate(oauthVerifySchema), async (c) => {
   const provider = c.req.param('provider') ?? '';
   if (!isOAuthProvider(provider)) {
     return c.json({
@@ -2178,7 +2186,7 @@ authRoutes.post('/oauth/:provider/verify', rateLimit({ windowMs: 60000, max: 10 
 // row attaches. Self-invalidating: once attached, a replay either finds
 // the row on the same account (that IS the goal — sign-in proceeds) or
 // refuses on someone else's (409).
-authRoutes.post('/oauth/link', rateLimit({ windowMs: 60000, max: 5 }), validate(oauthLinkSchema), async (c) => {
+authRoutes.post('/oauth/link', rateLimit('auth.oauthLink'), validate(oauthLinkSchema), async (c) => {
   const body = c.get('validatedData') as { token: string; password: string; turnstileToken?: string };
   const payload = await verify(body.token, getJwtSecret(), 'HS256').catch(() => null);
   const provider = typeof payload?.provider === 'string' ? payload.provider : '';
@@ -2332,7 +2340,7 @@ authRoutes.post('/oauth/link', rateLimit({ windowMs: 60000, max: 5 }), validate(
 });
 
 // ── 4. Unlink: detach, session-gated, never strand the account ─────────
-authRoutes.post('/oauth/unlink', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), validate(oauthUnlinkSchema), async (c) => {
+authRoutes.post('/oauth/unlink', authMiddleware, rateLimit('auth.oauthUnlink'), validate(oauthUnlinkSchema), async (c) => {
   const userId = c.get('userId') as string;
   const { provider } = c.get('validatedData') as { provider: OAuthProvider };
 

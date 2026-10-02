@@ -90,6 +90,9 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { href: '/settings/account', permission: null },
   { href: '/settings/roles', permission: 'roles.view' },
   { href: '/settings/security', permission: null },
+  // §14.60 — abuse posture rides the security grant; the analytics view
+  // rides dashboard.view (counts only, no destinations).
+  { href: '/settings/rate-limits', permission: 'security.view' },
   { href: '/settings/login-providers', permission: 'loginProviders.view' },
   { href: '/settings/captcha', permission: 'captcha.view' },
   { href: '/settings/smtp', permission: 'email.view' },
@@ -101,6 +104,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { href: '/settings/preferences', permission: null },
   { href: '/settings/payment', permission: 'payment.view' },
   { href: '/settings/gateway', permission: 'gateway.view' },
+  { href: '/settings/sending', permission: 'dashboard.view' },
   { href: '/settings/about', permission: null },
 ];
 

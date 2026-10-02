@@ -16,6 +16,8 @@ import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import { prisma } from '@telnd/database';
 import { sendAlphaSms } from './alphaSms';
 import { isSmtpConfigured, sendTwoFactorCodeEmail, type OtpEmailContext } from './email';
+import { consumeSendBudget, type SendBudgetDecision } from './otpSendBudget';
+import { recordSendEvent } from './sendStats';
 
 // ── Policy ───────────────────────────────────────────────────────────────
 
@@ -127,10 +129,28 @@ export type SmsSendFailure = {
     | 'GATEWAY_ERROR'
     | 'NO_EMAIL'
     | 'EMAIL_NOT_CONFIGURED'
-    | 'EMAIL_ERROR';
+    | 'EMAIL_ERROR'
+    // §14.59 — the send budget refused before any provider was called:
+    // SEND_BLOCKED = this destination over its 30-minute allowance,
+    // DAILY_CAP = the global daily quota for the channel is spent.
+    | 'SEND_BLOCKED'
+    | 'DAILY_CAP';
   retryAfterSec?: number;
   message?: string;
 };
+
+/**
+ * §14.59: a budget refusal as the caller-facing OTP failure. Lives here
+ * (not in otpSendBudget) so the budget lib needs no import from this file.
+ */
+function budgetFailure(budget: Extract<SendBudgetDecision, { blocked: true }>): SmsSendFailure {
+  return {
+    ok: false,
+    reason: budget.kind === 'daily' ? 'DAILY_CAP' : 'SEND_BLOCKED',
+    retryAfterSec: budget.retryAfterSec,
+    message: budget.message,
+  };
+}
 export type SmsSendResult = { ok: true; devCode?: string } | SmsSendFailure;
 
 export async function sendOtpToUser(
@@ -145,16 +165,25 @@ export async function sendOtpToUser(
 
   // Channel preconditions first, then a deliverer for the chosen channel —
   // everything below this point (resend gap, code minting, store write) is
-  // identical for both.
-  let deliver: (code: string) => Promise<string | null>;
+  // identical for both. Each deliverer runs the §14.59 send budget after
+  // the resend gap (a refused double-click consumes nothing) and before
+  // the provider, and returns a typed failure the caller can answer with.
+  let deliver: (code: string) => Promise<SmsSendFailure | null>;
   if (channel === 'email') {
     if (!user?.email) return { ok: false, reason: 'NO_EMAIL' };
     if (!(await isSmtpConfigured())) return { ok: false, reason: 'EMAIL_NOT_CONFIGURED' };
     const to = user.email;
-    deliver = async (code) =>
-      (await sendTwoFactorCodeEmail(to, code, context))
+    deliver = async (code) => {
+      const budget = await consumeSendBudget('email', to);
+      if (budget.blocked) return budgetFailure(budget);
+      return (await sendTwoFactorCodeEmail(to, code, context))
         ? null
-        : 'The email with the code could not be delivered. Please try again later.';
+        : {
+            ok: false,
+            reason: 'EMAIL_ERROR',
+            message: 'The email with the code could not be delivered. Please try again later.',
+          };
+    };
   } else {
     const number = toBdSmsNumber(user?.phone ?? null);
     if (!user?.phone) return { ok: false, reason: 'NO_PHONE' };
@@ -171,8 +200,18 @@ export async function sendOtpToUser(
     }
     deliver = async (code) => {
       if (!gateway.configured || !apiKey) return null; // dev fallthrough
+      // §14.59: consume before Alpha — a blocked number never reaches the
+      // gateway. Gateway absent means no send, so nothing is counted.
+      const budget = await consumeSendBudget('sms', number);
+      if (budget.blocked) return budgetFailure(budget);
       const result = await sendAlphaSms(apiKey, number, otpMessage(code));
-      return result.ok ? null : (result.message || 'The SMS gateway could not deliver the code. Please try again later.');
+      recordSendEvent('sms', result.ok ? 'sent' : 'failed'); // §14.60 statistics
+      if (result.ok) return null;
+      return {
+        ok: false,
+        reason: 'GATEWAY_ERROR',
+        message: result.message || 'The SMS gateway could not deliver the code. Please try again later.',
+      };
     };
   }
 
@@ -182,19 +221,15 @@ export async function sendOtpToUser(
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  const failureMessage = await deliver(code);
-  // §14.58 narrowed the seam: `failureMessage` is only ever set when a
-  // send was ATTEMPTED and the provider said no, and that refusal now
-  // surfaces in every environment. The seam that remains is the absent
-  // gateway above — deliver's dev fallthrough returns null, so nothing
-  // failed and the mint proceeds. The email channel keeps its own
-  // failure answers, as ever.
-  if (failureMessage !== null) {
-    return {
-      ok: false,
-      reason: channel === 'email' ? 'EMAIL_ERROR' : 'GATEWAY_ERROR',
-      message: failureMessage,
-    };
+  const failure = await deliver(code);
+  // §14.58 narrowed the seam: a failure is only ever set when a send was
+  // ATTEMPTED and the provider said no — or when the §14.59 budget refused
+  // the send before a provider was called — and both surface in every
+  // environment. The seam that remains is the absent gateway above —
+  // deliver's dev fallthrough returns null, so nothing failed and the
+  // mint proceeds. The email channel keeps its own failure answers, as ever.
+  if (failure !== null) {
+    return failure;
   }
 
   otpStore.set(userId, {
@@ -255,7 +290,13 @@ export async function sendOtpToPhone(
     // This block only runs when a send is ATTEMPTED; a refusal Alpha
     // actually gave is an error in dev too (§14.58) — the missing-
     // gateway case never gets here and still mints below.
+    // §14.59: after the resend gap, before Alpha — a blocked number
+    // never reaches the gateway (and an unconfigured gateway above
+    // already means no send is counted anywhere).
+    const budget = await consumeSendBudget('sms', number);
+    if (budget.blocked) return budgetFailure(budget);
     const result = await sendAlphaSms(apiKey, number, otpMessage(code));
+    recordSendEvent('sms', result.ok ? 'sent' : 'failed'); // §14.60 statistics
     if (!result.ok) {
       return {
         ok: false,
@@ -332,6 +373,13 @@ export async function sendOtpToEmailAddress(
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  // §14.59: the budget counts real attempts only — with the relay off
+  // (`smtp` false) nothing would be sent, so nothing is consumed; when it
+  // is on, the gate sits before the provider like every other send.
+  if (smtp) {
+    const budget = await consumeSendBudget('email', email);
+    if (budget.blocked) return budgetFailure(budget);
+  }
   const delivered = smtp ? await sendTwoFactorCodeEmail(email, code, purpose) : false;
   // §14.58: dev swallows a failed delivery ONLY for documentation
   // domains (the suites need their minted code despite the local
@@ -370,6 +418,25 @@ export function smsSendFailure(result: SmsSendFailure): {
   message: string;
   retryAfterSec?: number;
 } {
+  // §14.59 — the send budget refused before any provider was called.
+  // Honest 429 with the real countdown (which the routes echo as a
+  // Retry-After header): SEND_BLOCKED = this destination's 30-minute
+  // allowance is spent (block active), DAILY_CAP = the channel's global
+  // daily quota is spent. Codes are stable and uniform across every send
+  // endpoint; the message already carries the humanized wait.
+  if (result.reason === 'SEND_BLOCKED' || result.reason === 'DAILY_CAP') {
+    const retryAfterSec = result.retryAfterSec ?? 900;
+    return {
+      status: 429,
+      code: result.reason,
+      message:
+        result.message ||
+        (result.reason === 'DAILY_CAP'
+          ? 'The daily sending limit has been reached. Please try again later.'
+          : 'Too many codes were requested. Please try again later.'),
+      retryAfterSec,
+    };
+  }
   if (result.reason === 'RESEND_SOON') {
     const retryAfterSec = result.retryAfterSec ?? 45;
     return {

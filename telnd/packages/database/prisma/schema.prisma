@@ -2439,3 +2439,28 @@ model ContentPage {
 
   @@index([isPublished])
 }
+
+// ============================================
+// 81. Send Events (delivery analytics, §14.60)
+// ============================================
+enum SendChannel {
+  SMS
+  EMAIL
+}
+
+enum SendOutcome {
+  SENT
+  FAILED
+  BLOCKED_DESTINATION
+  BLOCKED_DAILY
+}
+
+model SendEvent {
+  id        String      @id @default(cuid())
+  channel   SendChannel
+  outcome   SendOutcome
+  createdAt DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([channel, createdAt])
+}

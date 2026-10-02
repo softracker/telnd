@@ -70,7 +70,7 @@ userRoutes.get('/me', authMiddleware, async (c) => {
 // Profile update — also the re-auth gate for email/phone changes (#6), so
 // the bucket counts password guesses: a stolen session can't brute-force
 // currentPassword past the same 5/min the other credential checks use.
-userRoutes.patch('/me', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), validate(updateAccountSchema), async (c) => {
+userRoutes.patch('/me', authMiddleware, rateLimit('user.profileUpdate'), validate(updateAccountSchema), async (c) => {
   const userId = c.get('userId') as string;
   const body = c.get('validatedData');
 
@@ -326,7 +326,7 @@ userRoutes.delete('/me/sessions', authMiddleware, async (c) => {
 userRoutes.post(
   '/me/change-password',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 5 }),
+  rateLimit('user.changePassword'),
   validate(changePasswordSchema),
   async (c) => {
     const userId = c.get('userId') as string;
@@ -408,7 +408,7 @@ userRoutes.post(
   '/me/regenerate-password',
   authMiddleware,
   requireAdmin,
-  rateLimit({ windowMs: 60000, max: 5 }),
+  rateLimit('user.regeneratePassword'),
   async (c) => {
     const user = c.get('user');
 
@@ -530,7 +530,7 @@ userRoutes.get('/me/pin', authMiddleware, async (c) => {
 userRoutes.post(
   '/me/pin',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 5 }),
+  rateLimit('user.pin'),
   validate(z.object({ pin: z.string() })),
   async (c) => {
     const userId = c.get('userId') as string;
@@ -587,7 +587,7 @@ userRoutes.post(
 userRoutes.delete(
   '/me/pin',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 5 }),
+  rateLimit('user.pin'),
   async (c) => {
     const userId = c.get('userId') as string;
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
@@ -638,7 +638,7 @@ userRoutes.delete(
 userRoutes.post(
   '/me/pin/verify',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 12 }),
+  rateLimit('user.pinVerify'),
   validate(z.object({ pin: z.string() })),
   async (c) => {
     const userId = c.get('userId') as string;
@@ -673,7 +673,7 @@ userRoutes.post(
 
 // First half of authenticator-app enrollment: mint a secret (2FA stays off
 // until the code below is verified) and hand back the QR payload.
-userRoutes.post('/me/2fa/setup', authMiddleware, rateLimit({ windowMs: 60000, max: 5 }), async (c) => {
+userRoutes.post('/me/2fa/setup', authMiddleware, rateLimit('user.twoFactorSetup'), async (c) => {
   const userId = c.get('userId') as string;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
@@ -697,7 +697,7 @@ userRoutes.post('/me/2fa/setup', authMiddleware, rateLimit({ windowMs: 60000, ma
 // Deliver an OTP (enrollment proof or disable confirmation — the code is
 // single-use either way). The body names the channel while enrolling; an
 // already-enabled account derives it from the stored method.
-userRoutes.post('/me/2fa/send', authMiddleware, rateLimit({ windowMs: 60000, max: 4 }), async (c) => {
+userRoutes.post('/me/2fa/send', authMiddleware, rateLimit('user.twoFactorSend'), async (c) => {
   const userId = c.get('userId') as string;
   const body = await c.req.json().catch(() => null);
   const requested = body && typeof body === 'object' ? (body as { method?: unknown }).method : undefined;
@@ -729,7 +729,7 @@ userRoutes.post('/me/2fa/send', authMiddleware, rateLimit({ windowMs: 60000, max
 userRoutes.post(
   '/me/2fa/enable',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 10 }),
+  rateLimit('user.twoFactorEnable'),
   validate(twoFactorEnableSchema),
   async (c) => {
     const userId = c.get('userId') as string;
@@ -797,7 +797,7 @@ userRoutes.post(
 userRoutes.post(
   '/me/2fa/recovery-codes',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 3 }),
+  rateLimit('user.twoFactorRecovery'),
   validate(twoFactorRecoveryRotateSchema),
   async (c) => {
     const userId = c.get('userId') as string;
@@ -848,7 +848,7 @@ userRoutes.post(
 userRoutes.post(
   '/me/2fa/disable',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 10 }),
+  rateLimit('user.twoFactorDisable'),
   validate(twoFactorDisableSchema),
   async (c) => {
     const userId = c.get('userId') as string;

@@ -130,7 +130,7 @@ accountRoutes.get('/methods', authMiddleware, async (c) => {
 accountRoutes.post(
   '/phone/start',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 3 }),
+  rateLimit('account.phoneStart'),
   validate(accountPhoneStartSchema),
   async (c) => {
     const refused = await portalDoor(c);
@@ -176,7 +176,7 @@ accountRoutes.post(
 accountRoutes.post(
   '/phone/verify',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 10 }),
+  rateLimit('account.phoneVerify'),
   validate(accountPhoneVerifySchema),
   async (c) => {
     const refused = await portalDoor(c);
@@ -245,7 +245,7 @@ accountRoutes.post(
 accountRoutes.post(
   '/email/start',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 5 }),
+  rateLimit('account.emailStart'),
   validate(accountEmailStartSchema),
   async (c) => {
     const refused = await portalDoor(c);
@@ -282,7 +282,7 @@ accountRoutes.post(
 accountRoutes.post(
   '/email/verify',
   authMiddleware,
-  rateLimit({ windowMs: 60000, max: 10 }),
+  rateLimit('account.emailVerify'),
   validate(accountEmailVerifySchema),
   async (c) => {
     const refused = await portalDoor(c);

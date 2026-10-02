@@ -1,5 +1,7 @@
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { consumeSendBudget } from './otpSendBudget';
+import { recordSendEvent } from './sendStats';
 
 interface SmtpConfig {
   host: string;
@@ -152,10 +154,12 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
       html,
     });
     void logDelivery(to, subject, true);
+    recordSendEvent('email', 'sent'); // §14.60 statistics
     return true;
   } catch (err) {
     console.error('Failed to send email:', err);
     void logDelivery(to, subject, false, err);
+    recordSendEvent('email', 'failed'); // §14.60 statistics
     return false;
   }
 }
@@ -355,6 +359,16 @@ interface PasswordResetParams {
  */
 export async function sendPasswordResetEmail(params: PasswordResetParams): Promise<boolean> {
   const { to, firstName, lastName, resetUrl, expiresLabel } = params;
+  // §14.59: link emails spend the same per-destination email budget as
+  // codes. A blocked address skips the send SILENTLY — returning false
+  // makes the caller discard the token and answer with its ordinary
+  // byte-identical generic response, so the endpoint stays an oracle-free
+  // door while the balance stops draining.
+  const budget = await consumeSendBudget('email', to);
+  if (budget.blocked) {
+    console.warn(`[otpSendBudget] password-reset email to ${to} suppressed (${budget.kind}, ${budget.retryAfterSec}s)`);
+    return false;
+  }
   const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
   const safeResetUrl = escapeHtml(resetUrl);
   const appName = (await getApplicationName()) || 'TELND';
@@ -407,6 +421,14 @@ export async function sendLoginLinkEmail(params: {
   expiresLabel: string;
 }): Promise<boolean> {
   const { to, firstName, lastName, loginUrl, expiresLabel } = params;
+  // §14.59: same silent budget gate as the reset email — the sign-in link
+  // counts against the address's email budget and is skipped (caller
+  // keeps its byte-identical generic answer) when the budget is spent.
+  const budget = await consumeSendBudget('email', to);
+  if (budget.blocked) {
+    console.warn(`[otpSendBudget] login-link email to ${to} suppressed (${budget.kind}, ${budget.retryAfterSec}s)`);
+    return false;
+  }
   const displayName = escapeHtml(`${firstName} ${lastName}`.trim());
   const safeLoginUrl = escapeHtml(loginUrl);
   const appName = (await getApplicationName()) || 'TELND';
@@ -458,6 +480,13 @@ export async function sendSignupVerifyEmail(params: {
   expiresLabel: string;
 }): Promise<boolean> {
   const { to, verifyUrl, expiresLabel } = params;
+  // §14.59: counted and, when spent, silently skipped like the other link
+  // emails — the sign-in-or-create response is byte-identical either way.
+  const budget = await consumeSendBudget('email', to);
+  if (budget.blocked) {
+    console.warn(`[otpSendBudget] signup-verify email to ${to} suppressed (${budget.kind}, ${budget.retryAfterSec}s)`);
+    return false;
+  }
   const safeVerifyUrl = escapeHtml(verifyUrl);
   const appName = (await getApplicationName()) || 'TELND';
   const footer = await emailFooterRow();

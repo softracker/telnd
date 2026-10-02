@@ -115,7 +115,7 @@ merchant.get('/:slug', async (c) => {
 // caller below and can never be spoofed from the body) — so the guard
 // against merchant factories is a hard cap: 10 new merchants per owner per
 // hour (bucketed on the authenticated id, not the IP).
-merchant.post('/', rateLimit({ windowMs: 3600000, max: 10 }), validate(merchantSchema), async (c) => {
+merchant.post('/', rateLimit('merchant.create'), validate(merchantSchema), async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
