@@ -6,6 +6,7 @@ import { testSmtpSchema } from '@telnd/validation';
 import { testSmtpConnection } from '../lib/email';
 import { testR2Connection, resetR2Client } from '../lib/r2';
 import { RATE_LIMITS, RATE_LIMIT_BOUNDS, RATE_LIMIT_GROUPS } from '../lib/rateLimitConfig';
+import { requirePinApproval } from '../lib/securityPin';
 
 type SettingsEnv = {
   Variables: {
@@ -313,6 +314,26 @@ settings.put('/', async (c) => {
         },
       }, 403);
     }
+  }
+
+  // Rate-limit menu saves are PIN-approved: any PUT touching `rateLimits`
+  // or the Send quotas stored on that same page (`gateway.sendQuota`) must
+  // clear the same security-PIN approval as every other sensitive admin
+  // action (§14.44). requirePinApproval reads the X-Admin-Pin header — the
+  // admin client opens the approval modal on PIN_REQUIRED and retries the
+  // exact request once with the verified digits — and approves PIN-less
+  // actors silently while no PIN policy is in force, so this gate never
+  // stands in the way of unrelated keys.
+  const touchesRateLimitMenu =
+    'rateLimits' in body ||
+    ('gateway' in body &&
+      typeof body.gateway === 'object' &&
+      body.gateway !== null &&
+      !Array.isArray(body.gateway) &&
+      'sendQuota' in body.gateway);
+  if (touchesRateLimitMenu) {
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
   }
 
   // (#21) Settings values are stored verbatim and rendered back into admin

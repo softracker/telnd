@@ -90,8 +90,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { href: '/settings/account', permission: null },
   { href: '/settings/roles', permission: 'roles.view' },
   { href: '/settings/security', permission: null },
-  // §14.60 — abuse posture rides the security grant; the analytics view
-  // rides dashboard.view (counts only, no destinations).
+  // §14.60 — abuse posture rides the security grant.
   { href: '/settings/rate-limits', permission: 'security.view' },
   { href: '/settings/login-providers', permission: 'loginProviders.view' },
   { href: '/settings/captcha', permission: 'captcha.view' },
@@ -104,13 +103,29 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { href: '/settings/preferences', permission: null },
   { href: '/settings/payment', permission: 'payment.view' },
   { href: '/settings/gateway', permission: 'gateway.view' },
-  { href: '/settings/sending', permission: 'dashboard.view' },
   { href: '/settings/about', permission: null },
 ];
 
 /** href → grant for quick lookups (settings nav, middleware). */
 export const SETTINGS_SECTION_BY_HREF: Record<string, string | string[] | null> =
   Object.fromEntries(SETTINGS_SECTIONS.map((s) => [s.href, s.permission]));
+
+/**
+ * Reports section (§14.60 follow-up) — the same contract as
+ * SETTINGS_SECTIONS: the /reports index lands on the first permitted
+ * entry, the /reports nav filters on it, and middleware answers a typed
+ * URL the grant doesn't cover with the same plain 404. One entry today;
+ * every future analytics page joins here and in the reports nav.
+ */
+export const REPORTS_SECTIONS: SettingsSection[] = [
+  // Counts only, no destinations — rides dashboard.view, exactly as it
+  // did when it lived in Settings.
+  { href: '/reports/sending', permission: 'dashboard.view' },
+];
+
+/** href → grant for quick lookups (reports nav, middleware). */
+export const REPORTS_SECTION_BY_HREF: Record<string, string | string[] | null> =
+  Object.fromEntries(REPORTS_SECTIONS.map((s) => [s.href, s.permission]));
 
 /** Does a section's grant (any-of list) pass the given permission check? */
 export function sectionPermitted(
