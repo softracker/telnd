@@ -61,16 +61,18 @@ interface PhotoCropperProps {
   src: string;
   /** An upload started from Confirm — the dialog can't be dismissed mid-flight. */
   busy: boolean;
-  /** The page's upload failure, shown inside: the dialog covers the page. */
-  error?: string;
   onCancel: () => void;
   onConfirm: (blob: Blob) => void | Promise<void>;
 }
 
-export default function PhotoCropper({ src, busy, error, onCancel, onConfirm }: PhotoCropperProps) {
+export default function PhotoCropper({ src, busy, onCancel, onConfirm }: PhotoCropperProps) {
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [setting, setSetting] = useState(false);
+  // Set only when THIS dialog fails to render its own crop — the server's
+  // answers to the upload ride the toast instead (§14.67) and arrive above
+  // the dialog, while the crop stays put for the retry.
+  const [cropError, setCropError] = useState('');
   const areaRef = useRef<Area | null>(null);
 
   const close = useCallback(() => {
@@ -92,12 +94,18 @@ export default function PhotoCropper({ src, busy, error, onCancel, onConfirm }: 
     if (!area || busy || setting) return;
     if (area.width < 1 || area.height < 1) return;
     setSetting(true);
+    setCropError('');
     try {
       const blob = await renderCrop(src, area);
-      if (blob) await onConfirm(blob);
+      if (blob) {
+        await onConfirm(blob);
+      } else {
+        setCropError('That photo could not be processed. Please try another photo.');
+      }
     } catch {
-      // A decode failure surfaces through the page's error slot — the
-      // caller's onConfirm never ran, so the dialog stays open for a retry.
+      // The caller's onConfirm never ran — the dialog stays open with its
+      // own message so the crop survives the retry instead of a re-pick.
+      setCropError('That photo could not be processed. Please try another photo.');
     } finally {
       setSetting(false);
     }
@@ -162,9 +170,9 @@ export default function PhotoCropper({ src, busy, error, onCancel, onConfirm }: 
           />
         </label>
 
-        {error && (
+        {cropError && (
           <div className="mt-3">
-            <AuthError>{error}</AuthError>
+            <AuthError>{cropError}</AuthError>
           </div>
         )}
 

@@ -21,8 +21,9 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 import { authErrorCode, authErrorMessage, EMAIL_PATTERN, useCountdown } from '@/lib/auth';
-import { AuthError, AuthInput, OtpBoxes, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
+import { AuthInput, OtpBoxes, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
 import { EyeIcon, EyeOffIcon } from '@/components/auth/icons';
+import { useToast } from '@/components/account/Toast';
 
 /** The server's OTP resend gap, mirrored locally for the countdown. */
 const RESEND_SECONDS = 45;
@@ -47,10 +48,10 @@ export default function AddEmailPage() {
   const [boxes, setBoxes] = useState<string[]>(['', '', '', '', '', '']);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [resendSeconds, setResendSeconds] = useCountdown(0);
+  const { showToast, toastView } = useToast();
 
   const address = email.trim();
   const clearBoxes = () => setBoxes(['', '', '', '', '', '']);
@@ -79,7 +80,6 @@ export default function AddEmailPage() {
   async function start(e?: FormEvent) {
     e?.preventDefault();
     if (sending || !EMAIL_PATTERN.test(address)) return;
-    setError('');
     setSending(true);
     try {
       await api.post(changing ? '/api/account/email/change/start' : '/api/account/email/start', { email: address });
@@ -90,7 +90,7 @@ export default function AddEmailPage() {
       if (authErrorCode(err) === 'EMAIL_ALREADY_SET') {
         setStep('blocked');
       } else {
-        setError(authErrorMessage(err, 'The code could not be sent. Please try again.'));
+        showToast('error', authErrorMessage(err, 'The code could not be sent. Please try again.'));
       }
     } finally {
       setSending(false);
@@ -99,14 +99,13 @@ export default function AddEmailPage() {
 
   async function resend() {
     if (sending || resendSeconds > 0) return;
-    setError('');
     setSending(true);
     try {
       await api.post(changing ? '/api/account/email/change/start' : '/api/account/email/start', { email: address });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
     } catch (err) {
-      setError(authErrorMessage(err, 'A new code could not be sent. Please try again.'));
+      showToast('error', authErrorMessage(err, 'A new code could not be sent. Please try again.'));
     } finally {
       setSending(false);
     }
@@ -121,7 +120,6 @@ export default function AddEmailPage() {
   async function verify(value?: string) {
     const entered = value ?? boxes.join('');
     if (entered.length !== 6 || verifying) return;
-    setError('');
     setVerifying(true);
     try {
       await api.post(changing ? '/api/account/email/change/verify' : '/api/account/email/verify', {
@@ -140,16 +138,17 @@ export default function AddEmailPage() {
         // Back to the boxes: the code is gone, a fresh one is the fix.
         clearBoxes();
         setStep('code');
-        setError(authErrorMessage(err, 'That code is invalid or has expired. Please try again.'));
+        showToast('error', authErrorMessage(err, 'That code is invalid or has expired. Please try again.'));
       } else if (code === 'EMAIL_ALREADY_SET') {
         setStep('blocked');
       } else if (code === 'PASSWORD_REQUIRED') {
         // The UI already knew — only reachable if the account changed
         // underneath; route there rather than dead-end on the error.
         setStep('password');
-        setError(authErrorMessage(err, 'Choose a password to finish adding your email.'));
+        showToast('error', authErrorMessage(err, 'Choose a password to finish adding your email.'));
       } else {
-        setError(
+        showToast(
+          'error',
           authErrorMessage(
             err,
             changing
@@ -164,6 +163,7 @@ export default function AddEmailPage() {
 
   return (
     <>
+      {toastView}
       <p className="mb-2">
         <Link href="/my-account" className={linkBtn}>
           &larr; Sign-in methods
@@ -220,11 +220,6 @@ export default function AddEmailPage() {
                   ? "We'll email a 6-digit code to confirm it's yours. Once confirmed, the new address replaces your current one — the old address is notified."
                   : "We'll email a 6-digit code to confirm it's yours. Once added, the address can also sign you in."}
               </p>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               <div className="mt-5">
                 <PrimaryButton type="submit" loading={sending} disabled={!EMAIL_PATTERN.test(address)}>
                   Send code
@@ -250,18 +245,12 @@ export default function AddEmailPage() {
                     // skip).
                     if (changing || hasPassword) void verify(value);
                     else {
-                      setError('');
                       setStep('password');
                     }
                   }}
                   disabled={verifying}
                 />
               </div>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               {verifying ? (
                 <p
                   className="mt-4 flex items-center gap-2 text-[13px] text-gray-500 dark:text-white/45"
@@ -285,7 +274,6 @@ export default function AddEmailPage() {
                     className={linkBtn}
                     onClick={() => {
                       setStep('email');
-                      setError('');
                       clearBoxes();
                     }}
                   >
@@ -336,11 +324,6 @@ export default function AddEmailPage() {
                   />
                 </div>
               </div>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               <div className="mt-5">
                 <PrimaryButton
                   onClick={() => void verify()}
@@ -359,7 +342,6 @@ export default function AddEmailPage() {
                   className={linkBtn}
                   onClick={() => {
                     setStep('code');
-                    setError('');
                   }}
                 >
                   Back

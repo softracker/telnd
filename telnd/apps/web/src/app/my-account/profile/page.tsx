@@ -15,6 +15,10 @@
 // A pick that isn't already square stops at the crop dialog first: its
 // round selection IS the frame the avatar becomes, so the circle preview
 // and the stored result can never disagree.
+//
+// Responses (§14.67) ride the panel's toast — save/upload/remove results
+// arrive top-center and leave on their own. The only inline message kept
+// is the LOAD failure, which is page state rather than a response.
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -23,6 +27,7 @@ import { authErrorMessage, refreshSession } from '@/lib/auth';
 import { AuthError, AuthInput, Spinner } from '@/components/auth/AuthUI';
 import { Row, card, Chip, primaryBtn, quietBtn, dangerBtn } from '@/components/account/ui';
 import PhotoCropper, { loadImageSize } from '@/components/account/PhotoCropper';
+import { useToast } from '@/components/account/Toast';
 
 type Me = {
   firstName: string;
@@ -40,15 +45,14 @@ export default function ProfilePage() {
   const [lastName, setLastName] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Load failure only — every action response goes through the toast.
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showToast, toastView } = useToast();
   // Photo round (§14.66): '' idle, 'upload' while the file is in flight,
   // 'remove' from the armed Confirm tap until the DELETE answers. Remove
   // arms first (house two-click) and the arm retracts on its own after 5s.
   const [photoBusy, setPhotoBusy] = useState<'' | 'upload' | 'remove'>('');
   const [photoArmed, setPhotoArmed] = useState(false);
-  const [photoError, setPhotoError] = useState('');
-  const [photoNotice, setPhotoNotice] = useState('');
   // Open crop dialog (§14.66): a non-square pick becomes an object URL
   // held here until the dialog closes (or the page unmounts).
   const [cropSrc, setCropSrc] = useState<string | null>(null);
@@ -97,14 +101,12 @@ export default function ProfilePage() {
     e.preventDefault();
     if (saving || invalid || !dirty) return;
     setSaving(true);
-    setError('');
-    setNotice('');
     try {
       await api.patch('/api/users/me', { firstName: trimmedFirst, lastName: trimmedLast });
       setMe((prev) => (prev ? { ...prev, firstName: trimmedFirst, lastName: trimmedLast } : prev));
-      setNotice('Profile saved.');
+      showToast('success', 'Profile saved.');
     } catch (err) {
-      setError(authErrorMessage(err, 'Your profile could not be saved. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Your profile could not be saved. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -112,18 +114,16 @@ export default function ProfilePage() {
 
   async function uploadPhoto(file: Blob, filename: string): Promise<boolean> {
     setPhotoBusy('upload');
-    setPhotoError('');
-    setPhotoNotice('');
     try {
       const form = new FormData();
       form.append('file', file, filename);
       const res = await api.upload<{ data: { avatar: string } }>('/api/account/avatar', form);
       setMe((prev) => (prev ? { ...prev, avatar: res.data.avatar } : prev));
-      setPhotoNotice('Profile photo updated.');
+      showToast('success', 'Profile photo updated.');
       refreshSession();
       return true;
     } catch (err) {
-      setPhotoError(authErrorMessage(err, 'Your photo could not be uploaded. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Your photo could not be uploaded. Please try again.'));
       return false;
     } finally {
       setPhotoBusy('');
@@ -136,8 +136,6 @@ export default function ProfilePage() {
     // failure — a value the browser considers "unchanged" never re-fires.
     e.target.value = '';
     if (!file || photoBusy) return;
-    setPhotoError('');
-    setPhotoNotice('');
 
     // Already square → straight through (§14.66). Anything else earns one
     // crop turn: the dialog's circle is exactly the frame the avatar
@@ -151,7 +149,7 @@ export default function ProfilePage() {
     }
     if (!size) {
       URL.revokeObjectURL(url);
-      setPhotoError('That image could not be read. Please choose another file.');
+      showToast('error', 'That image could not be read. Please choose another file.');
       return;
     }
     if (size.width === size.height) {
@@ -170,9 +168,9 @@ export default function ProfilePage() {
 
   async function confirmCropper(blob: Blob) {
     const ok = await uploadPhoto(blob, blob.type === 'image/webp' ? 'photo.webp' : 'photo.png');
-    // Success swaps the picture — close and show the page's notice.
-    // A failure keeps the dialog up (the error renders inside it) so the
-    // crop survives the retry instead of forcing a re-pick.
+    // Success swaps the picture — close and show the page's toast.
+    // A failure toasts top-center (above the dialog) while the dialog
+    // stays up, so the crop survives the retry instead of forcing a re-pick.
     if (ok) closeCropper();
   }
 
@@ -180,8 +178,6 @@ export default function ProfilePage() {
     if (photoBusy) return;
     if (!photoArmed) {
       setPhotoArmed(true);
-      setPhotoError('');
-      setPhotoNotice('');
       if (photoArmTimer.current) clearTimeout(photoArmTimer.current);
       photoArmTimer.current = setTimeout(() => setPhotoArmed(false), 5000);
       return;
@@ -189,15 +185,13 @@ export default function ProfilePage() {
     if (photoArmTimer.current) clearTimeout(photoArmTimer.current);
     setPhotoArmed(false);
     setPhotoBusy('remove');
-    setPhotoError('');
-    setPhotoNotice('');
     try {
       await api.delete('/api/account/avatar');
       setMe((prev) => (prev ? { ...prev, avatar: null } : prev));
-      setPhotoNotice('Profile photo removed.');
+      showToast('success', 'Profile photo removed.');
       refreshSession();
     } catch (err) {
-      setPhotoError(authErrorMessage(err, 'Your photo could not be removed. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Your photo could not be removed. Please try again.'));
     } finally {
       setPhotoBusy('');
     }
@@ -205,6 +199,7 @@ export default function ProfilePage() {
 
   return (
     <>
+      {toastView}
       <h1>Profile</h1>
 
       <div className={`mt-4 ${card}`}>
@@ -229,20 +224,6 @@ export default function ProfilePage() {
             <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
               Shown wherever your name appears — on applications, your public profile, and in your account menu.
             </p>
-
-            {photoError && (
-              <div className="mt-3">
-                <AuthError>{photoError}</AuthError>
-              </div>
-            )}
-            {photoNotice && (
-              <div
-                aria-live="polite"
-                className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-              >
-                {photoNotice}
-              </div>
-            )}
 
             <div className="mt-4 flex flex-wrap items-center gap-4">
               <span
@@ -297,15 +278,6 @@ export default function ProfilePage() {
               </p>
 
               <form className="mt-4 space-y-4" onSubmit={(e) => void save(e)}>
-                {error && <AuthError>{error}</AuthError>}
-                {notice && (
-                  <div
-                    aria-live="polite"
-                    className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-                  >
-                    {notice}
-                  </div>
-                )}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-[13px] font-medium text-gray-700 dark:text-white/80">
@@ -392,7 +364,6 @@ export default function ProfilePage() {
         <PhotoCropper
           src={cropSrc}
           busy={photoBusy === 'upload'}
-          error={photoError}
           onCancel={closeCropper}
           onConfirm={confirmCropper}
         />

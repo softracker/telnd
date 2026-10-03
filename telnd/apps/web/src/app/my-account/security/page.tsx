@@ -28,7 +28,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth';
 import { AuthError, OtpBoxes, Spinner } from '@/components/auth/AuthUI';
-import { Notice, Row, card, Chip, dangerBtn, primaryBtn, quietBtn } from '@/components/account/ui';
+import { Row, card, Chip, dangerBtn, primaryBtn, quietBtn } from '@/components/account/ui';
+import { useToast } from '@/components/account/Toast';
 
 type Methods = { hasPassword: boolean };
 
@@ -82,8 +83,9 @@ function agentShort(ua: string | null): string {
 export default function SecurityPage() {
   // ── shared state ──
   const [loading, setLoading] = useState(true);
+  // Load failure only — every response to a click rides the toast (§14.67).
   const [loadError, setLoadError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showToast, toastView } = useToast();
   const [methods, setMethods] = useState<Methods | null>(null);
   const [twoFa, setTwoFa] = useState<TwoFa | null>(null);
   const [devices, setDevices] = useState<TrustedDevice[]>([]);
@@ -137,30 +139,28 @@ export default function SecurityPage() {
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
-  const [pwError, setPwError] = useState('');
 
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
     if (pwBusy) return;
     if (newPw !== confirmPw) {
-      setPwError('The new passwords do not match.');
+      showToast('error', 'The new passwords do not match.');
       return;
     }
     if (newPw.length < 8) {
-      setPwError('The new password must be at least 8 characters.');
+      showToast('error', 'The new password must be at least 8 characters.');
       return;
     }
     setPwBusy(true);
-    setPwError('');
     try {
       await api.post('/api/users/me/change-password', { currentPassword: curPw, newPassword: newPw });
       setCurPw('');
       setNewPw('');
       setConfirmPw('');
-      setNotice('Password changed. Other devices were signed out, and trusted devices were cleared.');
+      showToast('success', 'Password changed. Other devices were signed out, and trusted devices were cleared.');
       await load();
     } catch (err) {
-      setPwError(authErrorMessage(err, 'Your password could not be changed. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Your password could not be changed. Please try again.'));
     } finally {
       setPwBusy(false);
     }
@@ -173,7 +173,6 @@ export default function SecurityPage() {
   const [tfBusy, setTfBusy] = useState<'' | 'start' | 'send' | 'enable' | 'codes' | 'disable'>('');
   // Which enroll button is working — each shows its own spinner.
   const [starting, setStarting] = useState<'' | 'totp' | 'sms' | 'email'>('');
-  const [tfError, setTfError] = useState('');
   const [newCodes, setNewCodes] = useState<string[] | null>(null);
   const [codesFor, setCodesFor] = useState<'enable' | 'regenerate' | null>(null);
   const [resendIn, setResendIn] = useState(0);
@@ -188,7 +187,6 @@ export default function SecurityPage() {
     if (tfBusy) return;
     setTfBusy('start');
     setStarting(method);
-    setTfError('');
     setNewCodes(null);
     setBoxes(EMPTY_BOXES);
     try {
@@ -202,7 +200,7 @@ export default function SecurityPage() {
       }
       setTfPanel(method);
     } catch (err) {
-      setTfError(authErrorMessage(err, 'Two-factor setup could not start. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Two-factor setup could not start. Please try again.'));
     } finally {
       setTfBusy('');
       setStarting('');
@@ -212,12 +210,11 @@ export default function SecurityPage() {
   async function resendCode() {
     if (tfBusy || !tfPanel || resendIn > 0) return;
     setTfBusy('send');
-    setTfError('');
     try {
       await api.post('/api/users/me/2fa/send', { method: tfPanel });
       setResendIn(45);
     } catch (err) {
-      setTfError(authErrorMessage(err, 'The code could not be sent. Please try again.'));
+      showToast('error', authErrorMessage(err, 'The code could not be sent. Please try again.'));
     } finally {
       setTfBusy('');
     }
@@ -226,7 +223,6 @@ export default function SecurityPage() {
   async function submitEnable() {
     if (!tfPanel || boxes.join('').length !== 6 || tfBusy) return;
     setTfBusy('enable');
-    setTfError('');
     try {
       const res = await api.post<{ data: { recoveryCodes?: string[] } }>('/api/users/me/2fa/enable', {
         method: tfPanel,
@@ -240,11 +236,11 @@ export default function SecurityPage() {
         setNewCodes(res.data.recoveryCodes);
         setCodesFor('enable');
       }
-      setNotice('Two-factor authentication is on.');
+      showToast('success', 'Two-factor authentication is on.');
       await load();
     } catch (err) {
       setBoxes(EMPTY_BOXES);
-      setTfError(authErrorMessage(err, 'That code was not accepted. Please try again.'));
+      showToast('error', authErrorMessage(err, 'That code was not accepted. Please try again.'));
     } finally {
       setTfBusy('');
     }
@@ -258,13 +254,11 @@ export default function SecurityPage() {
   function openProof(kind: 'codes' | 'disable') {
     setProofPanel(kind);
     setBoxes(EMPTY_BOXES);
-    setTfError('');
   }
 
   async function submitProof() {
     if (!proofPanel || boxes.join('').length !== 6 || tfBusy) return;
     setTfBusy(proofPanel === 'codes' ? 'codes' : 'disable');
-    setTfError('');
     try {
       if (proofPanel === 'codes') {
         const res = await api.post<{ data: { recoveryCodes: string[] } }>('/api/users/me/2fa/recovery-codes', {
@@ -272,17 +266,17 @@ export default function SecurityPage() {
         });
         setNewCodes(res.data.recoveryCodes);
         setCodesFor('regenerate');
-        setNotice('New recovery codes generated — the old ones no longer work.');
+        showToast('success', 'New recovery codes generated — the old ones no longer work.');
       } else {
         await api.post('/api/users/me/2fa/disable', { code: boxes.join('') });
-        setNotice('Two-factor authentication is off.');
+        showToast('success', 'Two-factor authentication is off.');
       }
       setProofPanel(null);
       setBoxes(EMPTY_BOXES);
       await load();
     } catch (err) {
       setBoxes(EMPTY_BOXES);
-      setTfError(authErrorMessage(err, 'That code was not accepted. Please try again.'));
+      showToast('error', authErrorMessage(err, 'That code was not accepted. Please try again.'));
     } finally {
       setTfBusy('');
     }
@@ -291,12 +285,11 @@ export default function SecurityPage() {
   async function sendVerifyCode() {
     if (tfBusy) return;
     setTfBusy('send');
-    setTfError('');
     try {
       await api.post('/api/users/me/2fa/send', {});
       setResendIn(45);
     } catch (err) {
-      setTfError(authErrorMessage(err, 'The code could not be sent. Please try again.'));
+      showToast('error', authErrorMessage(err, 'The code could not be sent. Please try again.'));
     } finally {
       setTfBusy('');
     }
@@ -306,26 +299,23 @@ export default function SecurityPage() {
     if (!newCodes) return;
     try {
       await navigator.clipboard.writeText(newCodes.join('\n'));
-      setNotice('Recovery codes copied to your clipboard.');
+      showToast('success', 'Recovery codes copied to your clipboard.');
     } catch {
-      setNotice('Copying failed — select the codes and copy them manually.');
+      showToast('error', 'Copying failed — select the codes and copy them manually.');
     }
   }
 
   // ── trusted devices + sessions ──
-  const [devError, setDevError] = useState('');
-  const [sessError, setSessError] = useState('');
 
   async function revokeDevice(id: string) {
     if (busy) return;
     setBusy(`dev:${id}`);
-    setDevError('');
     try {
       await api.delete(`/api/users/me/trusted-devices/${id}`);
-      setNotice('Trusted device removed — it will be asked for a code at its next sign-in.');
+      showToast('success', 'Trusted device removed — it will be asked for a code at its next sign-in.');
       await load();
     } catch (err) {
-      setDevError(authErrorMessage(err, 'That device could not be revoked. Please try again.'));
+      showToast('error', authErrorMessage(err, 'That device could not be revoked. Please try again.'));
     } finally {
       setBusy('');
     }
@@ -334,13 +324,12 @@ export default function SecurityPage() {
   async function revokeSession(id: string) {
     if (busy) return;
     setBusy(`sess:${id}`);
-    setSessError('');
     try {
       await api.delete(`/api/users/me/sessions/${id}`);
-      setNotice('Device signed out.');
+      showToast('success', 'Device signed out.');
       await load();
     } catch (err) {
-      setSessError(authErrorMessage(err, 'That session could not be revoked. Please try again.'));
+      showToast('error', authErrorMessage(err, 'That session could not be revoked. Please try again.'));
     } finally {
       setBusy('');
     }
@@ -349,15 +338,15 @@ export default function SecurityPage() {
   async function signOutEverywhere() {
     if (busy) return;
     setBusy('revokeAll');
-    setSessError('');
     try {
       const res = await api.delete<{ data: { revoked: number } }>('/api/users/me/sessions');
-      setNotice(
+      showToast(
+        'success',
         `Signed out ${res.data.revoked} other device${res.data.revoked === 1 ? '' : 's'}. This device stays signed in.`,
       );
       await load();
     } catch (err) {
-      setSessError(authErrorMessage(err, 'Other sessions could not be signed out. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Other sessions could not be signed out. Please try again.'));
     } finally {
       setBusy('');
     }
@@ -370,8 +359,8 @@ export default function SecurityPage() {
 
   return (
     <>
+      {toastView}
       <h1>Security</h1>
-      {notice && <Notice>{notice}</Notice>}
 
       <div className={`mt-4 ${card}`}>
         {loading && (
@@ -405,7 +394,6 @@ export default function SecurityPage() {
             </p>
             {methods.hasPassword ? (
               <form className="mt-4 space-y-4" onSubmit={(e) => void changePassword(e)}>
-                {pwError && <AuthError>{pwError}</AuthError>}
                 <label className="block">
                   <span className="mb-1.5 block text-[13px] font-medium text-gray-700 dark:text-white/80">Current password</span>
                   <input
@@ -472,12 +460,6 @@ export default function SecurityPage() {
                   {tf.enabled ? 'On' : tf.policyRequired || tf.enforcedByAdmin ? 'Required' : 'Off'}
                 </Chip>
               </div>
-
-              {tfError && (
-                <div className="mt-3">
-                  <AuthError>{tfError}</AuthError>
-                </div>
-              )}
 
               {!tf.enabled && (
                 <>
@@ -590,7 +572,6 @@ export default function SecurityPage() {
                             setTfPanel(null);
                             setSetup(null);
                             setBoxes(EMPTY_BOXES);
-                            setTfError('');
                             setResendIn(0);
                           }}
                           title="Cancel two-factor setup"
@@ -710,7 +691,6 @@ export default function SecurityPage() {
                           onClick={() => {
                             setProofPanel(null);
                             setBoxes(EMPTY_BOXES);
-                            setTfError('');
                           }}
                           title="Cancel"
                         >
@@ -772,11 +752,6 @@ export default function SecurityPage() {
                 Browsers you told to skip the two-factor question — each trust lasts 30 days or until you remove it
                 (changing your password clears them all).
               </p>
-              {devError && (
-                <div className="mt-3">
-                  <AuthError>{devError}</AuthError>
-                </div>
-              )}
               <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
                 {devices.length === 0 && (
                   <p className="py-4 text-sm text-gray-600 dark:text-gray-400">
@@ -831,11 +806,6 @@ export default function SecurityPage() {
                   {armed === 'revokeAll' ? 'Confirm sign out' : 'Sign out everywhere else'}
                 </button>
               </div>
-              {sessError && (
-                <div className="mt-3">
-                  <AuthError>{sessError}</AuthError>
-                </div>
-              )}
               <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
                 {sessions.map((session) => (
                   <Row

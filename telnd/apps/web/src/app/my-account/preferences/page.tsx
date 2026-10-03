@@ -11,9 +11,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth';
-import { AuthError, Spinner } from '@/components/auth/AuthUI';
+import { Spinner } from '@/components/auth/AuthUI';
 import { card } from '@/components/account/ui';
 import { getTheme, setTheme, type Theme } from '@/lib/theme';
+import { useToast } from '@/components/account/Toast';
 
 const OPTIONS: { value: Theme; label: string; detail: string }[] = [
   { value: 'system', label: 'System', detail: 'Follows your device setting.' },
@@ -25,8 +26,7 @@ export default function PreferencesPage() {
   const [theme, setThemeChoice] = useState<Theme | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showToast, toastView } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -58,15 +58,13 @@ export default function PreferencesPage() {
     setThemeChoice(next);
     setTheme(next); // apply immediately — a failed save rolls back below
     setSaving(next);
-    setError('');
-    setNotice('');
     try {
       await api.put('/api/user-preferences', { theme: next });
-      setNotice(`Theme set to ${OPTIONS.find((o) => o.value === next)?.label ?? next} — it follows your account.`);
+      showToast('success', `Theme set to ${OPTIONS.find((o) => o.value === next)?.label ?? next} — it follows your account.`);
     } catch (err) {
       setThemeChoice(previous);
       setTheme(previous);
-      setError(authErrorMessage(err, 'Your preference could not be saved. Please try again.'));
+      showToast('error', authErrorMessage(err, 'Your preference could not be saved. Please try again.'));
     } finally {
       setSaving('');
     }
@@ -74,6 +72,7 @@ export default function PreferencesPage() {
 
   return (
     <>
+      {toastView}
       <h1>Preferences</h1>
 
       <div className={`mt-4 ${card}`}>
@@ -90,20 +89,6 @@ export default function PreferencesPage() {
 
         {!loading && (
           <>
-            {error && (
-              <div className="mt-3">
-                <AuthError>{error}</AuthError>
-              </div>
-            )}
-            {notice && (
-              <div
-                aria-live="polite"
-                className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-              >
-                {notice}
-              </div>
-            )}
-
             <div className="mt-4 space-y-3">
               {OPTIONS.map((option) => {
                 const selected = theme === option.value;

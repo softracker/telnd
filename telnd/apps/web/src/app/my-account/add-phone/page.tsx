@@ -20,7 +20,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 import { authErrorCode, authErrorMessage, useCountdown } from '@/lib/auth';
-import { AuthError, AuthInput, OtpBoxes, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
+import { AuthInput, OtpBoxes, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
+import { useToast } from '@/components/account/Toast';
 
 /** The only country line live — same fixed chip the signup screens use. */
 const COUNTRY_CODE = '+880';
@@ -44,10 +45,10 @@ export default function AddPhonePage() {
   const [changing, setChanging] = useState(false);
   const [digits, setDigits] = useState('');
   const [boxes, setBoxes] = useState<string[]>(['', '', '', '', '', '']);
-  const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [resendSeconds, setResendSeconds] = useCountdown(0);
+  const { showToast, toastView } = useToast();
 
   const fullPhone = `${COUNTRY_CODE}${digits}`;
   const clearBoxes = () => setBoxes(['', '', '', '', '', '']);
@@ -75,7 +76,6 @@ export default function AddPhonePage() {
   async function start(e?: FormEvent) {
     e?.preventDefault();
     if (sending || digits.length !== 10) return;
-    setError('');
     setSending(true);
     try {
       await api.post(changing ? '/api/account/phone/change/start' : '/api/account/phone/start', { phone: fullPhone });
@@ -86,7 +86,7 @@ export default function AddPhonePage() {
       if (authErrorCode(err) === 'PHONE_ALREADY_SET') {
         setStep('blocked');
       } else {
-        setError(authErrorMessage(err, 'The code could not be sent. Please try again.'));
+        showToast('error', authErrorMessage(err, 'The code could not be sent. Please try again.'));
       }
     } finally {
       setSending(false);
@@ -95,14 +95,13 @@ export default function AddPhonePage() {
 
   async function resend() {
     if (sending || resendSeconds > 0) return;
-    setError('');
     setSending(true);
     try {
       await api.post(changing ? '/api/account/phone/change/start' : '/api/account/phone/start', { phone: fullPhone });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
     } catch (err) {
-      setError(authErrorMessage(err, 'A new code could not be sent. Please try again.'));
+      showToast('error', authErrorMessage(err, 'A new code could not be sent. Please try again.'));
     } finally {
       setSending(false);
     }
@@ -113,7 +112,6 @@ export default function AddPhonePage() {
   async function verify(value?: string) {
     const entered = value ?? boxes.join('');
     if (entered.length !== 6 || verifying) return;
-    setError('');
     setVerifying(true);
     try {
       await api.post(changing ? '/api/account/phone/change/verify' : '/api/account/phone/verify', {
@@ -129,16 +127,17 @@ export default function AddPhonePage() {
       const code = authErrorCode(err);
       if (code === 'OTP_INVALID' || code === 'OTP_TOO_MANY_ATTEMPTS') {
         clearBoxes();
-        setError(authErrorMessage(err, 'That code is invalid or has expired. Please try again.'));
+        showToast('error', authErrorMessage(err, 'That code is invalid or has expired. Please try again.'));
       } else if (code === 'PHONE_ALREADY_SET') {
         setStep('blocked');
       } else if (code === 'PHONE_IN_USE') {
         // The code is spent and the number belongs elsewhere — hand back
         // the verdict with a fresh send (or a different number) to fix it.
         clearBoxes();
-        setError(authErrorMessage(err, 'That phone number is already on another account.'));
+        showToast('error', authErrorMessage(err, 'That phone number is already on another account.'));
       } else {
-        setError(
+        showToast(
+          'error',
           authErrorMessage(
             err,
             changing
@@ -153,6 +152,7 @@ export default function AddPhonePage() {
 
   return (
     <>
+      {toastView}
       <p className="mb-2">
         <Link href="/my-account" className={linkBtn}>
           &larr; Sign-in methods
@@ -217,11 +217,6 @@ export default function AddPhonePage() {
                   ? "We'll text a 6-digit code to confirm it's yours. Once confirmed, the new number replaces your current one — your account's email is notified."
                   : "We'll text a 6-digit code to confirm it's yours. Once added, the number can also sign you in."}
               </p>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               <div className="mt-5">
                 <PrimaryButton type="submit" loading={sending} disabled={digits.length !== 10}>
                   Send code
@@ -244,11 +239,6 @@ export default function AddPhonePage() {
                   disabled={verifying}
                 />
               </div>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               {verifying ? (
                 <p
                   className="mt-4 flex items-center gap-2 text-[13px] text-gray-500 dark:text-white/45"
@@ -272,7 +262,6 @@ export default function AddPhonePage() {
                     className={linkBtn}
                     onClick={() => {
                       setStep('number');
-                      setError('');
                       clearBoxes();
                     }}
                   >

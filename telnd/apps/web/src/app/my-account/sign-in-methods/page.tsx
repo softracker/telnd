@@ -38,7 +38,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth';
 import { AuthError, Spinner } from '@/components/auth/AuthUI';
-import { Notice, Row, card, Chip, primaryBtn, quietBtn, dangerBtn } from '@/components/account/ui';
+import { Row, card, Chip, primaryBtn, quietBtn, dangerBtn } from '@/components/account/ui';
+import { useToast } from '@/components/account/Toast';
 
 type Methods = {
   email: string | null;
@@ -60,13 +61,13 @@ export default function SignInMethodsPage() {
   const [methods, setMethods] = useState<Methods | null>(null);
   const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
+  // Load failure only (inline, with its Try again) — every response to a
+  // click or a returning wizard rides the toast (§14.67).
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { showToast, toastView } = useToast();
   const [armed, setArmed] = useState('');
   const [busy, setBusy] = useState('');
   const [connecting, setConnecting] = useState('');
-  const [removeError, setRemoveError] = useState('');
-  const [connectError, setConnectError] = useState('');
   const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -102,16 +103,16 @@ export default function SignInMethodsPage() {
     const changed = q.get('changed');
     const connected = q.get('connected');
     const failed = q.get('error');
-    if (added === 'phone') setNotice('Phone number added — it now signs you in.');
-    else if (added === 'email') setNotice('Email address added — it now signs you in.');
-    else if (added === 'password') setNotice('Password set — you can now sign in with your email and password.');
-    if (changed === 'email') setNotice('Email address changed — the old one was notified.');
-    else if (changed === 'phone') setNotice('Phone number changed — your email was notified.');
+    if (added === 'phone') showToast('success', 'Phone number added — it now signs you in.');
+    else if (added === 'email') showToast('success', 'Email address added — it now signs you in.');
+    else if (added === 'password') showToast('success', 'Password set — you can now sign in with your email and password.');
+    if (changed === 'email') showToast('success', 'Email address changed — the old one was notified.');
+    else if (changed === 'phone') showToast('success', 'Phone number changed — your email was notified.');
     if (connected) {
       const label = PROVIDER_LABELS[connected] ?? connected;
-      setNotice(`${label} is now connected — it can sign you in.`);
+      showToast('success', `${label} is now connected — it can sign you in.`);
     }
-    if (failed) setConnectError(failed);
+    if (failed) showToast('error', failed);
     if (added || changed || connected || failed) {
       window.history.replaceState(null, '', '/my-account/sign-in-methods');
     }
@@ -119,13 +120,12 @@ export default function SignInMethodsPage() {
     return () => {
       if (armTimer.current) clearTimeout(armTimer.current);
     };
-  }, [load]);
+  }, [load, showToast]);
 
   /** First click arms the Remove button; the click inside 5s confirms. */
   function armRemoval(provider: string) {
     if (armTimer.current) clearTimeout(armTimer.current);
     setArmed(provider);
-    setRemoveError('');
     armTimer.current = setTimeout(() => setArmed(''), 5000);
   }
 
@@ -137,15 +137,15 @@ export default function SignInMethodsPage() {
     if (busy) return;
     if (armTimer.current) clearTimeout(armTimer.current);
     setBusy(provider);
-    setRemoveError('');
     try {
       await api.post('/api/auth/oauth/unlink', { provider });
       setArmed('');
-      setNotice(`${PROVIDER_LABELS[provider] ?? provider} is no longer connected.`);
+      showToast('success', `${PROVIDER_LABELS[provider] ?? provider} is no longer connected.`);
       await load();
     } catch (err) {
       setArmed('');
-      setRemoveError(
+      showToast(
+        'error',
         authErrorMessage(err, `${PROVIDER_LABELS[provider] ?? provider} could not be removed. Please try again.`),
       );
     } finally {
@@ -159,8 +159,8 @@ export default function SignInMethodsPage() {
 
   return (
     <>
+      {toastView}
       <h1>Sign-in methods</h1>
-      {notice && <Notice>{notice}</Notice>}
       <div className={`mt-4 ${card}`}>
         <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
           How you get into your account. A new method only counts once a code sent to it proves it.
@@ -273,16 +273,6 @@ export default function SignInMethodsPage() {
               <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
                 Sign in with a social account. Removing one asks twice, and never closes your last door.
               </p>
-              {removeError && (
-                <div className="mt-3">
-                  <AuthError>{removeError}</AuthError>
-                </div>
-              )}
-              {connectError && (
-                <div className="mt-3">
-                  <AuthError>{connectError}</AuthError>
-                </div>
-              )}
               <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
                 {identities.map((identity) => {
                   const label = PROVIDER_LABELS[identity.provider] ?? identity.provider;

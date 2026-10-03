@@ -17,8 +17,9 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 import { authErrorCode, authErrorMessage } from '@/lib/auth';
-import { AuthError, AuthInput, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
+import { AuthInput, PrimaryButton, Spinner } from '@/components/auth/AuthUI';
 import { EyeIcon, EyeOffIcon } from '@/components/auth/icons';
+import { useToast } from '@/components/account/Toast';
 
 type Step = 'loading' | 'password' | 'blocked';
 
@@ -35,8 +36,8 @@ export default function SetPasswordPage() {
   const [blockedText, setBlockedText] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const { showToast, toastView } = useToast();
 
   // Gate on entry: a password that already exists (or an account with
   // no email door to pair it with) has nothing to do here — say so and
@@ -62,7 +63,6 @@ export default function SetPasswordPage() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (saving || password.length < 8) return;
-    setError('');
     setSaving(true);
     try {
       await api.post('/api/account/password', { password });
@@ -76,7 +76,7 @@ export default function SetPasswordPage() {
         setBlockedText('Add an email address first — a password signs you in with it.');
         setStep('blocked');
       } else {
-        setError(authErrorMessage(err, 'The password could not be set. Please try again.'));
+        showToast('error', authErrorMessage(err, 'The password could not be set. Please try again.'));
       }
       setSaving(false);
     }
@@ -84,6 +84,7 @@ export default function SetPasswordPage() {
 
   return (
     <>
+      {toastView}
       <p className="mb-2">
         <Link href="/my-account" className={linkBtn}>
           &larr; Sign-in methods
@@ -156,11 +157,6 @@ export default function SetPasswordPage() {
                   />
                 </div>
               </div>
-              {error && (
-                <div className="mt-4">
-                  <AuthError>{error}</AuthError>
-                </div>
-              )}
               <div className="mt-5">
                 <PrimaryButton type="submit" loading={saving} disabled={password.length < 8}>
                   Set password
