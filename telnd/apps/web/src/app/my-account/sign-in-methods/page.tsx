@@ -17,7 +17,11 @@
 // door (LAST_SIGNIN_METHOD), so the button can never strand anyone.
 // Connect navigates natively to the API's start URL on purpose — that
 // route 302s to the provider, which only a real browser navigation can
-// follow.
+// follow. The link carries ?mode=connect (§14.63): that is a CONNECT,
+// not a sign-in — the identity binds to this session whatever email the
+// provider reports, no session is ever opened or switched, and the flow
+// lands back HERE with ?connected=… on success or ?error=… on refusal,
+// each announced once and dropped from the URL.
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -51,6 +55,7 @@ export default function SignInMethodsPage() {
   const [armed, setArmed] = useState('');
   const [busy, setBusy] = useState('');
   const [removeError, setRemoveError] = useState('');
+  const [connectError, setConnectError] = useState('');
   const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -79,10 +84,22 @@ export default function SignInMethodsPage() {
   useEffect(() => {
     // ?added=phone|email arrives from a finished wizard — announce it
     // once, then drop the query so a refresh doesn't repeat the claim.
-    const added = new URLSearchParams(window.location.search).get('added');
+    // ?connected=… / ?error=… are the connect flow's two endings
+    // (§14.63) — same announce-once treatment.
+    const q = new URLSearchParams(window.location.search);
+    const added = q.get('added');
+    const connected = q.get('connected');
+    const failed = q.get('error');
     if (added === 'phone') setNotice('Phone number added — it now signs you in.');
     else if (added === 'email') setNotice('Email address added — it now signs you in.');
-    if (added) window.history.replaceState(null, '', '/my-account/sign-in-methods');
+    if (connected) {
+      const label = PROVIDER_LABELS[connected] ?? connected;
+      setNotice(`${label} is now connected — it can sign you in.`);
+    }
+    if (failed) setConnectError(failed);
+    if (added || connected || failed) {
+      window.history.replaceState(null, '', '/my-account/sign-in-methods');
+    }
     void load();
     return () => {
       if (armTimer.current) clearTimeout(armTimer.current);
@@ -220,6 +237,11 @@ export default function SignInMethodsPage() {
                   <AuthError>{removeError}</AuthError>
                 </div>
               )}
+              {connectError && (
+                <div className="mt-3">
+                  <AuthError>{connectError}</AuthError>
+                </div>
+              )}
               <div className="mt-4 divide-y divide-gray-100 dark:divide-white/10">
                 {identities.map((identity) => {
                   const label = PROVIDER_LABELS[identity.provider] ?? identity.provider;
@@ -255,7 +277,7 @@ export default function SignInMethodsPage() {
                     detail="Not connected"
                     aside={
                       <a
-                        href={`/api/auth/oauth/${provider}/start`}
+                        href={`/api/auth/oauth/${provider}/start?mode=connect`}
                         className={quietBtn}
                         title={`Connect ${PROVIDER_LABELS[provider] ?? provider}`}
                       >

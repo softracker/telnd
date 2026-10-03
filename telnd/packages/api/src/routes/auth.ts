@@ -1820,7 +1820,7 @@ function providerLabel(provider: string): string {
  */
 async function takeOAuthState(
   c: any,
-): Promise<{ state: string; provider: string; verifier: string } | null> {
+): Promise<{ state: string; provider: string; verifier: string; intent: 'signin' | 'connect' } | null> {
   const header = c.req.header('Cookie') || '';
   const entry = header
     .split(';')
@@ -1844,7 +1844,14 @@ async function takeOAuthState(
     ) {
       return null;
     }
-    return { state: payload.state, provider: payload.provider, verifier: payload.verifier };
+    return {
+      state: payload.state,
+      provider: payload.provider,
+      verifier: payload.verifier,
+      // Absent on every sign-in start and every cookie minted before
+      // connect mode existed — both mean sign-in (§14.63).
+      intent: payload.intent === 'connect' ? 'connect' : 'signin',
+    };
   } catch {
     return null;
   }
@@ -2064,6 +2071,20 @@ authRoutes.get('/oauth/:provider/start', rateLimit('auth.oauthStart'), async (c)
       error: { code: 'OAUTH_PROVIDER_UNSUPPORTED', message: 'That sign-in provider is not supported.' },
     }, 404);
   }
+  // Two intents share this door (§14.63 connect mode): the sign-in
+  // screen starts a plain sign-in; My Account → Sign-in methods passes
+  // ?mode=connect, which binds the identity to the CURRENT session and
+  // never opens a new one. Connect is a signed-in act — a bounced
+  // session goes back to the sign-in door rather than falling into
+  // sign-in semantics mid-flow. The intent travels two ways: a `.c`
+  // suffix on the state (the callback page reads it from its URL —
+  // redirect_uri is an exact-match registration, so the query string
+  // can't carry anything), and the `intent` field in the cookie below
+  // (the server's authoritative copy).
+  const intent = c.req.query('mode') === 'connect' ? 'connect' : 'signin';
+  if (intent === 'connect' && !(c.get('userId') as string | undefined)) {
+    return c.redirect(portalUrl('/auth'), 302);
+  }
   const cfg = await oauthClientConfig(provider);
   if (!cfg.enabled) {
     return c.json({
@@ -2079,11 +2100,11 @@ authRoutes.get('/oauth/:provider/start', rateLimit('auth.oauthStart'), async (c)
   }
 
   const redirectUri = await oauthRedirectUri(provider);
-  const state = randomOAuthToken();
+  const state = randomOAuthToken() + (intent === 'connect' ? '.c' : '');
   const nonce = randomOAuthToken();
   const { verifier, challenge } = pkcePair();
   const flowCookie = await sign(
-    { purpose: 'oauth', provider, state, nonce, verifier, jti: randomUUID(), exp: Math.floor(Date.now() / 1000) + 10 * 60 },
+    { purpose: 'oauth', provider, state, nonce, verifier, intent, jti: randomUUID(), exp: Math.floor(Date.now() / 1000) + 10 * 60 },
     getJwtSecret(),
   );
   setAuthCookie(c, 'telnd_oauth', flowCookie, 10 * 60);
@@ -2113,6 +2134,22 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
       success: false,
       error: { code: 'OAUTH_STATE_INVALID', message: 'This sign-in attempt could not be verified. Please start again.' },
     }, 400);
+  }
+
+  const sessionUserId = (c.get('userId') as string | undefined) ?? null;
+
+  // Connect mode (§14.63): bind to THIS session or refuse. A session
+  // lost mid-flow is an explicit refusal — never a silent fall back to
+  // sign-in semantics (that fallback is the bug this mode exists to
+  // fix), and the provider round-trip isn't wasted on a doomed flow.
+  if (pending.intent === 'connect' && !sessionUserId) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'OAUTH_SESSION_REQUIRED',
+        message: 'Your session expired before the connection finished. Sign in again and start the connection over.',
+      },
+    }, 401);
   }
 
   // Both halves can have moved since start: the switch, the credentials.
@@ -2152,8 +2189,63 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
     }, 400);
   }
 
+  // §14.63 — connect intent resolves HERE, never through the sign-in
+  // ladder: the provider's email decides nothing (a LinkedIn under a
+  // different address is the NORMAL case), (provider, sub) binds to the
+  // session's account, and no session is opened or changed. The rules
+  // below — verified-email routing, proof screen, JIT creation — belong
+  // to the sign-in screen and stay untouched.
+  if (pending.intent === 'connect') {
+    const sessionUser = sessionUserId
+      ? await prisma.user.findUnique({ where: { id: sessionUserId }, select: { id: true, role: true } })
+      : null;
+    if (!sessionUser) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'OAUTH_SESSION_REQUIRED',
+          message: 'Your session expired before the connection finished. Sign in again and start the connection over.',
+        },
+      }, 401);
+    }
+    // Same door as every portal attach (§ doorError): an ADMIN session
+    // never gains a portal identity.
+    const door = await doorError(sessionUser, 'portal');
+    if (door) {
+      return c.json({ success: false, error: door }, 403);
+    }
+    const linkedElsewhere = () =>
+      c.json({
+        success: false,
+        error: {
+          code: 'OAUTH_ALREADY_LINKED',
+          message: `That ${providerLabel(provider)} account is already connected to a different account.`,
+        },
+      }, 409);
+    const existing = await prisma.userIdentity.findFirst({ where: { provider, sub: profile.sub } });
+    if (existing) {
+      if (existing.userId === sessionUser.id) {
+        return c.json({ success: true, data: { mode: 'connect', alreadyConnected: true, provider } });
+      }
+      return linkedElsewhere();
+    }
+    try {
+      const created = await prisma.userIdentity.create({
+        data: { userId: sessionUser.id, provider, sub: profile.sub, email: profile.email, lastLoginAt: new Date() },
+      });
+      await writeSocialAudit(c, 'social.link', sessionUser.id, created.id, provider, { via: 'connect' });
+      return c.json({ success: true, data: { mode: 'connect', connected: true, provider } });
+    } catch {
+      // Twin callback bound the sub first — same answer either way.
+      const again = await prisma.userIdentity.findFirst({ where: { provider, sub: profile.sub } });
+      if (again?.userId === sessionUser.id) {
+        return c.json({ success: true, data: { mode: 'connect', alreadyConnected: true, provider } });
+      }
+      return linkedElsewhere();
+    }
+  }
+
   const ip = getIp(c);
-  const sessionUserId = (c.get('userId') as string | undefined) ?? null;
   let resolution: SocialResolution;
   try {
     resolution = await resolveSocialAccount(provider, profile, sessionUserId);

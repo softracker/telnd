@@ -11,6 +11,15 @@
 //   requires2FA     → '/auth/2fa'         a local second factor is pending
 //   requiresLink    → '/auth/link?...'    an account holds this verified
 //                                         email — prove it to connect
+//   connect ok      → '/my-account/sign-in-methods?connected=…  (§14.63)
+//   connect failed  → '/my-account/sign-in-methods?error=…      (§14.63)
+//
+// Connect mode (§14.63) never touches this screen's own states: the
+// panel's flow both STARTS and ENDS on the panel — success, refusal,
+// cancellation and expiry all land there as a message, so a connect can
+// never end on a sign-in screen (or sign anyone into anything). The
+// intent is read from the state's `.c` suffix, because the redirect_uri
+// is an exact-match registration and can't carry a query of its own.
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -34,6 +43,7 @@ export default function AuthOAuthCallbackPage() {
   const params = useParams<{ provider?: string }>();
   const provider = typeof params?.provider === 'string' ? params.provider : '';
   const [failed, setFailed] = useState('');
+  const [connecting, setConnecting] = useState(false);
   const started = useRef(false);
 
   useEffect(() => {
@@ -51,18 +61,35 @@ export default function AuthOAuthCallbackPage() {
     const providerError = query.get('error');
     const code = query.get('code');
     const state = query.get('state');
+    const connect = (state ?? '').endsWith('.c');
+    setConnecting(connect);
+    const backToPanel = (message: string) =>
+      router.replace(`/my-account/sign-in-methods?error=${encodeURIComponent(message)}`);
 
     if (providerError) {
       // The provider's own answer (cancelled consent, denied scope) —
       // nothing was exchanged, nothing was created.
+      const cancelled = providerError === 'access_denied';
+      if (connect) {
+        backToPanel(
+          cancelled
+            ? `You cancelled the ${label} connection. Nothing was changed.`
+            : `The ${label} connection was refused (${providerError}). Please try again.`,
+        );
+        return;
+      }
       fail(
-        providerError === 'access_denied'
+        cancelled
           ? `You cancelled the ${label} sign-in. Nothing was changed.`
           : `The ${label} sign-in was refused (${providerError}). Please try again.`,
       );
       return;
     }
     if (!code || !state) {
+      if (connect) {
+        backToPanel('The connection response is incomplete. Please start again.');
+        return;
+      }
       fail('The sign-in response is incomplete. Please start again.');
       return;
     }
@@ -74,10 +101,15 @@ export default function AuthOAuthCallbackPage() {
           requiresLink?: boolean;
           linkToken?: string;
           email?: string;
+          mode?: string;
         };
       }>(`/api/auth/oauth/${provider}/verify`, { code, state })
       .then((res) => {
         const data = res?.data;
+        if (data?.mode === 'connect') {
+          router.replace(`/my-account/sign-in-methods?connected=${provider}`);
+          return;
+        }
         if (data?.requires2FA) {
           router.replace('/auth/2fa');
           return;
@@ -91,6 +123,10 @@ export default function AuthOAuthCallbackPage() {
         router.replace(landingPath());
       })
       .catch((err) => {
+        if (connect) {
+          backToPanel(authErrorMessage(err, `The ${label} connection could not be completed. Please try again.`));
+          return;
+        }
         const code_ = authErrorCode(err);
         if (code_ === 'OAUTH_STATE_INVALID' || code_ === 'OAUTH_LINK_INVALID') {
           fail('This sign-in attempt could not be verified. Please start again.');
@@ -137,7 +173,7 @@ export default function AuthOAuthCallbackPage() {
           <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center gap-4 py-10 text-[#034548] dark:text-[#30A9A2]">
             <Spinner className="h-8 w-8" />
             <p className="text-[14px] text-[#64748B] dark:text-white/50">
-              Completing your sign-in…
+              {connecting ? 'Connecting your account…' : 'Completing your sign-in…'}
             </p>
           </div>
         )}
