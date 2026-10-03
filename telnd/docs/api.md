@@ -77,10 +77,15 @@ Authorization: Bearer <token>
 - `GET /api/admin/dashboard` - Get admin dashboard stats
 
 ### User Management
-- `GET /api/admin/users` - List users (with search, role filter)
-- `GET /api/admin/users/:id` - Get user details
-- `PATCH /api/admin/users/:id/suspend` - Suspend user
-- `PATCH /api/admin/users/:id/activate` - Activate user
+- `GET /api/admin/users` - List portal users, always paged (DataTables envelope `{items, page, pageSize, totalPages, filteredTotal, total}`; `search` over name/email/phone plus the words `active`/`suspended`/role names, `role` filter on the UserRole enum — unknown value is 400; role ADMIN is never listed)
+- `GET /api/admin/users/:id` - Get user details (with capabilities, the full live-session list and the trusted-device list — newest first; credential fields and session/trust secrets never included)
+- `PATCH /api/admin/users/:id/suspend` - Suspend user (revokes sessions, refresh lineages and trusted-device grants; `users.edit` or `admins.edit`)
+- `PATCH /api/admin/users/:id/activate` - Activate user (`users.edit` or `admins.edit`)
+- `POST /api/admin/users/:id/revoke-access` - Sign the user out everywhere: wipes sessions, refresh lineages and trusted-device grants while the account stays active (`users.edit` or `admins.edit`; returns the revoked counts)
+- `PATCH /api/admin/users/:id/two-factor` - Require or release two-factor for one portal user (super admin; releasing lifts the demand but keeps the user's own enrollment; requiring revokes live sessions)
+- `POST /api/admin/users/:id/two-factor/disable` - Turn two-factor off for one portal user (super admin + PIN; wipes secret, method, recovery codes and trusted-device grants, leaves the per-user requirement untouched, emails the holder when an enrollment went away)
+- `POST /api/admin/users/:id/reset-password` - Email this user a single-use password-reset link (super admin; 60-minute token, a re-send invalidates the previous link, a failed send discards the token)
+- `DELETE /api/admin/users/:id` - Delete a portal user (`users.delete`; ADMIN accounts answer 404 — two-door; linked records answer 409 `IN_USE`)
 
 ### Feature Flags
 - `GET /api/admin/features` - List feature flags

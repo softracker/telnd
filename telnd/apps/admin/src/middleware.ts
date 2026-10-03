@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SETTINGS_SECTIONS, REPORTS_SECTIONS, sectionPermitted } from './lib/permissions';
+import { SETTINGS_SECTIONS, REPORTS_SECTIONS, USERS_SECTIONS, sectionPermitted } from './lib/permissions';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -18,10 +18,11 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname.replace(/\/+$/, '') || '/';
   const section =
     SETTINGS_SECTIONS.find((s) => s.href === path) ??
-    REPORTS_SECTIONS.find((s) => s.href === path);
+    REPORTS_SECTIONS.find((s) => s.href === path) ??
+    USERS_SECTIONS.find((s) => s.href === path);
   // Unlisted paths (/settings itself, /settings/preferences, /settings/about,
-  // the /settings/denied rewrite target, /reports, everything else) pass
-  // straight through.
+  // the /settings/denied rewrite target, /reports, /users' siblings,
+  // everything else) pass straight through.
   if (!section || !section.permission) return NextResponse.next();
 
   let permissions: unknown = null;

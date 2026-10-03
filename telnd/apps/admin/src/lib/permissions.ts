@@ -38,7 +38,7 @@ export const ALL_ACTIONS: PermissionAction[] = ['view', 'create', 'edit', 'delet
 
 export const PERMISSION_RESOURCES: PermissionResource[] = [
   { key: 'dashboard', labelKey: 'permRes.dashboard', actions: ['view'] },
-  { key: 'users', labelKey: 'permRes.users', actions: ['view', 'edit'] },
+  { key: 'users', labelKey: 'permRes.users', actions: ['view', 'edit', 'delete'] },
   { key: 'admins', labelKey: 'permRes.admins', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'roles', labelKey: 'permRes.roles', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'content', labelKey: 'permRes.content', actions: ['view', 'create', 'edit', 'delete'] },
@@ -126,6 +126,17 @@ export const REPORTS_SECTIONS: SettingsSection[] = [
 /** href → grant for quick lookups (reports nav, middleware). */
 export const REPORTS_SECTION_BY_HREF: Record<string, string | string[] | null> =
   Object.fromEntries(REPORTS_SECTIONS.map((s) => [s.href, s.permission]));
+
+/**
+ * Users section (§14.62) — the same contract again for the portal-user
+ * management page: one entry today, gated on users.view, and middleware
+ * answers a typed URL the grant doesn't cover with the same plain 404.
+ */
+export const USERS_SECTIONS: SettingsSection[] = [{ href: '/users', permission: 'users.view' }];
+
+/** href → grant for quick lookups (middleware). */
+export const USERS_SECTION_BY_HREF: Record<string, string | string[] | null> =
+  Object.fromEntries(USERS_SECTIONS.map((s) => [s.href, s.permission]));
 
 /** Does a section's grant (any-of list) pass the given permission check? */
 export function sectionPermitted(

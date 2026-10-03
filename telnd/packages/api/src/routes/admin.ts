@@ -5,9 +5,10 @@ import { authMiddleware, roleGuard, requireAdmin, requirePermission, requireAnyP
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import { featureFlagSchema, maintenanceModeSchema, reportSchema, adminRoleSchema, suspendUserSchema, createAdminSchema, updateAdminSchema } from '@telnd/validation';
-import { sendAdminInviteEmail, sendTwoFactorNoticeEmail } from '../lib/email';
-import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
+import { sendAdminInviteEmail, sendPasswordResetEmail, sendTwoFactorNoticeEmail } from '../lib/email';
+import { issuePasswordToken, discardPasswordToken, adminUrl, portalUrl } from '../lib/passwordTokens';
 import { deleteRecoveryCodes } from '../lib/recoveryCodes';
+import { clearTrustedDevices } from '../lib/trustedDevices';
 import { clearOtp } from '../lib/twoFactor';
 import { clearPinAttempts, requirePinApproval } from '../lib/securityPin';
 import { notifyTwoFactorRequired, notifyTwoFactorRequiredForAll, notifyPinRequired, notifyPinRequiredForAll, actorNameOf } from '../lib/requirementNotices';
@@ -199,41 +200,92 @@ admin.get('/send-stats', requireAdmin, requirePermission('dashboard.view'), asyn
 });
 
 // ============================================
-// Users Management
+// Users Management (portal accounts — the panel's own accounts are the
+// separate /admins door below; nothing here ever touches role ADMIN)
 // ============================================
-admin.get('/users', requireAdmin, requirePermission('users.view'), async (c) => {
-  const page = clampPage(c.req.query('page'));
-  const limit = clampLimit(c.req.query('limit'));
-  const search = c.req.query('search');
-  const role = c.req.query('role');
 
-  const where: any = {};
+// The portal side of the UserRole enum: every value except ADMIN. Used by
+// both the always-on two-door filter and the list's role dropdown.
+const PORTAL_USER_ROLES = ['CANDIDATE', 'EMPLOYER', 'CREATOR', 'FREELANCER', 'AGENCY'] as const;
+
+admin.get('/users', requireAdmin, requirePermission('users.view'), async (c) => {
+  const search = String(c.req.query('search') ?? '').trim().toLowerCase();
+  const roleFilter = String(c.req.query('role') ?? '').trim().toUpperCase();
+  const pageSize = Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '10', 10) || 10));
+  const page = clampPage(c.req.query('page'));
+
+  // Two-door rule: the Admins list lives under /admins — role ADMIN is
+  // never part of this list, whatever the filters say.
+  const base: any = { role: { not: 'ADMIN' } };
+  if (roleFilter) {
+    // The old handler fed `role` straight into a Prisma capability filter
+    // (wrong enum, crash on a bad value) — the filter is on UserRole now,
+    // and an unknown value is an honest 400 instead of a 500.
+    if (!(PORTAL_USER_ROLES as readonly string[]).includes(roleFilter)) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Unknown role filter.' } }, 400);
+    }
+    base.role = roleFilter;
+  }
+
+  const where: any = { ...base };
   if (search) {
-    where.OR = [
-      { email: { contains: search, mode: 'insensitive' } },
+    const or: any[] = [
       { firstName: { contains: search, mode: 'insensitive' } },
       { lastName: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+      { phone: { contains: search, mode: 'insensitive' } },
     ];
-  }
-  if (role) {
-    where.capabilities = { some: { type: role } };
+    // Same searchable words the Admins list offers: status and role name.
+    if (search === 'active') or.push({ isActive: true });
+    if (search === 'suspended') or.push({ isActive: false });
+    const asRole = search.toUpperCase();
+    if ((PORTAL_USER_ROLES as readonly string[]).includes(asRole)) or.push({ role: asRole as never });
+    where.OR = or;
   }
 
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: { capabilities: true },
-    }),
+  const [filteredTotal, total] = await Promise.all([
     prisma.user.count({ where }),
+    prisma.user.count({ where: base }),
   ]);
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
+  // Clamp so an out-of-range page (e.g. after a delete) returns the last page.
+  const safePage = Math.min(page, totalPages);
 
-  // Credential material never leaves the API — the password hash never did
-  // (it was leaked by accident), and the TOTP secret must not either.
-  const safeUsers = users.map(({ passwordHash, twoFactorSecret, ...u }) => u);
-  return c.json({ users: safeUsers, total, page, limit, totalPages: Math.ceil(total / limit) });
+  const rows = await prisma.user.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    skip: (safePage - 1) * pageSize,
+    take: pageSize,
+    // Selected, never mapped-and-stripped: credential material
+    // (passwordHash, twoFactorSecret) is never fetched in the first place.
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      avatar: true,
+      role: true,
+      isActive: true,
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      twoFactorEnabled: true,
+      twoFactorMethod: true,
+      twoFactorEnforced: true,
+      createdAt: true,
+      lastLoginAt: true,
+    },
+  });
+
+  const items = rows.map(({ twoFactorEnforced, ...u }) => ({
+    ...u,
+    // "Required" means a super admin demands setup at next sign-in — the
+    // same row vocabulary the Admins list uses.
+    twoFactorRequired: twoFactorEnforced,
+  }));
+
+  // DataTables-style envelope, byte-for-byte the shape GET /admins answers.
+  return c.json({ items, page: safePage, pageSize, totalPages, filteredTotal, total });
 });
 
 admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c) => {
@@ -243,8 +295,36 @@ admin.get('/users/:id', requireAdmin, requirePermission('users.view'), async (c)
     include: { capabilities: true },
   });
   if (!user) return c.json({ error: 'User not found' }, 404);
+
+  // The modal's "logged in devices" + "trusted devices" sections (§14.62):
+  // every live session and trust grant for this account, newest first.
+  // Selected by hand — Session.token and TrustedDevice.tokenHash are
+  // secrets and never leave the server; the row spread below drops
+  // passwordHash + twoFactorSecret the same way (#3).
+  const [sessions, trustedDevices] = await Promise.all([
+    prisma.session.findMany({
+      where: { userId: id },
+      select: {
+        id: true,
+        userAgent: true,
+        ipAddress: true,
+        location: true,
+        countryCode: true,
+        lockedAt: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.trustedDevice.findMany({
+      where: { userId: id },
+      select: { id: true, label: true, userAgent: true, createdAt: true, lastUsedAt: true },
+      orderBy: { lastUsedAt: 'desc' },
+    }),
+  ]);
+
   const { passwordHash, twoFactorSecret, ...safeUser } = user;
-  return c.json(safeUser);
+  return c.json({ ...safeUser, sessions, trustedDevices });
 });
 
 admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), validate(suspendUserSchema), rateLimit('admin.write'), async (c) => {
@@ -276,9 +356,13 @@ admin.patch('/users/:id/suspend', requireAdmin, requireAnyPermission('users.edit
     data: { isActive: false },
   });
 
-  // Revoke all active sessions for the suspended user
+  // Revoke all active sessions for the suspended user — and every trusted-
+  // device grant with them: a suspended account that is later reactivated
+  // must re-prove its second factor instead of riding in on a stale
+  // telnd_trusted cookie (§14.62).
   await prisma.session.deleteMany({ where: { userId: id } });
   await prisma.refreshToken.deleteMany({ where: { userId: id } });
+  await prisma.trustedDevice.deleteMany({ where: { userId: id } });
 
   await logAction(adminUser.userId, 'SUSPEND_USER', 'user', id, { reason, ...targetIdentity(user) }, c);
   // Never echo the full row: it carries passwordHash + twoFactorSecret (#3).
@@ -316,6 +400,290 @@ admin.patch('/users/:id/activate', requireAdmin, requireAnyPermission('users.edi
   // Never echo the full row: it carries passwordHash + twoFactorSecret (#3).
   const { passwordHash, twoFactorSecret, ...safeUser } = user;
   return c.json(safeUser);
+});
+
+// Sign this user out everywhere — the security reset for "their device may
+// be compromised": every live session, its refresh lineage and every
+// trusted-device grant go at once, while the account itself stays fully
+// active. Deliberately NOT suspend→activate: suspend is a moderation state
+// (the account stops working, two steps, two audit rows) and until this
+// section it left trusted-device grants behind, so a reactivated account
+// could ride back in without its second factor. One action, one row — the
+// next sign-in needs the password and the factor again, and no stale
+// telnd_trusted cookie can skip it.
+admin.post('/users/:id/revoke-access', requireAdmin, requireAnyPermission('users.edit', 'admins.edit'), rateLimit('admin.write'), async (c) => {
+  // Kicking a signed-in user out of their account is as sensitive as
+  // suspending it — same PIN approval (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const id = c.req.param('id');
+  const adminUser = c.get('admin');
+
+  const user = await prisma.user.findUnique({ where: { id } });
+  // Two-door like delete: panel accounts live under /admins and answer
+  // 404 here, exactly like an unknown id.
+  if (!user || user.role === 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  const sessions = await prisma.session.deleteMany({ where: { userId: id } });
+  const refreshes = await prisma.refreshToken.deleteMany({ where: { userId: id } });
+  const devices = await prisma.trustedDevice.deleteMany({ where: { userId: id } });
+
+  await logAction(
+    adminUser.userId,
+    'REVOKE_USER_ACCESS',
+    'user',
+    id,
+    {
+      ...targetIdentity(user),
+      revokedSessions: sessions.count,
+      revokedRefreshTokens: refreshes.count,
+      revokedTrustedDevices: devices.count,
+    },
+    c,
+  );
+
+  // isActive is deliberately untouched — this is a sign-out, not a
+  // suspension, so the toast can report exactly what went away.
+  return c.json({
+    success: true,
+    data: { sessions: sessions.count, refreshTokens: refreshes.count, trustedDevices: devices.count },
+  });
+});
+
+// Require (or release) two-factor authentication for one portal user —
+// the Users page's per-account version of the Settings → Security switch.
+// Requiring doesn't provision anything: an unenrolled account is forced
+// through setup at its next sign-in, an enrolled one starts challenging
+// and can no longer switch 2FA off by itself. Releasing only lifts the
+// demand — deliberately unlike the Admins list's release, which wipes the
+// enrollment: the portal user keeps the factor they set up (the users
+// policy lift doesn't wipe one either, §14.61). No notice email rides
+// along: the requirement-notice template speaks the admin panel's
+// language ("admin account", Settings → Security) and these recipients
+// are portal users — a correctly-worded variant is a follow-up.
+admin.patch('/users/:id/two-factor', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to manage two-factor authentication.' },
+    }, 403);
+  }
+
+  const id = c.req.param('id');
+  const { required } = c.get('validatedData') as { required: boolean };
+
+  // Sensitive only in the release direction — requiring adds protection
+  // and needs no approval (same gate as the Admins list's toggle).
+  if (!required) {
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id } });
+  // Two-door: an ADMIN account is managed under /admins and answers 404
+  // here, exactly like an unknown id.
+  if (!user || user.role === 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: { twoFactorEnforced: required },
+  });
+
+  // OFF→ON for an account with nothing enrolled revokes its live access
+  // now, so the change can't be ridden out unchallenged (mirrors the
+  // Admins list's require and the users policy flip, §14.61).
+  if (required && !user.twoFactorEnabled) {
+    await prisma.session.deleteMany({ where: { userId: id } });
+    await prisma.refreshToken.deleteMany({ where: { userId: id } });
+  }
+
+  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_USER' : 'RELEASE_TWO_FACTOR_USER', 'user', id, { ...targetIdentity(user) }, c);
+  return c.json({
+    success: true,
+    data: { twoFactorRequired: updated.twoFactorEnforced, twoFactorEnabled: updated.twoFactorEnabled },
+  });
+});
+
+// Turn two-factor OFF for one portal user — the enrollment wiped exactly
+// the way the holder would wipe it themselves from Security (§14.61),
+// minus their proof of the factor: super admin + PIN is the authority
+// here. Secret, method, recovery codes and trusted-device grants all die
+// with the factor (a trust exists only to skip a factor that is now off),
+// and a code stamped for the dying challenge must not linger. The per-user
+// requirement is deliberately left alone — require / stop-requiring stays
+// its own switch, so each button controls exactly one thing: with the
+// demand up, the next sign-in walks straight into a fresh setup instead
+// of a silent re-enable. The holder is emailed whenever an enrollment
+// actually went away, so a covert removal cannot go unnoticed.
+admin.post('/users/:id/two-factor/disable', requireAdmin, rateLimit('admin.sensitive'), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to manage two-factor authentication.' },
+    }, 403);
+  }
+
+  // Turning 2FA OFF removes protection — the same approval the Admins
+  // list's release direction carries (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const id = c.req.param('id');
+  const user = await prisma.user.findUnique({ where: { id } });
+  // Two-door: an ADMIN account is managed under /admins and answers 404
+  // here, exactly like an unknown id.
+  if (!user || user.role === 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  // Remember the enrollment before the wipe — the notice below only makes
+  // sense when something actually went away.
+  const wasEnrolled = user.twoFactorEnabled;
+  const targetEmail = user.email;
+  const updated = await prisma.user.update({
+    where: { id },
+    data: { twoFactorEnabled: false, twoFactorMethod: null, twoFactorSecret: null },
+  });
+  // A code stamped for the dying challenge must not linger either.
+  clearOtp(user.id);
+  // Recovery codes are part of the factor they belong to — they die with it.
+  await deleteRecoveryCodes(user.id);
+  // §14.61 — and so are this account's trusted devices: a trust exists only
+  // to skip a factor that is now off; with 2FA re-enrolled later, no stale
+  // cookie may ride in on the old grant.
+  const revokedDevices = await clearTrustedDevices(user.id);
+
+  if (wasEnrolled && targetEmail) {
+    // The owner did not turn this off themselves: tell them, so a covert
+    // removal cannot go unnoticed — same notice as the Admins list's
+    // release, fire-and-forget so a slow or dead mail server never stalls
+    // or fails the administrative action.
+    void actorNameOf(actor.userId)
+      .then((actorName) => sendTwoFactorNoticeEmail(targetEmail, actorName))
+      .catch(() => {
+        // Deliberately swallowed — see above.
+      });
+  }
+
+  await logAction(actor.userId, 'DISABLE_TWO_FACTOR', 'user', id, {
+    ...targetIdentity(user),
+    revokedTrustedDevices: revokedDevices,
+  }, c);
+
+  // The requirement flag is echoed untouched — proof that the wipe left
+  // the require/stop-requiring switch exactly as it found it.
+  return c.json({
+    success: true,
+    data: {
+      twoFactorEnabled: updated.twoFactorEnabled,
+      twoFactorMethod: updated.twoFactorMethod,
+      twoFactorRequired: updated.twoFactorEnforced,
+    },
+  });
+});
+
+// Email this portal user a single-use password-reset link — the Users
+// page's counterpart of the Admins list's regenerate action, issued from
+// the admin side rather than the public forgot-password door. Nothing
+// about the account changes until the link is used: only a SHA-256 of the
+// token is stored, one live link per account (a re-send invalidates the
+// previous mail), 60 minutes, and a failed send discards the token so a
+// link nobody received never stays live.
+admin.post('/users/:id/reset-password', requireAdmin, rateLimit('admin.sensitive'), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to send password reset links.' },
+    }, 403);
+  }
+  // Recovery mail hands over the account's front door — approve with PIN
+  // (after the super check, same order as the Admins list's route).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const id = c.req.param('id');
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user || user.role === 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+  if (!user.email) {
+    return c.json({
+      success: false,
+      error: { code: 'NO_EMAIL', message: 'This account has no email address, so a reset link cannot be delivered.' },
+    }, 400);
+  }
+
+  const raw = await issuePasswordToken(user.id, 'reset');
+  const emailed = await sendPasswordResetEmail({
+    to: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    resetUrl: portalUrl(`/auth/reset-password?token=${raw}`),
+    expiresLabel: '60 minutes',
+  });
+
+  if (!emailed) {
+    // Email-first: a link nobody received must not stay live.
+    await discardPasswordToken(user.id, 'reset');
+    return c.json({
+      success: false,
+      error: {
+        code: 'EMAIL_FAILED',
+        message: 'The reset link could not be emailed, so the current password was left unchanged. Check the SMTP settings and try again.',
+      },
+    }, 502);
+  }
+
+  await logAction(actor.userId, 'REGENERATE_USER_PASSWORD', 'user', id, { ...targetIdentity(user) }, c);
+  return c.json({ success: true, data: { email: user.email } });
+});
+
+// Delete a portal user. Two-door for real: an ADMIN account (panel
+// people) answers 404 here — removing one goes through DELETE /admins/:id
+// with its own admins.delete grant. Session material is revoked before
+// the row goes; every other per-user relation (password tokens, trusted
+// devices, recovery codes, capabilities, …) cascades, and a relation that
+// doesn't (an application, a report, …) fails honestly with 409 IN_USE —
+// suspend it instead.
+admin.delete('/users/:id', requireAdmin, requirePermission('users.delete'), rateLimit('admin.write'), async (c) => {
+  // Deleting revokes an account outright — a sensitive action, so it
+  // carries the same PIN approval as suspend (#9).
+  const pinGate = await requirePinApproval(c);
+  if (pinGate) return pinGate;
+
+  const id = c.req.param('id');
+  const actor = c.get('admin');
+
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user || user.role === 'ADMIN') {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+
+  await prisma.session.deleteMany({ where: { userId: id } });
+  await prisma.refreshToken.deleteMany({ where: { userId: id } });
+
+  try {
+    await prisma.user.delete({ where: { id } });
+  } catch (err: any) {
+    if (err?.code === 'P2003' || err?.code === 'P2002') {
+      return c.json({
+        success: false,
+        error: { code: 'IN_USE', message: 'This account has linked records and cannot be deleted. Suspend it instead.' },
+      }, 409);
+    }
+    throw err;
+  }
+
+  await logAction(actor.userId, 'DELETE_USER', 'user', id, { ...targetIdentity(user) }, c);
+  return c.json({ success: true });
 });
 
 // ============================================
