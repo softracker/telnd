@@ -4,7 +4,12 @@
 // auth_welcome_page.dart: floating mascot over a #E6F6F5 wash, then the
 // white "Sign up or Log in" sheet with Email, Phone Number, the social row
 // and the legal line. Which methods appear is exactly what Admin →
-// Settings → Login Providers has switched on.
+// Settings → Login Providers has switched on — and the social row sizes
+// itself to that count (3 thirds, 2 halves, 1 full width), with every
+// button swapping its icon for a spinner while its hop is in flight:
+// clicked once it behaves as disabled (repeat activations swallowed),
+// a back-button return clears the frozen arm (pageshow), and an arm
+// that outlives a hop that never left expires on its own.
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -16,6 +21,7 @@ import {
   rememberNext,
   type ProviderFlags,
 } from '@/lib/auth';
+import { Spinner } from '@/components/auth/AuthUI';
 import {
   CloseIcon,
   EnvelopeIcon,
@@ -44,6 +50,10 @@ export default function AuthWelcomePage() {
     primaryLogoLight?: string;
     primaryLogoDark?: string;
   }>({});
+  // The button whose hop is in flight ('email' | 'phone' | a provider
+  // key) — its icon becomes a spinner until the navigation unmounts the
+  // sheet. Modifier-clicks never set it (they open a tab and return).
+  const [launching, setLaunching] = useState<string | null>(null);
 
   useEffect(() => {
     // The page the visitor came from (the header's My Account button
@@ -78,6 +88,30 @@ export default function AuthWelcomePage() {
       alive = false;
     };
   }, []);
+
+  // The provider hop is a DOCUMENT navigation — browser Back can restore
+  // the sheet from the back-forward cache exactly as it froze, spinner
+  // (and the Email/Phone lock) still armed. pageshow fires on every
+  // (re)load, so clearing there covers the restore case; a fresh load is
+  // null already and a null→null set changes nothing.
+  useEffect(() => {
+    const restore = () => setLaunching(null);
+    window.addEventListener('pageshow', restore);
+    return () => window.removeEventListener('pageshow', restore);
+  }, []);
+
+  // Safety valve: a hop that never leaves (stopped load, dead server)
+  // must not disable the row forever — the arm expires on its own.
+  useEffect(() => {
+    if (!launching) return;
+    const timer = setTimeout(() => setLaunching(null), 15_000);
+    return () => clearTimeout(timer);
+  }, [launching]);
+
+  // Exactly the socials this deployment has switched on — the row sizes
+  // itself from this list (3 fill as always, 2 split the row in half, 1
+  // takes the whole width).
+  const enabledSocials = SOCIALS.filter((s) => providers[s.key]);
 
   const anyMethod =
     providers.email || providers.emailLink || providers.phone ||
@@ -184,10 +218,19 @@ export default function AuthWelcomePage() {
             {(providers.email || providers.emailLink) && (
               <button
                 type="button"
-                onClick={() => router.push('/auth/email')}
-                className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-[14px] bg-gradient-to-br from-[#034548] to-[#045E62] text-[15px] font-semibold text-white shadow-[0_4px_12px_rgba(3,69,72,0.3)] transition-opacity hover:opacity-95 dark:from-[#30A9A2] dark:to-[#045E62] dark:shadow-[0_4px_12px_rgba(48,169,162,0.3)]"
+                onClick={() => {
+                  if (launching) return;
+                  setLaunching('email');
+                  void router.push('/auth/email');
+                }}
+                disabled={launching !== null}
+                className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-[14px] bg-gradient-to-br from-[#034548] to-[#045E62] text-[15px] font-semibold text-white shadow-[0_4px_12px_rgba(3,69,72,0.3)] transition-opacity hover:opacity-95 dark:from-[#30A9A2] dark:to-[#045E62] dark:shadow-[0_4px_12px_rgba(48,169,162,0.3)] disabled:cursor-default disabled:opacity-70"
               >
-                <EnvelopeIcon className="h-5 w-5" />
+                {launching === 'email' ? (
+                  <Spinner className="h-5 w-5" />
+                ) : (
+                  <EnvelopeIcon className="h-5 w-5" />
+                )}
                 Email
               </button>
             )}
@@ -195,40 +238,81 @@ export default function AuthWelcomePage() {
             {providers.phone && (
               <button
                 type="button"
-                onClick={() => router.push('/auth/phone')}
-                className="mt-3 flex h-[52px] w-full items-center justify-center gap-2.5 rounded-[14px] border-[1.5px] border-[#034548] bg-white text-[15px] font-semibold text-[#034548] transition-colors hover:bg-[#F1F5F9] dark:border-white/10 dark:bg-white/5 dark:text-[#30A9A2] dark:hover:bg-white/10"
+                onClick={() => {
+                  if (launching) return;
+                  setLaunching('phone');
+                  void router.push('/auth/phone');
+                }}
+                disabled={launching !== null}
+                className="mt-3 flex h-[52px] w-full items-center justify-center gap-2.5 rounded-[14px] border-[1.5px] border-[#034548] bg-white text-[15px] font-semibold text-[#034548] transition-colors hover:bg-[#F1F5F9] disabled:cursor-default disabled:opacity-70 dark:border-white/10 dark:bg-white/5 dark:text-[#30A9A2] dark:hover:bg-white/10"
               >
-                <PhoneIcon className="h-5 w-5" />
+                {launching === 'phone' ? (
+                  <Spinner className="h-5 w-5" />
+                ) : (
+                  <PhoneIcon className="h-5 w-5" />
+                )}
                 Phone Number
               </button>
             )}
 
-            {SOCIALS.some((s) => providers[s.key]) && (
+            {enabledSocials.length > 0 && (
               <>
                 <p className="mt-5 text-center text-[12px] text-[#94A3B8] dark:text-white/40">
                   or continue with
                 </p>
-                <div className="mt-4 grid grid-cols-3 gap-[10px]">
-                  {SOCIALS.filter((s) => providers[s.key]).map(
-                    ({ key, label, color, Icon }) => (
-                      <a
-                        key={key}
-                        // Native navigation on purpose: the API's start
-                        // endpoint sets the flow cookie and 302s straight
-                        // to the provider — no fetch round-trip could
-                        // carry that Set-Cookie through a redirect.
-                        href={`/api/auth/oauth/${key}/start`}
-                        aria-label={`Continue with ${label}`}
-                        title={`Continue with ${label}`}
-                        className="flex h-12 items-center justify-center gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#1F2937] transition-colors hover:bg-[#F9FAFB] dark:border-white/[0.08] dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
-                      >
+                {/* One column per ENABLED provider, so the row always
+                    fills its width: three thirds (the current look),
+                    two halves, one full. Tailwind can't JIT a dynamic
+                    class name — the template rides inline instead. */}
+                <div
+                  className="mt-4 grid gap-[10px]"
+                  style={{
+                    gridTemplateColumns: `repeat(${enabledSocials.length}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {enabledSocials.map(({ key, label, color, Icon }) => (
+                    <a
+                      key={key}
+                      // Native navigation on purpose: the API's start
+                      // endpoint sets the flow cookie and 302s straight
+                      // to the provider — no fetch round-trip could
+                      // carry that Set-Cookie through a redirect.
+                      href={`/api/auth/oauth/${key}/start`}
+                      aria-label={`Continue with ${label}`}
+                      title={`Continue with ${label}`}
+                      aria-disabled={launching === key}
+                      className={`flex h-12 items-center justify-center gap-1.5 rounded-[12px] border border-[#E2E8F0] bg-white text-[13px] font-medium text-[#1F2937] transition-colors hover:bg-[#F9FAFB] dark:border-white/[0.08] dark:bg-white/5 dark:text-white dark:hover:bg-white/10 ${
+                        launching === key ? 'cursor-default opacity-70' : ''
+                      }`}
+                      onClick={(e) => {
+                        // Modifier/middle clicks open a TAB and come
+                        // straight back here — arming a spinner for a
+                        // navigation that never leaves would strand it.
+                        // Same-tab clicks arm it for the whole native
+                        // hop out (API 302 → provider); any bounce back
+                        // is a document load that resets the state.
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                        if (launching === key) {
+                          // Already hopping — as disabled as an <a>
+                          // gets: swallow the repeat activation
+                          // (keyboard Enter included) instead of
+                          // restarting the ride.
+                          e.preventDefault();
+                          return;
+                        }
+                        setLaunching(key);
+                      }}
+                    >
+                      {launching === key ? (
+                        <Spinner className="h-5 w-5" />
+                      ) : (
                         <span style={{ color }}>
                           <Icon className="h-5 w-5" />
                         </span>
-                        {label}
-                      </a>
-                    ),
-                  )}
+                      )}
+                      {label}
+                    </a>
+                  ))}
                 </div>
               </>
             )}
