@@ -24,6 +24,11 @@
 //   that deadlock is §14.53's rule), never overwriting an existing one,
 //   and always followed by the notice email that tells the owner a
 //   credential now exists.
+// - Profile photo (§14.66): POST replaces the member's avatar on the
+//   admin panel's exact rails (512² WebP → R2 avatars/, old object
+//   dropped once the new one has stored); DELETE clears it. Both are
+//   idempotent about the row, refuse ADMIN sessions through the same
+//   portal door, and never log — a photo is not a sign-in identifier.
 //
 // Codes are purpose-bound under their own keys (`acct-phone:` /
 // `acct-email:`) — a login or signup code never opens these doors, and
@@ -63,6 +68,15 @@ import {
   sendPasswordSetNoticeEmail,
   sendPhoneChangeNoticeEmail,
 } from '../lib/email';
+import {
+  convertToWebP,
+  deleteFromR2,
+  ensureR2,
+  generateUploadKey,
+  isImageMime,
+  uploadToR2,
+} from '../lib/r2';
+import { deleteAvatarObject } from '../lib/avatar';
 
 type AccountEnv = {
   Variables: {
@@ -660,5 +674,110 @@ accountRoutes.post(
     }
 
     return c.json({ success: true, data: { phone, isPhoneVerified: true } });
+  },
+);
+
+// ── POST /account/avatar ──────────────────────────────────────────────────
+// The member's own photo (§14.66), on exactly the admin panel's rails:
+// multipart upload → 512² WebP (quality 85, SVG stored raw) → R2 avatars/.
+// The door replaces THIS member's row directly and drops the object it
+// displaced — only after the new one has stored, so a failed upload or a
+// refused file leaves the current picture untouched. No audit row: portal
+// self-service doesn't log (§14.64's rule), and a photo is not a
+// sign-in door.
+accountRoutes.post(
+  '/avatar',
+  authMiddleware,
+  rateLimit('account.avatar'),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+
+    try {
+      await ensureR2();
+    } catch {
+      return c.json({
+        success: false,
+        error: { code: 'STORAGE_NOT_CONFIGURED', message: 'File storage is not configured on this site.' },
+      }, 400);
+    }
+
+    try {
+      // Not even multipart (a body-less POST makes formData() itself
+      // throw) and multipart-without-a-file are the same verdict: there
+      // is nothing here to store.
+      let formData: FormData;
+      try {
+        formData = await c.req.formData();
+      } catch {
+        return c.json({ success: false, error: { code: 'FILE_REQUIRED', message: 'No file provided' } }, 400);
+      }
+      const file = formData.get('file') as File | null;
+      if (!file) {
+        return c.json({ success: false, error: { code: 'FILE_REQUIRED', message: 'No file provided' } }, 400);
+      }
+      if (!isImageMime(file.type)) {
+        return c.json({
+          success: false,
+          error: { code: 'FILE_TYPE_INVALID', message: 'File must be an image (JPEG, PNG, GIF, WebP, SVG)' },
+        }, 400);
+      }
+      const maxSize = 10 * 1024 * 1024; // 10MB — same ceiling as panel uploads.
+      if (file.size > maxSize) {
+        return c.json({
+          success: false,
+          error: { code: 'FILE_TOO_LARGE', message: 'File size must be less than 10MB' },
+        }, 400);
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const svg = file.type === 'image/svg+xml';
+      const stored = svg ? buffer : await convertToWebP(buffer, { width: 512, height: 512, quality: 85 });
+      const key = generateUploadKey('avatars', file.name);
+      const url = await uploadToR2(key, stored, svg ? 'image/svg+xml' : 'image/webp');
+
+      const previous = await prisma.user.findUnique({ where: { id: userId }, select: { avatar: true } });
+      try {
+        await prisma.user.update({ where: { id: userId }, data: { avatar: url } });
+      } catch (err) {
+        // The row didn't take the new URL — give the fresh object back so
+        // storage and row can never disagree, then surface the failure.
+        await deleteFromR2(key).catch(() => {});
+        throw err;
+      }
+      if (previous?.avatar && previous.avatar !== url) await deleteAvatarObject(previous.avatar);
+
+      return c.json({ success: true, data: { avatar: url } });
+    } catch (err) {
+      console.error('[account] avatar upload failed:', err instanceof Error ? err.message : err);
+      return c.json({
+        success: false,
+        error: { code: 'UPLOAD_FAILED', message: 'The photo could not be uploaded. Please try again.' },
+      }, 500);
+    }
+  },
+);
+
+// ── DELETE /account/avatar ────────────────────────────────────────────────
+// Take the photo off (§14.66): the row clears first, the object follows
+// best-effort through the same helper the replace path uses. Idempotent —
+// an already-empty slot answers the same way, so a retried tap never 404s.
+accountRoutes.delete(
+  '/avatar',
+  authMiddleware,
+  rateLimit('account.avatar'),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { avatar: true } });
+    if (user?.avatar) {
+      await prisma.user.update({ where: { id: userId }, data: { avatar: null } });
+      await deleteAvatarObject(user.avatar);
+    }
+
+    return c.json({ success: true, data: { avatar: null } });
   },
 );

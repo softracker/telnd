@@ -155,6 +155,8 @@ export function landingPath(queryNext?: string | null): string {
 // know whether anyone is signed in is asking /api/auth/me. Deliberately
 // uncached: every mount asks, which keeps the auth guard, the header
 // button and the My Account shell honest right after a login or logout.
+// refreshSession() re-asks every mounted hook — used when something the
+// header shows has changed underneath it (the Profile page's photo, §14.66).
 export interface SessionUser {
   id: string;
   email?: string | null;
@@ -165,6 +167,13 @@ export interface SessionUser {
   role?: string;
 }
 
+const SESSION_REFRESH_EVENT = 'telnd:session-refresh';
+
+/** Make every mounted useSession() fetch the server again. */
+export function refreshSession(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SESSION_REFRESH_EVENT));
+}
+
 export function useSession(): { user: SessionUser | null; loading: boolean } {
   const [state, setState] = useState<{ user: SessionUser | null; loading: boolean }>({
     user: null,
@@ -172,7 +181,7 @@ export function useSession(): { user: SessionUser | null; loading: boolean } {
   });
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const load = async () => {
       try {
         const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
         if (!res.ok) {
@@ -186,9 +195,12 @@ export function useSession(): { user: SessionUser | null; loading: boolean } {
         // visitor to the sign-in flow rather than a dead My Account.
         if (alive) setState({ user: null, loading: false });
       }
-    })();
+    };
+    void load();
+    window.addEventListener(SESSION_REFRESH_EVENT, load);
     return () => {
       alive = false;
+      window.removeEventListener(SESSION_REFRESH_EVENT, load);
     };
   }, []);
   return state;

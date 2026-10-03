@@ -54,7 +54,10 @@ export const OAUTH_REGISTRY: Record<OAuthProvider, ProviderDef> = {
   facebook: {
     authorizeUrl: 'https://www.facebook.com/v20.0/dialog/oauth',
     tokenUrl: 'https://graph.facebook.com/v20.0/oauth/access_token',
-    userinfoUrl: 'https://graph.facebook.com/me?fields=id,name,email',
+    // `picture` rides along so a Facebook photo can seed an empty avatar
+    // slot (§14.66) — graph returns it as { data: { url } }, normalized
+    // like every other claim in normalizeProfile.
+    userinfoUrl: 'https://graph.facebook.com/me?fields=id,name,email,picture.type(large)',
     scopes: ['public_profile', 'email'],
   },
   linkedin: {
@@ -220,6 +223,8 @@ export interface OAuthProfile {
   name: string | null;
   givenName: string | null;
   familyName: string | null;
+  /** Provider-hosted profile photo, https only (null when absent or http). */
+  picture: string | null;
 }
 
 /**
@@ -261,7 +266,19 @@ export function normalizeProfile(provider: OAuthProvider, raw: unknown): OAuthPr
         ? name.split(/\s+/).slice(1).join(' ') || null
         : null;
 
-  return { sub, email, emailVerified, name, givenName, familyName };
+  // The photo (§14.66): Google and LinkedIn hand it over as a `picture`
+  // string, Facebook nests it under picture.data.url. Only https survives
+  // here — the seed step re-checks the host against the provider's own
+  // CDN allowlist before anything downloads it.
+  let picture = typeof rec.picture === 'string' ? rec.picture.trim() : '';
+  if (!picture && rec.picture && typeof rec.picture === 'object') {
+    const nested = (rec.picture as { data?: unknown }).data;
+    const url = nested && typeof nested === 'object' ? (nested as { url?: unknown }).url : undefined;
+    if (typeof url === 'string') picture = url.trim();
+  }
+  if (!/^https:\/\//i.test(picture)) picture = '';
+
+  return { sub, email, emailVerified, name, givenName, familyName, picture: picture || null };
 }
 
 /**

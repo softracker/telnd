@@ -44,6 +44,7 @@ import {
   randomOAuthToken,
 } from '../lib/oauth';
 import type { OAuthProfile, OAuthProvider } from '../lib/oauth';
+import { seedAvatarFromSocial } from '../lib/avatar';
 
 type AuthEnv = {
   Variables: {
@@ -2022,6 +2023,9 @@ async function resolveSocialAccount(
           provider,
           sub: profile.sub,
           email: profile.email,
+          // The photo rides along so the attach below can seed an empty
+          // avatar slot with the same rules as every other connect (§14.66).
+          picture: profile.picture,
           exp: Math.floor(Date.now() / 1000) + 10 * 60,
         },
         getJwtSecret(),
@@ -2223,8 +2227,13 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
         },
       }, 409);
     const existing = await prisma.userIdentity.findFirst({ where: { provider, sub: profile.sub } });
+    // Every connect answer seeds an EMPTY avatar slot from this provider's
+    // photo (§14.66) — including the idempotent ones, so an account that
+    // connected before photos existed fills in on the next Connect click.
+    // A slot with a picture in it is never touched.
     if (existing) {
       if (existing.userId === sessionUser.id) {
+        await seedAvatarFromSocial(sessionUser.id, profile.picture, provider);
         return c.json({ success: true, data: { mode: 'connect', alreadyConnected: true, provider } });
       }
       return linkedElsewhere();
@@ -2234,11 +2243,13 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
         data: { userId: sessionUser.id, provider, sub: profile.sub, email: profile.email, lastLoginAt: new Date() },
       });
       await writeSocialAudit(c, 'social.link', sessionUser.id, created.id, provider, { via: 'connect' });
+      await seedAvatarFromSocial(sessionUser.id, profile.picture, provider);
       return c.json({ success: true, data: { mode: 'connect', connected: true, provider } });
     } catch {
       // Twin callback bound the sub first — same answer either way.
       const again = await prisma.userIdentity.findFirst({ where: { provider, sub: profile.sub } });
       if (again?.userId === sessionUser.id) {
+        await seedAvatarFromSocial(sessionUser.id, profile.picture, provider);
         return c.json({ success: true, data: { mode: 'connect', alreadyConnected: true, provider } });
       }
       return linkedElsewhere();
@@ -2280,6 +2291,9 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
     // awaited (it can never fail: writeSocialAudit swallows its own
     // errors) so the row exists before the caller hears back.
     await writeSocialAudit(c, 'social.link', resolution.user.id, resolution.identityId, provider, { via: 'session' });
+    // A connect is a connect whatever carried it — an empty slot takes
+    // this provider's photo, a filled one stays (§14.66).
+    await seedAvatarFromSocial(resolution.user.id, profile.picture, provider);
     return c.json({ success: true, data: { alreadySignedIn: true } });
   }
 
@@ -2296,6 +2310,9 @@ authRoutes.post('/oauth/:provider/verify', rateLimit('auth.oauthVerify'), valida
   // (the same rule as /signup/complete).
   await registerLoginDevice(resolution.user.id, c.req.header('user-agent') || null).catch(() => {});
   await writeSocialAudit(c, 'social.signin', resolution.user.id, resolution.identityId, provider, { created: true });
+  // First social signup (§14.66): the provider's photo lands on the brand
+  // new, necessarily empty slot — a webp on the admin rails, best-effort.
+  await seedAvatarFromSocial(resolution.user.id, profile.picture, provider);
   return finishSocialSignIn(c, resolution.user, ip);
 });
 
@@ -2314,6 +2331,7 @@ authRoutes.post('/oauth/link', rateLimit('auth.oauthLink'), validate(oauthLinkSc
   const provider = typeof payload?.provider === 'string' ? payload.provider : '';
   const sub = typeof payload?.sub === 'string' ? payload.sub : '';
   const email = typeof payload?.email === 'string' ? payload.email : '';
+  const picture = typeof payload?.picture === 'string' ? payload.picture : null;
   if (!payload || payload.purpose !== 'social-link' || !isOAuthProvider(provider) || !sub || !email) {
     return c.json({
       success: false,
@@ -2458,6 +2476,9 @@ authRoutes.post('/oauth/link', rateLimit('auth.oauthLink'), validate(oauthLinkSc
 
   if (attached) await writeSocialAudit(c, 'social.link', user.id, identityId, provider, { via: 'password' });
   await writeSocialAudit(c, 'social.signin', user.id, identityId, provider);
+  // Attaching counts as connecting (§14.66): an empty slot takes the
+  // provider's photo from the token, a filled one is left alone.
+  await seedAvatarFromSocial(user.id, picture, provider);
   return finishSocialSignIn(c, user, ip);
 });
 

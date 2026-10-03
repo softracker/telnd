@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
+import { prisma } from '@telnd/database';
 
 export interface R2Config {
   endpoint: string;
@@ -46,6 +47,45 @@ export function getR2Client(): S3Client | null {
 export function resetR2Client(): void {
   r2Client = null;
   r2Config = null;
+}
+
+/**
+ * Read the `r2` settings row into a usable config. Null when the row is
+ * missing or any field is absent — one shared copy of the check, used by
+ * the admin upload route and the portal's avatar flows alike.
+ */
+export async function loadR2Config(): Promise<R2Config | null> {
+  try {
+    const setting = await prisma.setting.findUnique({ where: { key: 'r2' } });
+    if (!setting) return null;
+    const val = setting.value as Record<string, unknown>;
+    if (!val.enabled || !val.endpoint || !val.accessKeyId || !val.secretAccessKey || !val.bucket || !val.publicUrl) {
+      return null;
+    }
+    return {
+      endpoint: val.endpoint as string,
+      accessKeyId: val.accessKeyId as string,
+      secretAccessKey: val.secretAccessKey as string,
+      bucket: val.bucket as string,
+      publicUrl: val.publicUrl as string,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The cached client, loading the settings row on first use. Throws
+ * "R2 not configured" when storage isn't usable — callers turn that into
+ * their own answer.
+ */
+export async function ensureR2(): Promise<R2Config> {
+  const existing = getR2Config();
+  if (existing) return existing;
+  const config = await loadR2Config();
+  if (!config) throw new Error('R2 not configured');
+  initR2Client(config);
+  return config;
 }
 
 export async function convertToWebP(

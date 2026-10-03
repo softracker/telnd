@@ -29,7 +29,13 @@ export async function apiRequest<T>(
   const { token, ...fetchOptions } = options;
 
   const headers = new Headers(fetchOptions.headers);
-  headers.set('Content-Type', 'application/json');
+
+  // FormData rides as multipart with the browser's own boundary — pinning
+  // application/json here would corrupt the body (same rule as the admin
+  // panel's api).
+  if (!(fetchOptions.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
@@ -74,6 +80,13 @@ export const api = {
     apiRequest<T>(endpoint, {
       method: 'PATCH',
       body: JSON.stringify(body),
+      token,
+    }),
+
+  upload: <T>(endpoint: string, formData: FormData, token?: string) =>
+    apiRequest<T>(endpoint, {
+      method: 'POST',
+      body: formData,
       token,
     }),
 

@@ -2,16 +2,14 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { roleGuard, requireAdmin } from '../middleware/auth.js';
 import {
-  initR2Client,
   convertToWebP,
   uploadToR2,
   deleteFromR2,
   generateUploadKey,
   isImageMime,
-  getR2Config,
+  ensureR2,
   type R2Config,
 } from '../lib/r2.js';
-import { prisma } from '@telnd/database';
 
 const upload = new Hono();
 
@@ -25,35 +23,6 @@ const deleteImageSchema = z.object({
   key: z.string().max(1024).optional(),
   url: z.string().max(4096).optional(),
 });
-
-async function loadR2Config(): Promise<R2Config | null> {
-  try {
-    const setting = await prisma.setting.findUnique({ where: { key: 'r2' } });
-    if (!setting) return null;
-    const val = setting.value as Record<string, unknown>;
-    if (!val.enabled || !val.endpoint || !val.accessKeyId || !val.secretAccessKey || !val.bucket || !val.publicUrl) {
-      return null;
-    }
-    return {
-      endpoint: val.endpoint as string,
-      accessKeyId: val.accessKeyId as string,
-      secretAccessKey: val.secretAccessKey as string,
-      bucket: val.bucket as string,
-      publicUrl: val.publicUrl as string,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function ensureR2() {
-  const existing = getR2Config();
-  if (existing) return existing;
-  const config = await loadR2Config();
-  if (!config) throw new Error('R2 not configured');
-  initR2Client(config);
-  return config;
-}
 
 // (#15) roleGuard alone only checks User.role — requireAdmin additionally
 // demands an ACTIVE AdminUser row, so R2 uploads aren't reachable by a bare

@@ -73,6 +73,7 @@ export const RATE_LIMITS = {
   'account.emailStart': { group: 'account', label: 'Change email: send code', windowSec: 60, max: 5 },
   'account.emailVerify': { group: 'account', label: 'Change email: verify code', windowSec: 60, max: 10 },
   'account.setPassword': { group: 'account', label: 'Set password (first one)', windowSec: 60, max: 5 },
+  'account.avatar': { group: 'account', label: 'Set profile picture', windowSec: 60, max: 10 },
 
   // ── User security (users.ts) ───────────────────────────────────────────
   'user.profileUpdate': { group: 'userSecurity', label: 'Profile update', windowSec: 60, max: 5 },
