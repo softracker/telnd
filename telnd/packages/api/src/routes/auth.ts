@@ -1799,8 +1799,9 @@ authRoutes.post(
 // plain correlation; the verifier never leaves the server. Verify consumes
 // the cookie on FIRST read — a replayed callback URL from another browser
 // finds nothing — and matches provider + state exactly before so much as
-// looking at the code. The exchange is server-side, with PKCE (S256) and
-// the client secret; access/ID tokens are read once for the profile and
+// looking at the code. The exchange is server-side, with PKCE (S256 — not
+// LinkedIn, which has none; § lib/oauth pkceSupported) and the client
+// secret; access/ID tokens are read once for the profile and
 // dropped — no column even exists to keep them in (§ lib/oauth). Identity
 // anchors on (provider, sub); a provider email attaches to, or routes
 // toward, the proof screen ONLY when the provider marked it verified —

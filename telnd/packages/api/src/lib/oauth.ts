@@ -19,8 +19,9 @@ import { portalUrl } from './passwordTokens';
 //   only available if the user's email address has been verified"), so an
 //   ABSENT claim counts as verified there and only there. An explicit
 //   `false` is never trusted, anywhere.
-// - Exchange is server-side with PKCE (S256); the authorization `code`
-//   never reaches any endpoint other than the exchange. Access + ID
+// - Exchange is server-side with PKCE (S256) everywhere except LinkedIn —
+//   see pkceSupported(): LinkedIn has no PKCE at all. The authorization
+//   `code` never reaches any endpoint other than the exchange. Access + ID
 //   tokens are used once, to fetch the profile, and dropped — nothing
 //   token-shaped is written anywhere (no column even exists for it).
 //
@@ -133,6 +134,23 @@ export function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+/**
+ * PKCE everywhere EXCEPT LinkedIn — the one provider that never
+ * implemented RFC 7636. LinkedIn's authorize endpoint silently drops
+ * `code_challenge`, then its token endpoint fails the "appid/redirect uri
+ * code verifier does not match authorization code" comparison when a
+ * verifier arrives anyway, killing every sign-in at the exchange with a
+ * bare 400 (observed live, and the same failure reported upstream at
+ * directus/directus#26743 — Google works because Google does PKCE).
+ * Google and Facebook keep it: Meta documents S256 explicitly for
+ * Facebook Login. Start and exchange must both call this — half-sending
+ * PKCE is the bug this function exists to prevent. LinkedIn's exchange
+ * still carries the client secret, so the code is not left unguarded.
+ */
+export function pkceSupported(provider: OAuthProvider): boolean {
+  return provider !== 'linkedin';
+}
+
 /** 192 bits of URL-safe state — the flow's correlation + CSRF guard. */
 export function randomOAuthToken(): string {
   return randomBytes(24).toString('base64url');
@@ -173,8 +191,10 @@ export function buildAuthorizeUrl(params: {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', def.scopes.join(' '));
   url.searchParams.set('state', params.state);
-  url.searchParams.set('code_challenge', params.codeChallenge);
-  url.searchParams.set('code_challenge_method', 'S256');
+  if (pkceSupported(params.provider)) {
+    url.searchParams.set('code_challenge', params.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+  }
   if (params.provider !== 'facebook') {
     // OIDC nonce — Facebook has no OIDC layer and rejects unknown params.
     url.searchParams.set('nonce', params.nonce);
@@ -246,7 +266,8 @@ export function normalizeProfile(provider: OAuthProvider, raw: unknown): OAuthPr
 
 /**
  * Server-side code exchange: one POST to the token endpoint (with the
- * PKCE verifier — the client secret rides too, so the code is useless to
+ * PKCE verifier where the provider implements PKCE — see
+ * pkceSupported(); the client secret rides too, so the code is useless to
  * anyone who intercepts it), then one authenticated GET for the profile.
  * Both responses are discarded after this function returns: the caller
  * receives only the normalized profile, never a token.
@@ -265,17 +286,18 @@ export async function exchangeCodeForProfile(params: {
 
   let tokenResp: Response;
   try {
+    const form = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: params.code,
+      redirect_uri: params.redirectUri,
+      client_id: params.clientId,
+      client_secret: params.clientSecret,
+    });
+    if (pkceSupported(params.provider)) form.set('code_verifier', params.codeVerifier);
     tokenResp = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code: params.code,
-        redirect_uri: params.redirectUri,
-        client_id: params.clientId,
-        client_secret: params.clientSecret,
-        code_verifier: params.codeVerifier,
-      }),
+      body: form,
     });
   } catch {
     throw new OAuthFlowError(
