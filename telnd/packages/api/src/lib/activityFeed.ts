@@ -15,9 +15,9 @@
  *   smtp     → targetType = 'smtp'           (system rows, actor is null)
  *   employer → (neither of the above) ∩ targetType ∈ EMPLOYER_TARGETS
  *   user     → everything else: a NON-admin actor doing something that is
- *              not login/mail/employer — i.e. activity of the :3000 web
- *              app, which does not exist yet, so this section is empty
- *              until it does (the panel's own writes are all "admin").
+ *              not login/mail/employer — activity of the :3000 web app,
+ *              written by lib/userActivity.ts since §14.68 (the panel's
+ *              own writes are all "admin").
  *
  * so count(all) === the sum of the five always holds. Adding a future
  * section means: its set here + the matching branch in activityWhere() +

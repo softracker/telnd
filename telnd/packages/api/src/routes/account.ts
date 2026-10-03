@@ -53,6 +53,7 @@ import {
   accountPhoneVerifySchema,
 } from '@telnd/validation';
 import { doorError } from './auth';
+import { logUserActivity } from '../lib/userActivity';
 import {
   clearOtp,
   maskPhone,
@@ -269,6 +270,9 @@ accountRoutes.post(
     // profile-edit path.
     clearOtp(userId);
 
+    // §14.68 — the attach is the account's own activity now.
+    logUserActivity(c, { userId, action: 'PHONE_ADDED', details: { phone } });
+
     return c.json({ success: true, data: { phone, isPhoneVerified: true } });
   },
 );
@@ -385,6 +389,12 @@ accountRoutes.post(
     }
     clearOtp(userId);
 
+    // §14.68 — the wizard's landing: the address attached, plus the
+    // password a social signup chose with it (PASSWORD_REQUIRED), each
+    // as its own feed row.
+    logUserActivity(c, { userId, action: 'EMAIL_ADDED', details: { email: body.email } });
+    if (data.passwordHash) logUserActivity(c, { userId, action: 'PASSWORD_SET' });
+
     return c.json({
       success: true,
       data: { email: body.email, isEmailVerified: true, passwordSet: needsPassword },
@@ -446,6 +456,9 @@ accountRoutes.post(
     // Best-effort: the password IS set even if the mailbox is down — the
     // answer belongs to the write, never to the notification.
     await sendPasswordSetNoticeEmail({ to: user.email, firstName: user.firstName }).catch(() => false);
+
+    // §14.68 — the first password existing is a change worth a row.
+    logUserActivity(c, { userId, action: 'PASSWORD_SET' });
 
     return c.json({ success: true, data: { hasPassword: true } });
   },
@@ -548,6 +561,8 @@ accountRoutes.post(
     // The swap is a fact worth mailing home — same address, no move, no
     // letter (re-proving the address you already hold changes nothing).
     if (own.email !== body.email) {
+      // §14.68 — and a fact worth a feed row, same condition.
+      logUserActivity(c, { userId, action: 'EMAIL_CHANGED', details: { email: body.email } });
       await sendEmailChangeNoticeEmail({ to: own.email, newEmail: body.email }).catch(() => false);
     }
 
@@ -665,6 +680,11 @@ accountRoutes.post(
     // round and the profile path.
     clearOtp(userId);
 
+    if (own.phone !== phone) {
+      // §14.68 — the move that actually happened earns its feed row
+      // whether or not a notice address exists to mail.
+      logUserActivity(c, { userId, action: 'PHONE_CHANGED', details: { phone } });
+    }
     if (own.phone !== phone && own.email) {
       await sendPhoneChangeNoticeEmail({
         to: own.email,
@@ -682,9 +702,10 @@ accountRoutes.post(
 // multipart upload → 512² WebP (quality 85, SVG stored raw) → R2 avatars/.
 // The door replaces THIS member's row directly and drops the object it
 // displaced — only after the new one has stored, so a failed upload or a
-// refused file leaves the current picture untouched. No audit row: portal
-// self-service doesn't log (§14.64's rule), and a photo is not a
-// sign-in door.
+// refused file leaves the current picture untouched. §14.68: a completed
+// swap writes AVATAR_SET to the activity feed (the delete route writes
+// AVATAR_REMOVED), superseding §14.64's "portal self-service doesn't
+// log" rule.
 accountRoutes.post(
   '/avatar',
   authMiddleware,
@@ -748,6 +769,9 @@ accountRoutes.post(
       }
       if (previous?.avatar && previous.avatar !== url) await deleteAvatarObject(previous.avatar);
 
+      // §14.68 — a completed swap on the activity feed.
+      logUserActivity(c, { userId, action: 'AVATAR_SET' });
+
       return c.json({ success: true, data: { avatar: url } });
     } catch (err) {
       console.error('[account] avatar upload failed:', err instanceof Error ? err.message : err);
@@ -776,6 +800,8 @@ accountRoutes.delete(
     if (user?.avatar) {
       await prisma.user.update({ where: { id: userId }, data: { avatar: null } });
       await deleteAvatarObject(user.avatar);
+      // §14.68 — idempotent route: only an ACTUAL removal writes a row.
+      logUserActivity(c, { userId, action: 'AVATAR_REMOVED' });
     }
 
     return c.json({ success: true, data: { avatar: null } });

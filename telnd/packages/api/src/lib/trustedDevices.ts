@@ -12,6 +12,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@telnd/database';
 import { describeLoginDevice } from './loginAlerts';
+import { logUserActivity } from './userActivity';
 
 export const TRUST_COOKIE = 'telnd_trusted';
 export const TRUST_DAYS = 30;
@@ -69,6 +70,9 @@ export async function mintTrustedDevice(c: any, userId: string): Promise<boolean
       },
     });
     writeCookie(c, token, TRUST_MAX_AGE_SEC);
+    // §14.68 — a trust grant the Security page can later revoke
+    // (REVOKE_TRUSTED_DEVICE), so minting one earns its feed row too.
+    logUserActivity(c, { userId, action: 'TRUSTED_DEVICE_ADDED', details: { label } });
     return true;
   } catch {
     return false;

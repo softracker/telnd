@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { prisma } from '@telnd/database';
+import { logUserActivity } from '../lib/userActivity';
 
 type UserPreferencesEnv = {
   Variables: {
@@ -68,6 +69,15 @@ userPreferences.put('/', async (c) => {
     });
     updated[row.key] = row.value;
   }
+
+  // §14.68 — a preference flip is a change like any other, one feed row
+  // for the keys that moved. The activity card renders details as text
+  // pairs, so only string values ride along.
+  const strings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(updated)) {
+    if (typeof value === 'string') strings[key] = value;
+  }
+  logUserActivity(c, { userId, action: 'PREFERENCES_UPDATED', details: strings });
 
   return c.json({ success: true, data: updated });
 });

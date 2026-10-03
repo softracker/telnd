@@ -33,7 +33,7 @@ function Spinner({ size = 16 }: { size?: number }) {
 // Which `details` keys we ever show, in display order: who/what first
 // (name, email), then context. Shared by the collapsed meta line and the
 // expanded breakdown so the two can never drift apart.
-const DETAIL_ORDER = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error'];
+const DETAIL_ORDER = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error', 'provider', 'phone', 'theme', 'language', 'label'];
 
 function detailPairs(item: ActivityItem): [string, string][] {
   const details = item.details || {};

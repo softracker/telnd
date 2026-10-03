@@ -8,7 +8,7 @@ import { updateAccountSchema, changePasswordSchema, twoFactorEnableSchema, twoFa
 import { sendPasswordResetEmail, isSmtpConfigured } from '../lib/email';
 import { deleteRecoveryCodes, rotateRecoveryCodes, unusedRecoveryCodeCount } from '../lib/recoveryCodes';
 import { issuePasswordToken, discardPasswordToken, adminUrl } from '../lib/passwordTokens';
-import { getIp } from '../lib/getIp';
+import { logUserActivity } from '../lib/userActivity';
 import { backfillSessionLocations } from '../lib/geoLocation';
 import { clearPinAttempts, hashPin, normalizePin, pinPolicyRequired, requirePinApproval, verifySecurityPin } from '../lib/securityPin';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
@@ -200,6 +200,28 @@ userRoutes.patch('/me', authMiddleware, rateLimit('user.profileUpdate'), validat
   }
 
   const user = await prisma.user.update({ where: { id: userId }, data });
+
+  // §14.68 — one feed row per COMPLETED change, so the User Activity
+  // section reads as a list of real events. The panel's Account page
+  // saves several fields in one PATCH; each field family that actually
+  // moved gets its own row (an unchanged value writes nothing).
+  const avatarChanging = body.avatar !== undefined && (body.avatar || null) !== current.avatar;
+  const nameChanging =
+    (body.firstName !== undefined && body.firstName !== current.firstName) ||
+    (body.lastName !== undefined && body.lastName !== current.lastName);
+  if (avatarChanging) {
+    logUserActivity(c, { userId, action: data.avatar ? 'AVATAR_SET' : 'AVATAR_REMOVED' });
+  }
+  if (nameChanging) {
+    logUserActivity(c, {
+      userId,
+      action: 'UPDATE_PROFILE',
+      details: { name: [user.firstName, user.lastName].filter(Boolean).join(' ') },
+    });
+  }
+  if (emailChanging) logUserActivity(c, { userId, action: 'EMAIL_CHANGED', details: { email: user.email } });
+  if (phoneChanging && user.phone) logUserActivity(c, { userId, action: 'PHONE_CHANGED', details: { phone: user.phone } });
+
   // Any reset link still pointing at the OLD address dies with the change,
   // so it can't be redeemed against the new identity (#6).
   if (emailChanging) await discardPasswordToken(userId, 'reset');
@@ -209,21 +231,16 @@ userRoutes.patch('/me', authMiddleware, rateLimit('user.profileUpdate'), validat
   return c.json({ success: true, data: safeUser });
 });
 
-// Audit trail for panel admins only — a candidate changing their own
-// credentials is not an admin action.
-async function logSelfService(c: any, user: any, action: string, details?: unknown) {
-  if (user?.role !== 'ADMIN') return;
-  await prisma.adminAction.create({
-    data: {
-      adminId: user.id,
-      action,
-      targetType: 'user',
-      targetId: user.id,
-      details: (details as any) ?? undefined,
-      ipAddress: getIp(c),
-      userAgent: c.req.header('user-agent') || undefined,
-    },
-  });
+// Self-service rows for the activity feed: password/2FA/PIN changes and
+// session or trusted-device revokes. §14.68 dropped the old "panel
+// admins only" gate — the feed's own partition (does the actor hold an
+// AdminUser row?) sorts an admin's change into Admin Activity and a
+// portal member's into User Activity, so gating here only hid half the
+// story. Fire-and-forget through the shared helper: a log write must
+// never fail the request.
+function logSelfService(c: any, user: any, action: string, details?: unknown) {
+  if (!user?.id) return;
+  logUserActivity(c, { userId: user.id, action, details: details as Record<string, unknown> | undefined });
 }
 
 // ============================================
@@ -304,7 +321,7 @@ userRoutes.delete('/me/sessions/:id', authMiddleware, async (c) => {
   }
 
   await prisma.session.delete({ where: { id } });
-  await logSelfService(c, c.get('user'), 'REVOKE_SESSION');
+  logSelfService(c, c.get('user'), 'REVOKE_SESSION');
   return c.json({ success: true, data: { revoked: 1 } });
 });
 
@@ -320,7 +337,7 @@ userRoutes.delete('/me/sessions', authMiddleware, async (c) => {
   // they would waltz past the next challenge); this browser keeps its own.
   await clearTrustedDevices(userId, currentTrustedHash(c));
   if (result.count > 0) {
-    await logSelfService(c, c.get('user'), 'REVOKE_OTHER_SESSIONS', { revoked: result.count });
+    logSelfService(c, c.get('user'), 'REVOKE_OTHER_SESSIONS', { revoked: result.count });
   }
   return c.json({ success: true, data: { revoked: result.count } });
 });
@@ -363,7 +380,7 @@ userRoutes.delete('/me/trusted-devices/:id', authMiddleware, async (c) => {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Trusted device not found.' } }, 404);
   }
   await prisma.trustedDevice.delete({ where: { id } });
-  await logSelfService(c, c.get('user'), 'REVOKE_TRUSTED_DEVICE', { label: row.label });
+  logSelfService(c, c.get('user'), 'REVOKE_TRUSTED_DEVICE', { label: row.label });
   return c.json({ success: true, data: { revoked: 1 } });
 });
 
@@ -440,7 +457,7 @@ userRoutes.post(
       return { sessions: sessions.count, refreshes: refreshes.count, trusts: trusts.count };
     });
 
-    await logSelfService(c, user, 'CHANGE_PASSWORD', {
+    logSelfService(c, user, 'CHANGE_PASSWORD', {
       revokedOtherSessions: revoked.sessions,
       revokedOtherRefreshTokens: revoked.refreshes,
     });
@@ -491,7 +508,7 @@ userRoutes.post(
       }, 502);
     }
 
-    await logSelfService(c, user, 'REGENERATE_SELF_PASSWORD', { email: user.email });
+    logSelfService(c, user, 'REGENERATE_SELF_PASSWORD', { email: user.email });
     return c.json({ success: true, data: { email: user.email } });
   },
 );
@@ -632,7 +649,7 @@ userRoutes.post(
       data: { pinHash: await hashPin(pin), pinSetAt: new Date(), pinAttempts: 0, pinWindowStart: null },
     });
     await clearPinAttempts(userId);
-    await logSelfService(c, user, 'SECURITY_PIN_SET');
+    logSelfService(c, user, 'SECURITY_PIN_SET');
     return c.json({ success: true, data: { pinSet: true } });
   },
 );
@@ -689,7 +706,7 @@ userRoutes.delete(
       data: { pinHash: null, pinSetAt: null, pinAttempts: 0, pinWindowStart: null },
     });
     await clearPinAttempts(userId);
-    await logSelfService(c, user, 'SECURITY_PIN_CLEARED');
+    logSelfService(c, user, 'SECURITY_PIN_CLEARED');
     return c.json({ success: true, data: { pinSet: false } });
   },
 );
@@ -841,7 +858,7 @@ userRoutes.post(
         twoFactorSecret: body.method === 'totp' ? user.twoFactorSecret : null,
       },
     });
-    await logSelfService(c, c.get('user'), 'TWO_FACTOR_ENABLED', { method: body.method });
+    logSelfService(c, c.get('user'), 'TWO_FACTOR_ENABLED', { method: body.method });
     // The first (and only) showing of the recovery codes — plaintext rides
     // in this response, storage keeps hashes.
     const recoveryCodes = await rotateRecoveryCodes(userId);
@@ -896,7 +913,7 @@ userRoutes.post(
     }
 
     const recoveryCodes = await rotateRecoveryCodes(userId);
-    await logSelfService(c, c.get('user'), 'TWO_FACTOR_RECOVERY_CODES_REGENERATED', {});
+    logSelfService(c, c.get('user'), 'TWO_FACTOR_RECOVERY_CODES_REGENERATED', {});
     return c.json({ success: true, data: { recoveryCodes } });
   },
 );
@@ -971,7 +988,7 @@ userRoutes.post(
     // only to skip a factor that is now off; with 2FA re-enrolled later,
     // no stale cookie may ride in on the old grant.
     await clearTrustedDevices(userId);
-    await logSelfService(c, c.get('user'), 'TWO_FACTOR_DISABLED', {});
+    logSelfService(c, c.get('user'), 'TWO_FACTOR_DISABLED', {});
     return c.json({ success: true, data: {} });
   },
 );

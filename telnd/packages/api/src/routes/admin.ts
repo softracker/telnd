@@ -1556,7 +1556,7 @@ admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) 
   const filters: Record<string, unknown>[] = [];
   if (q) {
     const tokens = q.split(/\s+/).filter(Boolean).slice(0, 10);
-    const detailKeys = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error'];
+    const detailKeys = ['name', 'email', 'device', 'title', 'company', 'subject', 'to', 'reason', 'method', 'error', 'provider', 'phone', 'theme', 'language', 'label'];
     filters.push({
       AND: tokens.map((tok) => ({
         OR: [
@@ -1597,7 +1597,7 @@ admin.get('/activity', requireAdmin, requirePermission('audit.view'), async (c) 
       // CREATE_JOB rows the employer's account (AdminAction.adminId is a
       // plain User FK, so non-admin actors are legal); null for system
       // rows (SMTP deliveries) — rendered as "System". The adminUser
-      // presence is what splits admin activity from future web-app user
+      // presence is what splits admin activity from web-app user
       // activity, so the join carries it.
       include: {
         admin: {

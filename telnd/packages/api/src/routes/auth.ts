@@ -45,6 +45,7 @@ import {
 } from '../lib/oauth';
 import type { OAuthProfile, OAuthProvider } from '../lib/oauth';
 import { seedAvatarFromSocial } from '../lib/avatar';
+import { logUserActivity } from '../lib/userActivity';
 
 type AuthEnv = {
   Variables: {
@@ -1115,23 +1116,9 @@ authRoutes.post('/2fa/challenge/verify', rateLimit('auth.twoFactorVerify'), vali
         twoFactorSecret: method === 'totp' ? user.twoFactorSecret : null,
       },
     });
-    if (user.role === 'ADMIN') {
-      try {
-        await prisma.adminAction.create({
-          data: {
-            adminId: user.id,
-            action: 'TWO_FACTOR_ENABLED',
-            targetType: 'user',
-            targetId: user.id,
-            details: { method },
-            ipAddress: getIp(c),
-            userAgent: c.req.header('user-agent') || undefined,
-          },
-        });
-      } catch {
-        // Audit must never fail the request itself.
-      }
-    }
+    // §14.68 — enrollment during sign-in is the account's own
+    // enablement, admin or portal member; the feed sorts the row.
+    logUserActivity(c, { userId: user.id, action: 'TWO_FACTOR_ENABLED', details: { method } });
     recoveryCodes = await rotateRecoveryCodes(user.id);
   } else if ((await unusedRecoveryCodeCount(user.id)) === 0) {
     // Backfill on an ordinary sign-in: an account enrolled before recovery
@@ -1226,23 +1213,11 @@ authRoutes.post('/reset-password', rateLimit('auth.resetPassword'), validate(res
     }, 400);
   }
 
-  if (user.role === 'ADMIN') {
-    try {
-      await prisma.adminAction.create({
-        data: {
-          adminId: user.id,
-          action: 'RESET_PASSWORD_VIA_LINK',
-          targetType: 'user',
-          targetId: user.id,
-          details: { kind: row.kind },
-          ipAddress: getIp(c),
-          userAgent: c.req.header('user-agent') || undefined,
-        },
-      });
-    } catch {
-      // Audit must never fail the request itself.
-    }
-  }
+  // §14.68 — a reset is the account's own activity whether or not the
+  // holder is an admin: the feed's partition puts an ADMIN actor's row
+  // in Admin Activity and a portal member's in User Activity. (The old
+  // admin-only gate here came from the feed being panel-only.)
+  logUserActivity(c, { userId: user.id, action: 'RESET_PASSWORD_VIA_LINK', details: { kind: row.kind } });
 
   return c.json({ success: true, data: {} });
 });
@@ -1912,6 +1887,12 @@ async function finishSocialSignIn(c: any, user: any, ip: string) {
  * `social.link` when an identity attaches, `social.unlink` when one is
  * detached. Best-effort — like the other auth logs here, a failed write
  * must never fail the sign-in.
+ *
+ * §14.68: a connect (not a sign-in) ALSO lands one row in the activity
+ * feed — the User Activity section's `SOCIAL_LINK`. Sign-ins skip that
+ * copy because issueSession's LOGIN row is already their feed row (one
+ * row per event across both tables), and the AuditLog keeps its own
+ * history untouched.
  */
 function writeSocialAudit(
   c: any,
@@ -1921,6 +1902,9 @@ function writeSocialAudit(
   provider: string,
   extra?: Record<string, string | boolean>,
 ) {
+  if (action === 'social.link') {
+    logUserActivity(c, { userId, action: 'SOCIAL_LINK', details: { provider } });
+  }
   return prisma.auditLog
     .create({
       data: {
@@ -2526,5 +2510,8 @@ authRoutes.post('/oauth/unlink', authMiddleware, rateLimit('auth.oauthUnlink'), 
       },
     })
     .catch((err) => console.error('[oauth] audit write failed (social.unlink):', err));
+  // §14.68 — the disconnect's feed copy: User Activity, same shape as
+  // SOCIAL_LINK's.
+  logUserActivity(c, { userId, action: 'SOCIAL_UNLINK', details: { provider } });
   return c.json({ success: true, data: { unlinked: provider } });
 });
