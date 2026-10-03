@@ -10,7 +10,7 @@
 // a local second factor exists).
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { authErrorCode, authErrorMessage, landingPath } from '@/lib/auth';
 import {
@@ -31,9 +31,15 @@ const PROVIDERS: Record<string, { label: string; Icon: ComponentType<{ className
 
 export default function AuthOAuthLinkPage() {
   const router = useRouter();
-  const params = useParams<{ provider?: string }>();
-  const provider = typeof params?.provider === 'string' ? params.provider : '';
-  const meta = PROVIDERS[provider];
+  // The provider rides the QUERY string, not the path: the callback
+  // redirects to `/auth/link?provider=…&token=…&email=…` (§ requiresLink),
+  // and this route has no `[provider]` segment. Reading it from useParams
+  // left `meta` undefined on every arrival, so the cold-arrival guard below
+  // fired instantly and the existing-account path always said "Attempt
+  // expired" before the password form could render. It fills in with the
+  // token/email from the same query — all three land together.
+  const [provider, setProvider] = useState('');
+  const meta = provider ? PROVIDERS[provider] : undefined;
 
   const [token, setToken] = useState('');
   const [email, setEmail] = useState('');
@@ -58,13 +64,16 @@ export default function AuthOAuthLinkPage() {
     started.current = true;
 
     const query = new URLSearchParams(window.location.search);
+    const prov = query.get('provider') ?? '';
     const t = query.get('token');
     const mail = query.get('email');
-    if (!meta || !t || !mail) {
-      // Arrived cold (refresh, pasted URL): there is nothing to prove for.
+    if (!PROVIDERS[prov] || !t || !mail) {
+      // Arrived cold (refresh, pasted URL) or with a provider we don't
+      // know: there is nothing to prove for.
       setExpired(true);
       return;
     }
+    setProvider(prov);
     setToken(t);
     setEmail(mail);
 
@@ -82,8 +91,6 @@ export default function AuthOAuthLinkPage() {
     return () => {
       alive = false;
     };
-    // meta is derived from the route param — stable for this mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Render Turnstile when it becomes required (same lifecycle as the
