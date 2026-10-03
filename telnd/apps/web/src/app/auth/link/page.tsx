@@ -277,7 +277,10 @@ export default function AuthOAuthLinkPage() {
       </div>
 
       {!expired && (
-        <div className="pb-10 pt-6">
+        // px-6 like the content above: AuthFrame's card has no horizontal
+        // padding of its own, and PrimaryButton is w-full — without it the
+        // button went edge-to-edge while everything above stayed inset.
+        <div className="px-6 pb-10 pt-6">
           {error && (
             <div className="mb-4">
               <AuthError>{error}</AuthError>
