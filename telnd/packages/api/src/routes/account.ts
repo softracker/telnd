@@ -12,9 +12,18 @@
 //   filled" and "choose a password first" are facts the caller's own
 //   session already implies, so they may answer before the code is
 //   spent (the password refusal leaves the code live).
-// - Add-only: changing an identifier is a later round — it additionally
-//   needs proof of the OLD one. The write re-checks uniqueness against
-//   other rows (P2002 → 409) so a race can't double-attach.
+// - Two rounds per identifier (§14.64): ADD fills an empty slot, CHANGE
+//   moves a filled one — session-gated, the NEW identifier proves itself
+//   by OTP (its mailbox/handset gets the code), and the OLD destination
+//   gets a notice email the moment the swap lands, because from then on
+//   it receives nothing else. Each round refuses the other's slot state,
+//   the write re-checks uniqueness against other rows (P2002 → 409), and
+//   a race can't double-attach.
+// - Set password (§14.64): a FIRST password only — claimed from the live
+//   session (there is no old hash to prove against; refusing to invent
+//   that deadlock is §14.53's rule), never overwriting an existing one,
+//   and always followed by the notice email that tells the owner a
+//   credential now exists.
 //
 // Codes are purpose-bound under their own keys (`acct-phone:` /
 // `acct-email:`) — a login or signup code never opens these doors, and
@@ -28,14 +37,20 @@ import { authMiddleware } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { rateLimit } from '../middleware/rateLimit';
 import {
+  accountEmailChangeStartSchema,
+  accountEmailChangeVerifySchema,
   accountEmailStartSchema,
   accountEmailVerifySchema,
+  accountPasswordSchema,
+  accountPhoneChangeStartSchema,
+  accountPhoneChangeVerifySchema,
   accountPhoneStartSchema,
   accountPhoneVerifySchema,
 } from '@telnd/validation';
 import { doorError } from './auth';
 import {
   clearOtp,
+  maskPhone,
   normalizeSignupPhone,
   sendOtpToEmailAddress,
   sendOtpToPhone,
@@ -43,6 +58,11 @@ import {
   verifyOtp,
   type SmsSendFailure,
 } from '../lib/twoFactor';
+import {
+  sendEmailChangeNoticeEmail,
+  sendPasswordSetNoticeEmail,
+  sendPhoneChangeNoticeEmail,
+} from '../lib/email';
 
 type AccountEnv = {
   Variables: {
@@ -355,5 +375,290 @@ accountRoutes.post(
       success: true,
       data: { email: body.email, isEmailVerified: true, passwordSet: needsPassword },
     });
+  },
+);
+
+// ── POST /account/password ───────────────────────────────────────────────
+// The FIRST password (§14.64): a social signup — or any account that
+// reached the panel without one — claims its password door from inside
+// the live session. No current password is demanded (there is none; the
+// §14.53 no-deadlock rule), the floor and bcrypt(12) are signup's, and
+// the notice email is the owner's only external signal that a credential
+// now exists. An account that already has one is pointed at the existing
+// change/reset rounds — this route never overwrites a hash, and the
+// password pairs with the EMAIL door (the login round is exactly
+// email+password), so a slotless address has nothing to type it into.
+accountRoutes.post(
+  '/password',
+  authMiddleware,
+  rateLimit('account.setPassword'),
+  validate(accountPasswordSchema),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { password: string };
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, firstName: true, passwordHash: true },
+    });
+    if (!user) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+    }
+    if (user.passwordHash) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'PASSWORD_EXISTS',
+          message: 'This account already has a password — use Forgot password on the sign-in page to change it.',
+        },
+      }, 409);
+    }
+    if (!user.email) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'EMAIL_REQUIRED',
+          message: 'Add an email address first — a password signs you in with it.',
+        },
+      }, 409);
+    }
+
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash(body.password, 12);
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+
+    // Best-effort: the password IS set even if the mailbox is down — the
+    // answer belongs to the write, never to the notification.
+    await sendPasswordSetNoticeEmail({ to: user.email, firstName: user.firstName }).catch(() => false);
+
+    return c.json({ success: true, data: { hasPassword: true } });
+  },
+);
+
+// ── POST /account/email/change/start ─────────────────────────────────────
+// The CHANGE round for a filled slot (§14.64): the code goes to the NEW
+// address — possession of the future identifier is the only thing that
+// can move the slot. Uniform answer by design (no oracle about who owns
+// what); the old destination learns of the move only after the swap, in
+// the notice the verify route sends.
+accountRoutes.post(
+  '/email/change/start',
+  authMiddleware,
+  rateLimit('account.emailStart'),
+  validate(accountEmailChangeStartSchema),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { email: string };
+
+    const own = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!own?.email) {
+      return c.json({
+        success: false,
+        error: { code: 'EMAIL_NOT_SET', message: 'This account has no email address to change.' },
+      }, 409);
+    }
+
+    const sent = await sendOtpToEmailAddress(body.email, 'account-email');
+    if (!sent.ok) return sendFailure(c, sent);
+
+    const devOnly = process.env.NODE_ENV !== 'production';
+    return c.json({
+      success: true,
+      data: {
+        message: 'Code sent',
+        ...(sent.devCode && devOnly ? { devOtpCode: sent.devCode } : {}),
+      },
+    });
+  },
+);
+
+// ── POST /account/email/change/verify ────────────────────────────────────
+// Spend the code (it proved the NEW address), report the uniqueness
+// verdict only now, swap the slot — and notify the OLD address, which
+// from this moment receives nothing for this account anymore. That
+// notice is the security signal: it is how a mailbox owner learns their
+// account moved away.
+accountRoutes.post(
+  '/email/change/verify',
+  authMiddleware,
+  rateLimit('account.emailVerify'),
+  validate(accountEmailChangeVerifySchema),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { email: string; code: string };
+
+    const own = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!own?.email) {
+      return c.json({
+        success: false,
+        error: { code: 'EMAIL_NOT_SET', message: 'This account has no email address to change.' },
+      }, 409);
+    }
+
+    const spent = verifyOtp(`acct-email:${body.email}`, body.code, 'account-email');
+    if (!spent.ok) return otpFailure(c, spent);
+
+    const taken = await prisma.user.findFirst({
+      where: { email: body.email, NOT: { id: userId } },
+      select: { id: true },
+    });
+    if (taken) {
+      return c.json({
+        success: false,
+        error: { code: 'EMAIL_IN_USE', message: 'That email address is already on another account.' },
+      }, 409);
+    }
+
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { email: body.email, isEmailVerified: true },
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') {
+        return c.json({
+          success: false,
+          error: { code: 'EMAIL_IN_USE', message: 'That email address is already on another account.' },
+        }, 409);
+      }
+      throw err;
+    }
+    clearOtp(userId);
+
+    // The swap is a fact worth mailing home — same address, no move, no
+    // letter (re-proving the address you already hold changes nothing).
+    if (own.email !== body.email) {
+      await sendEmailChangeNoticeEmail({ to: own.email, newEmail: body.email }).catch(() => false);
+    }
+
+    return c.json({ success: true, data: { email: body.email, isEmailVerified: true } });
+  },
+);
+
+// ── POST /account/phone/change/start ─────────────────────────────────────
+// The CHANGE round for a number (§14.64): same uniform answer as the
+// add round, same SMS budget bucket — a change costs exactly one SMS,
+// and the number slot means nothing until the handset proves itself.
+accountRoutes.post(
+  '/phone/change/start',
+  authMiddleware,
+  rateLimit('account.phoneStart'),
+  validate(accountPhoneChangeStartSchema),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { phone: string };
+
+    const phone = normalizeSignupPhone(body.phone);
+    if (!phone) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_INVALID', message: 'Enter a valid 10-digit phone number.' },
+      }, 400);
+    }
+
+    const own = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+    if (!own?.phone) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_NOT_SET', message: 'This account has no phone number to change.' },
+      }, 409);
+    }
+
+    const sent = await sendOtpToPhone(phone, 'account-phone');
+    if (!sent.ok) return sendFailure(c, sent);
+
+    const devOnly = process.env.NODE_ENV !== 'production';
+    return c.json({
+      success: true,
+      data: {
+        message: 'Code sent',
+        ...(sent.devCode && devOnly ? { devOtpCode: sent.devCode } : {}),
+      },
+    });
+  },
+);
+
+// ── POST /account/phone/change/verify ────────────────────────────────────
+// Spend the code, report the verdict, swap the slot — and because the
+// old handset hears nothing about its own retirement, the account's
+// EMAIL gets the notice instead (masked numbers; SMS is never spent on
+// a notice).
+accountRoutes.post(
+  '/phone/change/verify',
+  authMiddleware,
+  rateLimit('account.phoneVerify'),
+  validate(accountPhoneChangeVerifySchema),
+  async (c) => {
+    const refused = await portalDoor(c);
+    if (refused) return refused;
+    const userId = c.get('userId') as string;
+    const body = c.get('validatedData') as { phone: string; code: string };
+
+    const phone = normalizeSignupPhone(body.phone);
+    if (!phone) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_INVALID', message: 'Enter a valid 10-digit phone number.' },
+      }, 400);
+    }
+
+    const own = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+    if (!own?.phone) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_NOT_SET', message: 'This account has no phone number to change.' },
+      }, 409);
+    }
+
+    const spent = verifyOtp(`acct-phone:${phone}`, body.code, 'account-phone');
+    if (!spent.ok) return otpFailure(c, spent);
+
+    const taken = await prisma.user.findFirst({
+      where: { phone, NOT: { id: userId } },
+      select: { id: true },
+    });
+    if (taken) {
+      return c.json({
+        success: false,
+        error: { code: 'PHONE_IN_USE', message: 'That phone number is already on another account.' },
+      }, 409);
+    }
+
+    try {
+      await prisma.user.update({ where: { id: userId }, data: { phone, isPhoneVerified: true } });
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') {
+        return c.json({
+          success: false,
+          error: { code: 'PHONE_IN_USE', message: 'That phone number is already on another account.' },
+        }, 409);
+      }
+      throw err;
+    }
+    // The number moved — any code already headed for this account (the
+    // userId-keyed store) dies with the old one, same rule as the add
+    // round and the profile path.
+    clearOtp(userId);
+
+    if (own.phone !== phone && own.email) {
+      await sendPhoneChangeNoticeEmail({
+        to: own.email,
+        oldPhoneMasked: maskPhone(own.phone) ?? '••••',
+        newPhoneMasked: maskPhone(phone) ?? '••••',
+      }).catch(() => false);
+    }
+
+    return c.json({ success: true, data: { phone, isPhoneVerified: true } });
   },
 );

@@ -611,6 +611,117 @@ ${footer}
   return sendEmail(to, subject, html);
 }
 
+/**
+ * The FIRST password was set from My Account (§14.64) — a social signup
+ * claiming its password door. This email is the owner's only external
+ * signal that a credential now exists, so the "if this wasn't you" line
+ * carries the weight: the set already happened, the mail is the alarm.
+ */
+export async function sendPasswordSetNoticeEmail(params: {
+  to: string;
+  firstName: string;
+}): Promise<boolean> {
+  const { to, firstName } = params;
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const subject = `A password was set on your ${appName} account`;
+  const displayName = escapeHtml((firstName || '').trim() || 'there');
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">A password was set on your account</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Hi ${displayName}, a password was just set on your ${escapeHtml(appName)} account. You can now sign in with your email address and this password — your connected social sign-ins keep working exactly as before.</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">If you did not do this, someone else may have accessed your account. Use <strong>Forgot password</strong> on the sign-in page right away to lock it down, and contact support if you need help.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
+/**
+ * The sign-in email moved (§14.64) — delivered to the OLD address, which
+ * stops being the account's contact point the moment this lands: notices,
+ * resets and codes all follow the row to its new home. The new address is
+ * shown in full so the owner can judge whether it is theirs.
+ */
+export async function sendEmailChangeNoticeEmail(params: {
+  to: string;
+  newEmail: string;
+}): Promise<boolean> {
+  const { to, newEmail } = params;
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const subject = `Your ${appName} sign-in email was changed`;
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Your sign-in email was changed</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">The sign-in email of your ${escapeHtml(appName)} account was changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">From now on, password resets, notices and sign-in codes go to the new address — this one no longer receives them.</p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">If you did not make this change, secure your account right away: use <strong>Forgot password</strong> on the sign-in page and contact support if you need help.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
+/**
+ * The phone number moved (§14.64) — delivered to the account's EMAIL: the
+ * old handset can't be told about itself, and SMS is never spent on a
+ * notice. Both numbers arrive masked from the call site.
+ */
+export async function sendPhoneChangeNoticeEmail(params: {
+  to: string;
+  oldPhoneMasked: string;
+  newPhoneMasked: string;
+}): Promise<boolean> {
+  const { to, oldPhoneMasked, newPhoneMasked } = params;
+  const appName = (await getApplicationName()) || 'TELND';
+  const footer = await emailFooterRow();
+  const subject = `Your ${appName} phone number was changed`;
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:10px;border:1px solid #e5e7eb;">
+        <tr><td style="padding:28px 28px 24px;">
+          <h1 style="margin:0 0 12px;font-size:18px;color:#111827;">Your phone number was changed</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">The phone number on your ${escapeHtml(appName)} account was changed from <strong>${escapeHtml(oldPhoneMasked)}</strong> to <strong>${escapeHtml(newPhoneMasked)}</strong>.</p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">Sign-in codes and two-factor codes now go to the new number.</p>
+          <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#6b7280;">If you did not make this change, secure your account right away: use <strong>Forgot password</strong> on the sign-in page and contact support if you need help.</p>
+        </td></tr>
+${footer}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail(to, subject, html);
+}
+
 export interface RequirementNoticeParams {
   to: string;
   /** Which requirement the notice is about. */

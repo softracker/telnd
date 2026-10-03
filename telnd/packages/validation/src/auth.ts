@@ -80,6 +80,32 @@ export const accountEmailVerifySchema = z.object({
   password: z.string().min(8).optional(),
 });
 
+// ── §14.64 — set password + the identifier CHANGE rounds ──────────────────
+// The first password claims a session-held door (there is no old hash to
+// prove — same floor as every other password field); the change rounds
+// carry no password at all, they only move a slot that is already filled.
+export const accountPasswordSchema = z.object({
+  password: z.string().min(8),
+});
+
+export const accountEmailChangeStartSchema = z.object({
+  email: emailSchema,
+});
+
+export const accountEmailChangeVerifySchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+});
+
+export const accountPhoneChangeStartSchema = z.object({
+  phone: z.string().min(1).max(20),
+});
+
+export const accountPhoneChangeVerifySchema = z.object({
+  phone: z.string().min(1).max(20),
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+});
+
 // ── Social sign-in (OAuth: Google / Facebook / LinkedIn) ──────────────────
 // The callback page POSTs the provider's `code` + `state` back; everything
 // sensitive (PKCE verifier, nonce, flow binding) lives in the server's own

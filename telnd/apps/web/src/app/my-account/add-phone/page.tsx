@@ -1,13 +1,19 @@
 'use client';
 
-// Add a phone number (§14.53) — the only way a number reaches an account
-// now that the signup wizard stopped taking one. Verify-before-attach:
-// /start answers identically no matter who already owns the number (no
-// account oracle), and the "someone else's number" verdict can only land
-// AFTER the code proves the handset. The code is purpose-bound to this
-// attach door — it can never open a sign-in, and a login code can never
-// open this door. Lives under /my-account on purpose: /auth/* is guarded
-// against signed-in visitors and would bounce this whole flow out.
+// Add or CHANGE a phone number (§14.53, change round §14.64) — the only
+// way a number reaches an account now that the signup wizard stopped
+// taking one. Verify-before-attach in both rounds: /start answers
+// identically no matter who already owns the number (no account oracle),
+// and the "someone else's number" verdict can only land AFTER the code
+// proves the handset. ?change=1 (from the panel, while a slot is filled)
+// flips the round: the code goes to the NEW number, the slot MOVES
+// instead of filling, and the swap mails a masked notice to the account's
+// email (the old handset hears nothing about itself). Visiting the change
+// URL with an empty slot degrades to the honest add round on entry. The
+// code is purpose-bound to this door — it can never open a sign-in, and
+// a login code can never open this door. Lives under /my-account on
+// purpose: /auth/* is guarded against signed-in visitors and would
+// bounce this whole flow out.
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -35,6 +41,7 @@ const linkBtn =
 export default function AddPhonePage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('loading');
+  const [changing, setChanging] = useState(false);
   const [digits, setDigits] = useState('');
   const [boxes, setBoxes] = useState<string[]>(['', '', '', '', '', '']);
   const [error, setError] = useState('');
@@ -45,26 +52,33 @@ export default function AddPhonePage() {
   const fullPhone = `${COUNTRY_CODE}${digits}`;
   const clearBoxes = () => setBoxes(['', '', '', '', '', '']);
 
-  // Gate on entry: a number already attached belongs to the summary —
-  // this flow is add-only (changing one needs proof of the old number,
-  // a later round). A failed probe just opens the form; /start re-checks
-  // the slot server-side anyway.
+  // Gate on entry: a filled slot belongs to the summary in the ADD
+  // round (blocked) and to the form in the CHANGE round (?change=1); a
+  // change URL over an empty slot has nothing to move, so it degrades to
+  // the add round right here. A failed probe just opens the form; the
+  // /start routes re-check the slot server-side anyway.
   useEffect(() => {
+    const changeMode = new URLSearchParams(window.location.search).get('change') === '1';
     api
       .get<{ data: { phone: string | null } }>('/api/account/methods')
-      .then((res) => setStep(res.data?.phone ? 'blocked' : 'number'))
+      .then((res) => {
+        const filled = !!res.data?.phone;
+        if (changeMode && filled) setChanging(true);
+        setStep(filled && !changeMode ? 'blocked' : 'number');
+      })
       .catch(() => setStep('number'));
   }, []);
 
-  // Step 1 → 2: send the attach code. Uniform answer by design — a taken
-  // number only says so after the OTP proves possession of it.
+  // Step 1 → 2: send the code — to the handset that will BECOME the
+  // number (add) or the one that already IS it (change). Uniform answer
+  // by design either way — a taken number only says so after the OTP.
   async function start(e?: FormEvent) {
     e?.preventDefault();
     if (sending || digits.length !== 10) return;
     setError('');
     setSending(true);
     try {
-      await api.post('/api/account/phone/start', { phone: fullPhone });
+      await api.post(changing ? '/api/account/phone/change/start' : '/api/account/phone/start', { phone: fullPhone });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
       setStep('code');
@@ -84,7 +98,7 @@ export default function AddPhonePage() {
     setError('');
     setSending(true);
     try {
-      await api.post('/api/account/phone/start', { phone: fullPhone });
+      await api.post(changing ? '/api/account/phone/change/start' : '/api/account/phone/start', { phone: fullPhone });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
     } catch (err) {
@@ -94,16 +108,23 @@ export default function AddPhonePage() {
     }
   }
 
-  // Step 2 → done: spend the code, attach the number, land back on the
-  // summary with the success notice.
+  // Step 2 → done: spend the code, move (or attach) the number, land
+  // back on the summary with the success notice.
   async function verify(value?: string) {
     const entered = value ?? boxes.join('');
     if (entered.length !== 6 || verifying) return;
     setError('');
     setVerifying(true);
     try {
-      await api.post('/api/account/phone/verify', { phone: fullPhone, code: entered });
-      router.replace('/my-account/sign-in-methods?added=phone');
+      await api.post(changing ? '/api/account/phone/change/verify' : '/api/account/phone/verify', {
+        phone: fullPhone,
+        code: entered,
+      });
+      router.replace(
+        changing
+          ? '/my-account/sign-in-methods?changed=phone'
+          : '/my-account/sign-in-methods?added=phone',
+      );
     } catch (err) {
       const code = authErrorCode(err);
       if (code === 'OTP_INVALID' || code === 'OTP_TOO_MANY_ATTEMPTS') {
@@ -117,7 +138,14 @@ export default function AddPhonePage() {
         clearBoxes();
         setError(authErrorMessage(err, 'That phone number is already on another account.'));
       } else {
-        setError(authErrorMessage(err, 'The number could not be added. Please try again.'));
+        setError(
+          authErrorMessage(
+            err,
+            changing
+              ? 'The number could not be changed. Please try again.'
+              : 'The number could not be added. Please try again.',
+          ),
+        );
       }
       setVerifying(false);
     }
@@ -130,7 +158,7 @@ export default function AddPhonePage() {
           &larr; Sign-in methods
         </Link>
       </p>
-      <h1>Add a phone number</h1>
+      <h1>{changing ? 'Change your phone number' : 'Add a phone number'}</h1>
       <div className={card}>
         {/* One height for every step — swapping states never jumps. */}
         <div className="flex min-h-[260px] flex-col justify-center">
@@ -185,8 +213,9 @@ export default function AddPhonePage() {
                 </div>
               </div>
               <p className="mt-3 text-[13px] leading-relaxed text-gray-500 dark:text-white/45">
-                We&apos;ll text a 6-digit code to confirm it&apos;s yours. Once added, the number can
-                also sign you in.
+                {changing
+                  ? "We'll text a 6-digit code to confirm it's yours. Once confirmed, the new number replaces your current one — your account's email is notified."
+                  : "We'll text a 6-digit code to confirm it's yours. Once added, the number can also sign you in."}
               </p>
               {error && (
                 <div className="mt-4">

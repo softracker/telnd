@@ -1,14 +1,20 @@
 'use client';
 
-// Add an email address (§14.53) — same verify-before-attach shape as the
-// phone wizard: /start answers uniformly (the mailbox's owner is only
-// revealed after the OTP proves it), the code is purpose-bound to this
-// attach door alone, and the write re-checks uniqueness. The extra rule
-// lives on the LAST step: an account without a password (social signups)
-// must choose one here — no skip — because this email is about to
-// become a sign-in door. Accounts that already have a password finish
-// right after the code. Lives under /my-account: /auth/* would bounce a
-// signed-in visitor out of the whole flow.
+// Add or CHANGE an email address (§14.53, change round §14.64) — same
+// verify-before-attach shape for both: /start answers uniformly (the
+// mailbox's owner is only revealed after the OTP proves it), the code is
+// purpose-bound to this door alone, and the write re-checks uniqueness.
+// ?change=1 (from the panel, only while a slot is filled) flips the round:
+// the code still goes to the NEW address, but it MOVES a slot instead of
+// filling one, there is no password step to run (nothing here creates a
+// credential), and the swap mails a notice to the old address itself.
+// The add round keeps its extra rule on the LAST step: an account without
+// a password (social signups) must choose one here — no skip — because
+// that email is about to become a sign-in door. Visiting the change URL
+// with an empty slot degrades to the honest add round on entry; a slot
+// that empties mid-flow gets the server's own verdict inline. Lives under
+// /my-account: /auth/* would bounce a signed-in visitor out of the whole
+// flow.
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -36,6 +42,7 @@ export default function AddEmailPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('loading');
   const [email, setEmail] = useState('');
+  const [changing, setChanging] = useState(false);
   const [hasPassword, setHasPassword] = useState(true);
   const [boxes, setBoxes] = useState<string[]>(['', '', '', '', '', '']);
   const [password, setPassword] = useState('');
@@ -48,27 +55,34 @@ export default function AddEmailPage() {
   const address = email.trim();
   const clearBoxes = () => setBoxes(['', '', '', '', '', '']);
 
-  // Gate on entry: an address already attached belongs to the summary
-  // (add-only — changing needs proof of the old one, a later round).
-  // A failed probe just opens the form; /start re-checks server-side.
+  // Gate on entry: a filled slot belongs to the summary in the ADD
+  // round (blocked) and to the form in the CHANGE round (?change=1); a
+  // change URL over an empty slot has nothing to move, so it degrades to
+  // the add round right here. A failed probe just opens the add form;
+  // the /start routes re-check server-side either way.
   useEffect(() => {
+    const changeMode = new URLSearchParams(window.location.search).get('change') === '1';
     api
       .get<{ data: { email: string | null; hasPassword: boolean } }>('/api/account/methods')
       .then((res) => {
         setHasPassword(!!res.data?.hasPassword);
-        setStep(res.data?.email ? 'blocked' : 'email');
+        const filled = !!res.data?.email;
+        if (changeMode && filled) setChanging(true);
+        setStep(filled && !changeMode ? 'blocked' : 'email');
       })
       .catch(() => setStep('email'));
   }, []);
 
-  // Step 1 → 2: send the attach code to the mailbox.
+  // Step 1 → 2: send the code — to the mailbox that will BECOME the
+  // address (add) or the one that already IS it (change). Uniform answer
+  // by design either way; a taken address only says so after the OTP.
   async function start(e?: FormEvent) {
     e?.preventDefault();
     if (sending || !EMAIL_PATTERN.test(address)) return;
     setError('');
     setSending(true);
     try {
-      await api.post('/api/account/email/start', { email: address });
+      await api.post(changing ? '/api/account/email/change/start' : '/api/account/email/start', { email: address });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
       setStep('code');
@@ -88,7 +102,7 @@ export default function AddEmailPage() {
     setError('');
     setSending(true);
     try {
-      await api.post('/api/account/email/start', { email: address });
+      await api.post(changing ? '/api/account/email/change/start' : '/api/account/email/start', { email: address });
       clearBoxes();
       setResendSeconds(RESEND_SECONDS);
     } catch (err) {
@@ -98,22 +112,28 @@ export default function AddEmailPage() {
     }
   }
 
-  // Last step: spend the code, attach the address — and, when the
-  // account had none, the password chosen on the step before. The API
-  // demands that password BEFORE spending (its refusal keeps the code
-  // live), so a round-trip through this screen never burns a code.
+  // Last step: spend the code, move (or attach) the address — and, when
+  // ADDING to an account that had no password, the one chosen on the
+  // step before. The API demands that password BEFORE spending (its
+  // refusal keeps the code live), so a round-trip through this screen
+  // never burns a code. The change round never carries a password: it
+  // moves a slot, it creates no credential.
   async function verify(value?: string) {
     const entered = value ?? boxes.join('');
     if (entered.length !== 6 || verifying) return;
     setError('');
     setVerifying(true);
     try {
-      await api.post('/api/account/email/verify', {
+      await api.post(changing ? '/api/account/email/change/verify' : '/api/account/email/verify', {
         email: address,
         code: entered,
-        ...(hasPassword ? {} : { password }),
+        ...(changing || hasPassword ? {} : { password }),
       });
-      router.replace('/my-account/sign-in-methods?added=email');
+      router.replace(
+        changing
+          ? '/my-account/sign-in-methods?changed=email'
+          : '/my-account/sign-in-methods?added=email',
+      );
     } catch (err) {
       const code = authErrorCode(err);
       if (code === 'OTP_INVALID' || code === 'OTP_TOO_MANY_ATTEMPTS') {
@@ -129,7 +149,14 @@ export default function AddEmailPage() {
         setStep('password');
         setError(authErrorMessage(err, 'Choose a password to finish adding your email.'));
       } else {
-        setError(authErrorMessage(err, 'The address could not be added. Please try again.'));
+        setError(
+          authErrorMessage(
+            err,
+            changing
+              ? 'The address could not be changed. Please try again.'
+              : 'The address could not be added. Please try again.',
+          ),
+        );
       }
       setVerifying(false);
     }
@@ -142,7 +169,7 @@ export default function AddEmailPage() {
           &larr; Sign-in methods
         </Link>
       </p>
-      <h1>Add an email address</h1>
+      <h1>{changing ? 'Change your email address' : 'Add an email address'}</h1>
       <div className={card}>
         {/* One height for every step — swapping states never jumps. */}
         <div className="flex min-h-[260px] flex-col justify-center">
@@ -189,8 +216,9 @@ export default function AddEmailPage() {
                 />
               </div>
               <p className="mt-3 text-[13px] leading-relaxed text-gray-500 dark:text-white/45">
-                We&apos;ll email a 6-digit code to confirm it&apos;s yours. Once added, the address
-                can also sign you in.
+                {changing
+                  ? "We'll email a 6-digit code to confirm it's yours. Once confirmed, the new address replaces your current one — the old address is notified."
+                  : "We'll email a 6-digit code to confirm it's yours. Once added, the address can also sign you in."}
               </p>
               {error && (
                 <div className="mt-4">
@@ -216,10 +244,11 @@ export default function AddEmailPage() {
                   boxes={boxes}
                   setBoxes={setBoxes}
                   onComplete={(value) => {
-                    // Proof in hand: accounts that already have a
-                    // password finish right here; the rest route through
-                    // the password step first (no skip).
-                    if (hasPassword) void verify(value);
+                    // Proof in hand: the change round and accounts that
+                    // already have a password finish right here; the
+                    // rest route through the password step first (no
+                    // skip).
+                    if (changing || hasPassword) void verify(value);
                     else {
                       setError('');
                       setStep('password');
