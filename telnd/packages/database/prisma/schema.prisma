@@ -56,6 +56,7 @@ model User {
   passwordTokens    PasswordToken[]
   twoFactorRecoveryCodes TwoFactorRecoveryCode[]
   loginDevices      UserLoginDevice[]
+  trustedDevices    TrustedDevice[]
   country           Country?   @relation(fields: [countryId], references: [id])
   
   // New relations
@@ -227,6 +228,26 @@ model UserLoginDevice {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, deviceKey])
+  @@index([userId])
+}
+
+// §14.61 — devices a user chose to TRUST at the 2FA challenge: the browser
+// holds a random `telnd_trusted` cookie, this table holds only its SHA-256
+// hash, so a database leak cannot be replayed as a 2FA bypass. A login from
+// a matching, unexpired (30-day) row skips the second factor for USER
+// accounts only; revocation (per row, password change, 2FA disable,
+// sign-out-everywhere) deletes the row and the cookie dies with it.
+model TrustedDevice {
+  id         String   @id @default(uuid())
+  userId     String
+  tokenHash  String   @unique
+  label      String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
 }
 

@@ -113,7 +113,7 @@ export default function AddEmailPage() {
         code: entered,
         ...(hasPassword ? {} : { password }),
       });
-      router.replace('/my-account?added=email');
+      router.replace('/my-account/sign-in-methods?added=email');
     } catch (err) {
       const code = authErrorCode(err);
       if (code === 'OTP_INVALID' || code === 'OTP_TOO_MANY_ATTEMPTS') {

@@ -6,9 +6,8 @@
 // see styles/account.css). The session gate runs FIRST: a signed-out
 // visitor never sees the shell — they are sent to the sign-in flow with
 // the trip remembered (?next=/my-account), so logging in lands back
-// here. The nav items and the page contents are placeholders until the
-// real account screens land ("later we will change and put the contents
-// into it").
+// here. The rail carries the account sections (§14.61): Overview,
+// Profile, Security, Sign-in methods, Preferences, About.
 
 import Image from 'next/image';
 import Link from 'next/link';
@@ -30,7 +29,9 @@ function CenteredSpinner() {
   );
 }
 
-/** Placeholder nav — replaced when the account contents arrive. */
+/** The account sections (§14.61) — every entry a real page, admin-
+ *  settings-style: Overview, Profile, Security, Sign-in methods,
+ *  Preferences, About. */
 const NAV = [
   {
     title: 'Account',
@@ -44,23 +45,37 @@ const NAV = [
       },
       {
         label: 'Profile',
-        soon: true,
+        href: '/my-account/profile',
         icon: (
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
         ),
       },
       {
         label: 'Security',
-        soon: true,
+        href: '/my-account/security',
         icon: (
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
         ),
       },
       {
-        label: 'Notifications',
-        soon: true,
+        label: 'Sign-in methods',
+        href: '/my-account/sign-in-methods',
         icon: (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+        ),
+      },
+      {
+        label: 'Preferences',
+        href: '/my-account/preferences',
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>
+        ),
+      },
+      {
+        label: 'About',
+        href: '/my-account/about',
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>
         ),
       },
     ],
@@ -228,29 +243,18 @@ export function MyAccountShell({ children }: { children: ReactNode }) {
               <div key={section.title} style={{ flexShrink: 0 }}>
                 <div className="sidebar-section-title">{section.title}</div>
                 <ul className="sidebar-nav">
-                  {section.items.map((item) =>
-                    'href' in item && !('soon' in item && item.soon) ? (
-                      <li key={item.label}>
-                        <Link
-                          href={item.href}
-                          className={`sidebar-item${pathname === item.href ? ' active' : ''}`}
-                          onClick={() => setMobileOpen(false)}
-                        >
-                          <span className="sidebar-icon">{item.icon}</span>
-                          <span className="sidebar-label">{item.label}</span>
-                        </Link>
-                      </li>
-                    ) : (
-                      <li key={item.label}>
-                        {/* Placeholder — the section arrives with the
-                            account contents in a later round. */}
-                        <span className="sidebar-item" title="Coming soon">
-                          <span className="sidebar-icon">{item.icon}</span>
-                          <span className="sidebar-label">{item.label}</span>
-                        </span>
-                      </li>
-                    ),
-                  )}
+                  {section.items.map((item) => (
+                    <li key={item.label}>
+                      <Link
+                        href={item.href}
+                        className={`sidebar-item${pathname === item.href ? ' active' : ''}`}
+                        onClick={() => setMobileOpen(false)}
+                      >
+                        <span className="sidebar-icon">{item.icon}</span>
+                        <span className="sidebar-label">{item.label}</span>
+                      </Link>
+                    </li>
+                  ))}
                 </ul>
               </div>
             ))}

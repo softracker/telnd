@@ -837,6 +837,61 @@ admin.post('/two-factor-policy', requireAdmin, validate(z.object({ required: z.b
   return c.json({ success: true, data: { required } });
 });
 
+// §14.61 — the same demand, for USER accounts. One switch per side: this
+// never touches `twoFactorPolicy`, the admins' switch never touches this,
+// and auth reads each by the signer's role. Super admin only, and PIN-
+// approved to lift — dropping a standing protection is the sensitive
+// half (the UI arms the button in two clicks like every hard toggle).
+admin.post('/users-two-factor-policy', requireAdmin, validate(z.object({ required: z.boolean() })), rateLimit('admin.sensitive'), async (c) => {
+  const actor = c.get('admin');
+  if (!isSuper(actor?.role?.permissions)) {
+    return c.json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Super admin access is required to change the user two-factor policy.' },
+    }, 403);
+  }
+
+  const { required } = c.get('validatedData') as { required: boolean };
+
+  if (!required) {
+    const pinGate = await requirePinApproval(c);
+    if (pinGate) return pinGate;
+  }
+
+  const previousPolicy = await prisma.setting.findUnique({ where: { key: 'usersTwoFactorPolicy' } });
+  const wasRequired = Boolean((previousPolicy?.value as any)?.requireTwoFactor);
+
+  await prisma.setting.upsert({
+    where: { key: 'usersTwoFactorPolicy' },
+    update: { value: { requireTwoFactor: required } as any },
+    create: { key: 'usersTwoFactorPolicy', value: { requireTwoFactor: required } as any },
+  });
+
+  if (required && !wasRequired) {
+    // Same #17 reasoning as the admins' switch: sessions of users who
+    // have not enrolled would otherwise run on unchallenged; they meet
+    // the enrollment gate at their next sign-in instead. Deliberately no
+    // notice email here — the requirement-notice template speaks the
+    // panel's language ("admin account", Settings → Security) and this
+    // side's recipients are portal users; a correctly-worded variant can
+    // ride along when the Users section lands.
+    const unenrolled = await prisma.user.findMany({
+      // Every non-admin row — the enum has CANDIDATE/EMPLOYER/… as roles,
+      // so "user accounts" here is "not the panel".
+      where: { role: { not: 'ADMIN' }, isActive: true, twoFactorEnabled: false },
+      select: { id: true },
+    });
+    if (unenrolled.length > 0) {
+      const ids = unenrolled.map((u) => u.id);
+      await prisma.session.deleteMany({ where: { userId: { in: ids } } });
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: ids } } });
+    }
+  }
+
+  await logAction(actor.userId, required ? 'REQUIRE_TWO_FACTOR_USERS' : 'CLEAR_TWO_FACTOR_USERS_POLICY', 'setting', undefined, { required }, c);
+  return c.json({ success: true, data: { required } });
+});
+
 // ============================================
 // Security PIN administration (§14.44)
 // ============================================

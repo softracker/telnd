@@ -30,6 +30,22 @@ export async function twoFactorPolicyRequired(): Promise<boolean> {
   }
 }
 
+/**
+ * §14.61 — the same demand, for USER accounts, from its own Setting key
+ * (`usersTwoFactorPolicy`, super-admin-only via POST /admin/users-two-factor-policy).
+ * The two policies are role-scoped from here out: ADMIN sign-ins read
+ * `twoFactorPolicy`, USER sign-ins read this — turning one on never
+ * touches the other side.
+ */
+export async function usersTwoFactorPolicyRequired(): Promise<boolean> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: 'usersTwoFactorPolicy' } });
+    return ((row?.value as { requireTwoFactor?: unknown } | null)?.requireTwoFactor) === true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Phone helpers ────────────────────────────────────────────────────────
 
 /**

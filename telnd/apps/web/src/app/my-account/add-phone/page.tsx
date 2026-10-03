@@ -103,7 +103,7 @@ export default function AddPhonePage() {
     setVerifying(true);
     try {
       await api.post('/api/account/phone/verify', { phone: fullPhone, code: entered });
-      router.replace('/my-account?added=phone');
+      router.replace('/my-account/sign-in-methods?added=phone');
     } catch (err) {
       const code = authErrorCode(err);
       if (code === 'OTP_INVALID' || code === 'OTP_TOO_MANY_ATTEMPTS') {

@@ -12,6 +12,7 @@ import { getIp } from '../lib/getIp';
 import { backfillSessionLocations } from '../lib/geoLocation';
 import { clearPinAttempts, hashPin, normalizePin, pinPolicyRequired, requirePinApproval, verifySecurityPin } from '../lib/securityPin';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../lib/totp';
+import { TRUST_DAYS, clearTrustedDevices, currentTrustedHash } from '../lib/trustedDevices';
 import {
   clearOtp,
   getSmsGateway,
@@ -21,6 +22,7 @@ import {
   smsSendFailure,
   toBdSmsNumber,
   twoFactorPolicyRequired,
+  usersTwoFactorPolicyRequired,
   verifyOtp,
 } from '../lib/twoFactor';
 
@@ -314,10 +316,55 @@ userRoutes.delete('/me/sessions', authMiddleware, async (c) => {
   const result = await prisma.session.deleteMany({
     where: { userId, NOT: { token } },
   });
+  // §14.61 — other devices lose their 2FA trusts with their sessions (or
+  // they would waltz past the next challenge); this browser keeps its own.
+  await clearTrustedDevices(userId, currentTrustedHash(c));
   if (result.count > 0) {
     await logSelfService(c, c.get('user'), 'REVOKE_OTHER_SESSIONS', { revoked: result.count });
   }
   return c.json({ success: true, data: { revoked: result.count } });
+});
+
+// ── Trusted devices (§14.61) ───────────────────────────────────────────
+// The browsers that answered a 2FA challenge with "trust this device":
+// each row is one 30-day grant (cookie held by the browser, hash here).
+// Expired rows are swept on read — nothing else visits this table for
+// them, and a stale grant must never appear as live.
+
+userRoutes.get('/me/trusted-devices', authMiddleware, async (c) => {
+  const userId = c.get('userId') as string;
+  const cutoff = new Date(Date.now() - TRUST_DAYS * 24 * 60 * 60 * 1000);
+  await prisma.trustedDevice.deleteMany({ where: { userId, createdAt: { lt: cutoff } } }).catch(() => undefined);
+  const rows = await prisma.trustedDevice.findMany({
+    where: { userId },
+    orderBy: { lastUsedAt: 'desc' },
+    select: { id: true, label: true, createdAt: true, lastUsedAt: true, tokenHash: true },
+  });
+  const own = currentTrustedHash(c);
+  return c.json({
+    success: true,
+    data: {
+      trustedDevices: rows.map((r) => ({
+        id: r.id,
+        label: r.label,
+        createdAt: r.createdAt,
+        lastUsedAt: r.lastUsedAt,
+        isCurrent: Boolean(own) && r.tokenHash === own,
+      })),
+    },
+  });
+});
+
+userRoutes.delete('/me/trusted-devices/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId') as string;
+  const id = c.req.param('id');
+  const row = await prisma.trustedDevice.findFirst({ where: { id, userId } });
+  if (!row) {
+    return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Trusted device not found.' } }, 404);
+  }
+  await prisma.trustedDevice.delete({ where: { id } });
+  await logSelfService(c, c.get('user'), 'REVOKE_TRUSTED_DEVICE', { label: row.label });
+  return c.json({ success: true, data: { revoked: 1 } });
 });
 
 // Change own password: the current one must be proven first; the new one is
@@ -386,7 +433,11 @@ userRoutes.post(
       const refreshes = await tx.refreshToken.deleteMany({
         where: { userId, ...(currentRefresh ? { NOT: { token: currentRefresh } } : {}) },
       });
-      return { sessions: sessions.count, refreshes: refreshes.count };
+      // §14.61 — trusted devices die with the credentials too: a stolen
+      // password changed by its owner must not leave a thief's browser
+      // holding a pass around the second factor.
+      const trusts = await tx.trustedDevice.deleteMany({ where: { userId } });
+      return { sessions: sessions.count, refreshes: refreshes.count, trusts: trusts.count };
     });
 
     await logSelfService(c, user, 'CHANGE_PASSWORD', {
@@ -459,8 +510,14 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
     return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
   }
 
-  const [policyRequired, adminRole, gateway, emailReady, recoveryLeft] = await Promise.all([
-    twoFactorPolicyRequired(),
+  const [policyRequired, usersPolicyRequired, adminRole, gateway, emailReady, recoveryLeft] = await Promise.all([
+    // §14.61 — the demand THIS account lives under is role-scoped: an
+    // ADMIN row reads the admins policy, a USER row the users policy (so
+    // the portal can never be silenced — or blocked — by the panel's own
+    // switch). usersPolicyRequired is the state the admin panel's switch
+    // shows, fetched here so both halves of the card update together.
+    user.role === 'ADMIN' ? twoFactorPolicyRequired() : usersTwoFactorPolicyRequired(),
+    usersTwoFactorPolicyRequired(),
     prisma.adminUser.findUnique({ where: { userId }, include: { role: true } }),
     getSmsGateway(),
     isSmtpConfigured(),
@@ -484,6 +541,10 @@ userRoutes.get('/me/2fa', authMiddleware, async (c) => {
       emailConfigured: emailReady,
       enforcedByAdmin: user.twoFactorEnforced,
       policyRequired,
+      // §14.61 — the users-policy switch state (admin panel shows it; a
+      // non-super caller gets the field too, but the panel gates the
+      // control on canManagePolicy like every other hard toggle).
+      usersPolicyRequired,
       canDisable: user.twoFactorEnabled && !user.twoFactorEnforced && !policyRequired,
       canManagePolicy: hasPermission(adminRole?.role, '*'),
       // How many unused recovery codes are still in the set — the card
@@ -864,7 +925,10 @@ userRoutes.post(
       }, 400);
     }
 
-    const policyRequired = await twoFactorPolicyRequired();
+    // §14.61 — role-scoped: an ADMIN row is guarded by the admins policy,
+    // a USER row by the users policy. Neither side can be silenced by the
+    // other's switch.
+    const policyRequired = user.role === 'ADMIN' ? await twoFactorPolicyRequired() : await usersTwoFactorPolicyRequired();
     if (user.twoFactorEnforced || policyRequired) {
       return c.json({
         success: false,
@@ -872,7 +936,9 @@ userRoutes.post(
           code: 'TWO_FACTOR_REQUIRED',
           message: user.twoFactorEnforced
             ? 'Two-factor authentication is required for this account by an administrator.'
-            : 'Two-factor authentication is required for all admin accounts and cannot be turned off.',
+            : user.role === 'ADMIN'
+              ? 'Two-factor authentication is required for all admin accounts and cannot be turned off.'
+              : 'Two-factor authentication is required for all user accounts and cannot be turned off.',
         },
       }, 403);
     }
@@ -901,6 +967,10 @@ userRoutes.post(
     clearOtp(userId);
     // Codes are meaningless without the second factor — they die with it.
     await deleteRecoveryCodes(userId);
+    // §14.61 — and so are this account's trusted devices: a trust exists
+    // only to skip a factor that is now off; with 2FA re-enrolled later,
+    // no stale cookie may ride in on the old grant.
+    await clearTrustedDevices(userId);
     await logSelfService(c, c.get('user'), 'TWO_FACTOR_DISABLED', {});
     return c.json({ success: true, data: {} });
   },

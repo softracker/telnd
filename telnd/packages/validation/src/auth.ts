@@ -142,6 +142,12 @@ export const twoFactorVerifySchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits').optional(),
   recoveryCode: z.string().min(8).max(32).optional(),
   method: z.enum(['totp', 'sms', 'email']).optional(),
+  // §14.61 — "trust this device": the portal's challenge screen offers it,
+  // and a true here mints the `telnd_trusted` cookie + TrustedDevice row
+  // after the code checks out, so the next sign-in from this browser skips
+  // the second factor for 30 days. Optional so API callers that never send
+  // it (admin challenge flows) behave exactly as before.
+  trustDevice: z.boolean().optional(),
 }).refine((d) => Boolean(d.code || d.recoveryCode), {
   message: 'A verification code or a recovery code is required',
 });

@@ -16,6 +16,7 @@
     "@telnd/utils": "*",
     "@telnd/validation": "*",
     "next": "^16.3.5",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

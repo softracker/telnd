@@ -43,6 +43,8 @@ interface TwoFaState {
   emailConfigured: boolean;
   enforcedByAdmin: boolean;
   policyRequired: boolean;
+  /** §14.61 — the users-policy switch state (separate Setting key). */
+  usersPolicyRequired: boolean;
   canDisable: boolean;
   canManagePolicy: boolean;
   /** Unused recovery codes still on file (0 = regenerate is the only fix). */
@@ -307,7 +309,7 @@ export default function SecuritySettingsPage() {
 
   // ── Two-factor authentication ──
   const [twoFa, setTwoFa] = useState<TwoFaState | null>(null);
-  const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | 'codes' | null>(null);
+  const [twoFaBusy, setTwoFaBusy] = useState<'setup' | 'send' | 'enable' | 'disable' | 'policy' | 'usersPolicy' | 'codes' | null>(null);
   // Which enrollment panel is open: authenticator app (QR) or SMS delivery.
   const [setupPanel, setSetupPanel] = useState<'totp' | 'sms' | 'email' | null>(null);
   const [setup, setSetup] = useState<{ otpauthUri: string; secret: string } | null>(null);
@@ -327,6 +329,9 @@ export default function SecuritySettingsPage() {
   // The global "require 2FA for all admins" switch arms like every other
   // destructive toggle on this panel: first click confirms, second acts.
   const [policyArmed, setPolicyArmed] = useState(false);
+  // §14.61 — the users-policy switch arms on its own click, like every
+  // other hard toggle on this page.
+  const [usersPolicyArmed, setUsersPolicyArmed] = useState(false);
   // ── Security PIN (§14.44) ──
   const [pinState, setPinState] = useState<PinState | null>(null);
   const [pinBusy, setPinBusy] = useState<'setup' | 'policy' | 'disable' | null>(null);
@@ -638,6 +643,29 @@ export default function SecuritySettingsPage() {
     try {
       await api.post('/api/admin/two-factor-policy', { required: next });
       showToast('success', next ? t('twoFactor.policyToastOn') : t('twoFactor.policyToastOff'));
+      await loadTwoFa();
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
+    } finally {
+      setTwoFaBusy(null);
+    }
+  }
+
+  // §14.61 — the USER-accounts twin of the switch above: separate
+  // endpoint, separate Setting key, PIN-approved server-side when it
+  // lifts the requirement (the global PIN modal handles that round-trip).
+  async function handleUsersPolicyToggle() {
+    if (!twoFa || twoFaBusy) return;
+    if (!usersPolicyArmed) {
+      setUsersPolicyArmed(true);
+      return;
+    }
+    setUsersPolicyArmed(false);
+    const next = !twoFa.usersPolicyRequired;
+    setTwoFaBusy('usersPolicy');
+    try {
+      await api.post('/api/admin/users-two-factor-policy', { required: next });
+      showToast('success', next ? t('twoFactor.usersPolicyToastOn') : t('twoFactor.usersPolicyToastOff'));
       await loadTwoFa();
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : t('common.failed'));
@@ -1628,6 +1656,7 @@ export default function SecuritySettingsPage() {
                 {/* Super admin only: require 2FA for every admin account.
                     Two-click arm, same as every other hard toggle here. */}
                 {twoFa.canManagePolicy && (
+                  <>
                   <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
                       <div style={{ minWidth: 0, flex: '1 1 300px' }}>
@@ -1674,6 +1703,57 @@ export default function SecuritySettingsPage() {
                       </button>
                     </div>
                   </div>
+
+                  {/* §14.61 — the same treatment for USER accounts:
+                      its own endpoint, its own Setting key, PIN-gated
+                      server-side when it lifts the requirement. */}
+                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ minWidth: 0, flex: '1 1 300px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                            {t('twoFactor.usersPolicyTitle')}
+                          </span>
+                          <span
+                            style={{
+                              ...pillStyle,
+                              backgroundColor: twoFa.usersPolicyRequired ? 'var(--success-bg)' : 'var(--secondary-btn-bg)',
+                              color: twoFa.usersPolicyRequired ? 'var(--success-text)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {twoFa.usersPolicyRequired ? t('twoFactor.policyOn') : t('twoFactor.policyOff')}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--muted-text)', marginTop: '0.25rem', marginBottom: 0, lineHeight: 1.6 }}>
+                          {t('twoFactor.usersPolicyDesc')}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleUsersPolicyToggle}
+                        disabled={twoFaBusy !== null}
+                        style={{
+                          ...tfBtnStyle,
+                          backgroundColor: usersPolicyArmed ? 'var(--accent-light)' : 'var(--secondary-btn-bg)',
+                          color: usersPolicyArmed ? 'var(--accent)' : 'var(--text-main)',
+                          border: usersPolicyArmed ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          opacity: twoFaBusy ? 0.7 : 1,
+                          cursor: twoFaBusy ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {twoFaBusy === 'usersPolicy' ? (
+                          <Spinner size={14} />
+                        ) : usersPolicyArmed ? (
+                          t('account.confirmStatus')
+                        ) : twoFa.usersPolicyRequired ? (
+                          t('twoFactor.usersPolicyTurnOff')
+                        ) : (
+                          t('twoFactor.usersPolicyTurnOn')
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  </>
                 )}
               </Section>
             </div>

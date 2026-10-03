@@ -28,8 +28,10 @@ import {
   smsSendFailure,
   toBdSmsNumber,
   twoFactorPolicyRequired,
+  usersTwoFactorPolicyRequired,
   verifyOtp,
 } from '../lib/twoFactor';
+import { mintTrustedDevice, trustedDeviceMatches } from '../lib/trustedDevices';
 import {
   buildAuthorizeUrl,
   burnFlowJti,
@@ -573,9 +575,20 @@ authRoutes.post('/login', rateLimit('auth.login'), validate(loginSchema), async 
   let needsEnrollment = false;
   if (!user.twoFactorEnabled) {
     // The policy lookup only matters while nothing is set up yet.
-    needsEnrollment = user.twoFactorEnforced || (await twoFactorPolicyRequired());
+    // §14.61 — role-scoped: an ADMIN row reads the admins policy, a USER
+    // row the users policy — one switch per side (Settings → Security),
+    // neither ever silencing the other.
+    needsEnrollment =
+      user.twoFactorEnforced ||
+      (user.role === 'ADMIN' ? await twoFactorPolicyRequired() : await usersTwoFactorPolicyRequired());
   }
-  if (user.twoFactorEnabled || needsEnrollment) {
+  // §14.61 — device trust: a USER browser carrying a valid `telnd_trusted`
+  // grant skips the enrolled challenge outright. Admins never skip (their
+  // factor is demanded fresh every sign-in) and a forced enrollment is
+  // never skipped either — there is no enrolled factor yet to trust.
+  const trustedHere =
+    user.twoFactorEnabled && user.role !== 'ADMIN' && (await trustedDeviceMatches(c, user.id));
+  if ((user.twoFactorEnabled && !trustedHere) || needsEnrollment) {
     const pending = await sign(
       {
         sub: user.id,
@@ -1124,6 +1137,14 @@ authRoutes.post('/2fa/challenge/verify', rateLimit('auth.twoFactorVerify'), vali
     // codes existed, or one whose last code was just spent above. Handing
     // a fresh set now is the right moment — the save screen shows once.
     recoveryCodes = await rotateRecoveryCodes(user.id);
+  }
+
+  // §14.61 — "trust this device": minted only now, when the code has
+  // already checked out, and never on an ADMIN challenge (the panel's
+  // factor stays fresh every sign-in). A failed mint degrades to "not
+  // trusted" — it never fails the sign-in that just proved itself.
+  if (body.trustDevice && user.role !== 'ADMIN') {
+    await mintTrustedDevice(c, user.id);
   }
 
   clearPendingCookie(c);
@@ -1840,9 +1861,17 @@ async function takeOAuthState(
 async function finishSocialSignIn(c: any, user: any, ip: string) {
   let needsEnrollment = false;
   if (!user.twoFactorEnabled) {
-    needsEnrollment = user.twoFactorEnforced || (await twoFactorPolicyRequired());
+    // §14.61 — same role-scoped read as /login's step 7: USER rows the
+    // users policy, ADMIN rows the admins policy.
+    needsEnrollment =
+      user.twoFactorEnforced ||
+      (user.role === 'ADMIN' ? await twoFactorPolicyRequired() : await usersTwoFactorPolicyRequired());
   }
-  if (user.twoFactorEnabled || needsEnrollment) {
+  // §14.61 — social is a portal door, but an ADMIN identity arriving
+  // here still gets no trust: the panel's factor is always fresh.
+  const trustedHere =
+    user.twoFactorEnabled && user.role !== 'ADMIN' && (await trustedDeviceMatches(c, user.id));
+  if ((user.twoFactorEnabled && !trustedHere) || needsEnrollment) {
     const pending = await sign(
       {
         sub: user.id,
